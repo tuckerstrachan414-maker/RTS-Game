@@ -93,6 +93,14 @@ const BUILDING_TYPES = {
 
 const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
 
+// Castle upgrade tiers: each unlocks new troops at every castle of that nation.
+const CASTLE_UPGRADES = {
+  2: { name: 'Garrison', cost: { wood: 100, stone: 80, gold: 60 }, time: 20,
+       desc: 'Unlocks Shieldman, Halberdier, Crossbowman and Horseman.' },
+  3: { name: 'Royal Academy', cost: { wood: 150, stone: 150, gold: 150 }, time: 30,
+       desc: 'Unlocks Mage, Archmage, Cavalier and the King.' },
+};
+
 let nextBuildingId = 1;
 
 class Building {
@@ -108,6 +116,7 @@ class Building {
     this.trainQueue = [];                    // {unitKey, t}
     this.grand = false;                      // grand castle upgrade
     this.grandProgress = 0;
+    this.upgrading = null;                   // {tier, t} while a castle upgrade builds
     this.store = { food: 0, wood: 0, stone: 0, gold: 0 };  // physical goods held (storage buildings)
   }
   get done() { return this.progress >= 1; }

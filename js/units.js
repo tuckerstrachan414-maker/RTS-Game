@@ -22,6 +22,10 @@ const UNIT_TYPES = {
 const UNIT_CARRY = { archer: 12, crossbow: 12, mage: 10, archmage: 10, horseman: 30, cavalier: 30, king: 0, prince: 0, bandit: 45 };
 for (const k in UNIT_TYPES) UNIT_TYPES[k].carry = UNIT_CARRY[k] !== undefined ? UNIT_CARRY[k] : 20;
 
+// castle tier required to train each unit (1 = basic Castle; see CASTLE_UPGRADES)
+const UNIT_TIERS = { shield: 2, halberd: 2, crossbow: 2, horseman: 2, mage: 3, archmage: 3, cavalier: 3, king: 3 };
+for (const k in UNIT_TYPES) UNIT_TYPES[k].tier = UNIT_TIERS[k] || 1;
+
 const TRAIN_MENU = ['sword', 'spear', 'shield', 'halberd', 'archer', 'crossbow', 'mage', 'archmage', 'horseman', 'cavalier', 'bandit', 'prince', 'king'];
 
 let nextUnitId = 1;
@@ -340,6 +344,98 @@ function damageBuilding(b, dmg, attacker) {
   if (b.hp <= 0) {
     onBuildingDestroyed(b, attacker);
   }
+}
+
+// ---------- crowd separation ----------
+// Living units softly push each other apart every tick so armies never stand
+// inside one another. Spatial hash keeps it cheap; nudges respect terrain.
+const SEP_RADIUS = 0.45;
+
+function separateUnits(dt) {
+  const cells = new Map();
+  const key = (x, y) => x + y * 4096;
+  const all = [];
+  for (const f of game.factions) {
+    for (const u of f.units) {
+      if (!u.alive) continue;
+      all.push(u);
+      const k = key(Math.floor(u.x), Math.floor(u.y));
+      let arr = cells.get(k);
+      if (!arr) cells.set(k, arr = []);
+      arr.push(u);
+    }
+  }
+  const maxStep = 1.5 * dt;
+  for (const u of all) {
+    const ux = Math.floor(u.x), uy = Math.floor(u.y);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const arr = cells.get(key(ux + dx, uy + dy));
+        if (!arr) continue;
+        for (const v of arr) {
+          if (v.id <= u.id) continue;
+          let ox = v.x - u.x, oy = v.y - u.y;
+          let d = Math.hypot(ox, oy);
+          if (d >= SEP_RADIUS) continue;
+          if (d < 1e-4) {  // perfectly stacked: split along a per-unit angle
+            const a = (u.id * 2.399963) % (Math.PI * 2);
+            ox = Math.cos(a); oy = Math.sin(a); d = 1;
+          }
+          const push = Math.min(maxStep, (SEP_RADIUS - d) * 0.5);
+          nudgeUnit(u, -ox / d * push, -oy / d * push);
+          nudgeUnit(v, ox / d * push, oy / d * push);
+        }
+      }
+    }
+  }
+}
+
+function nudgeUnit(u, mx, my) {
+  const nx = u.x + mx, ny = u.y + my;
+  // allow the move onto passable ground — or any move at all if the unit is
+  // somehow standing on impassable ground, so it can always escape
+  if (game.map.passable(Math.floor(nx), Math.floor(ny), u.faction)
+      || !game.map.passable(Math.floor(u.x), Math.floor(u.y), u.faction)) { u.x = nx; u.y = ny; }
+}
+
+// ---------- formation movement ----------
+// Arrange a group into ranks facing the direction of travel: melee up front,
+// ranged behind, one destination tile per unit.
+function formationMove(units, tx, ty) {
+  const movers = units.filter(u => u.alive && !u.mission && !u.type.envoy);
+  if (movers.length === 0) return;
+  if (movers.length === 1) return movers[0].orderMove(tx, ty);
+  let cx = 0, cy = 0;
+  for (const u of movers) { cx += u.x; cy += u.y; }
+  cx /= movers.length; cy /= movers.length;
+  const ang = Math.atan2(ty + 0.5 - cy, tx + 0.5 - cx);
+  const cosA = Math.cos(ang), sinA = Math.sin(ang);
+  const cols = Math.min(6, Math.max(2, Math.ceil(Math.sqrt(movers.length * 1.7))));
+  const sorted = [...movers].sort((a, b) =>
+    (a.type.range > 1.5 ? 1 : 0) - (b.type.range > 1.5 ? 1 : 0) || b.type.hp - a.type.hp);
+  const taken = new Set();
+  sorted.forEach((u, i) => {
+    const depth = -Math.floor(i / cols);            // ranks stack behind the point
+    const lateral = (i % cols) - (cols - 1) / 2;    // spread across the front
+    const gx = Math.round(tx + depth * cosA - lateral * sinA);
+    const gy = Math.round(ty + depth * sinA + lateral * cosA);
+    const spot = freeSpotNear(gx, gy, u.faction, taken) || freeSpotNear(tx, ty, u.faction, taken);
+    if (spot) { taken.add(spot[0] + spot[1] * 4096); u.orderMove(spot[0], spot[1]); }
+    else u.orderMove(tx, ty);
+  });
+}
+
+function freeSpotNear(x, y, fid, taken) {
+  for (let r = 0; r <= 2; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = x + dx, ny = y + dy;
+        if (!taken.has(nx + ny * 4096) && game.map.passable(nx, ny, fid)) return [nx, ny];
+      }
+    }
+  }
+  return null;
 }
 
 function findEnemyNear(unit, radius) {
