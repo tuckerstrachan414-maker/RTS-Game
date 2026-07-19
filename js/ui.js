@@ -446,14 +446,23 @@ class UI {
     this.paintTo(tx, ty);
   }
 
+  // Snap the drag to a straight run anchored at the start tile: horizontal, vertical, or — for
+  // walls only — a 45° diagonal (Clash-of-Clans style), whichever axis the drag is closest to.
   paintTo(tx, ty) {
     if (!this.paint) return;
     const [ax, ay] = this.paint.anchor;
-    const horizontal = Math.abs(tx - ax) >= Math.abs(ty - ay);
-    this.paint.horizontal = horizontal;
+    const dx = tx - ax, dy = ty - ay, adx = Math.abs(dx), ady = Math.abs(dy);
+    const sx = Math.sign(dx) || 1, sy = Math.sign(dy) || 1;
+    const diagOK = this.placing === 'wall';
+    let mode;
+    if (diagOK && adx > 0 && ady > 0 && adx <= ady * 2.5 && ady <= adx * 2.5) mode = 'diag';
+    else mode = adx >= ady ? 'horiz' : 'vert';
     const line = [];
-    if (horizontal) { const s = Math.sign(tx - ax) || 1; for (let x = ax; x !== tx + s; x += s) line.push([x, ay]); }
-    else { const s = Math.sign(ty - ay) || 1; for (let y = ay; y !== ty + s; y += s) line.push([ax, y]); }
+    if (mode === 'horiz') for (let x = 0; x <= adx; x++) line.push([ax + sx * x, ay]);
+    else if (mode === 'vert') for (let y = 0; y <= ady; y++) line.push([ax, ay + sy * y]);
+    else { const n = Math.min(adx, ady); for (let k = 0; k <= n; k++) line.push([ax + sx * k, ay + sy * k]); }
+    const horizontal = mode !== 'vert';   // only used for bridge orientation (bridges never diagonal)
+    this.paint.horizontal = horizontal;
     for (const [x, y] of line) this.paintPlace(x, y, horizontal);
   }
 
@@ -908,7 +917,8 @@ class UI {
           else if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
         } else if (t === T_WATER) {
           this.tile(map.waterTile(x, y), x, y);
-          if (map.bridge[i]) this.tile(map.bridge[i] === 2 ? AT.BRIDGE_V : AT.BRIDGE_H, x, y);
+          if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
+          else if (map.bridge[i]) this.tile(AT.BRIDGE_H, x, y);
         } else if (t === T_TREE) {
           this.tile(AT.TREES[map.decor[i] % 3], x, y);
         } else if (t === T_ROCK) {
@@ -1012,8 +1022,15 @@ class UI {
     ctx.fillRect(px + 1, py + 1, 4, 4);
   }
 
-  // Walls draw as a central stone post plus a beam toward every adjacent wall/gate of the
-  // same nation, so a placed run visually fuses into one continuous rampart.
+  // Draw a standalone 16x16 sprite canvas (baked wall/tower/bridge tiles) at a tile position.
+  drawTileCanvas(canvas, x, y) {
+    const s = TILE * this.cam.zoom;
+    const [sx, sy] = this.worldToScreen(x, y);
+    this.ctx.drawImage(canvas, 0, 0, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s), Math.ceil(s));
+  }
+
+  // Walls use the tileset's own art: the wall sprite for straight runs, and the tower sprite at
+  // corners, junctions, ends and lone posts — so a run reads as a continuous crenellated rampart.
   drawWall(b) {
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
@@ -1026,36 +1043,18 @@ class UI {
     };
     const up = joins(b.x, b.y - 1), dn = joins(b.x, b.y + 1),
           lf = joins(b.x - 1, b.y), rt = joins(b.x + 1, b.y);
-    const cx = sx + s / 2, cy = sy + s / 2;
-    const post = Math.max(3, s * 0.5), beam = Math.max(2, s * 0.34), hb = beam / 2;
-    // rectangles making up this segment: a post, plus a beam to each joined side
-    const rects = [[cx - post / 2, cy - post / 2, post, post]];
-    if (up) rects.push([cx - hb, sy, beam, cy - sy]);
-    if (dn) rects.push([cx - hb, cy, beam, sy + s - cy]);
-    if (lf) rects.push([sx, cy - hb, cx - sx, beam]);
-    if (rt) rects.push([cx, cy - hb, sx + s - cx, beam]);
+    const straight = (lf && rt && !up && !dn) || (up && dn && !lf && !rt);
     ctx.globalAlpha = b.done ? 1 : 0.5;
-    const fill = (col, inflate, topOnly) => {
-      ctx.fillStyle = col;
-      for (const [rx, ry, rw, rh] of rects) {
-        if (topOnly) ctx.fillRect(Math.floor(rx), Math.floor(ry), Math.ceil(rw), Math.max(1, Math.round(rh * 0.28)));
-        else ctx.fillRect(Math.floor(rx - inflate), Math.floor(ry - inflate), Math.ceil(rw + inflate * 2), Math.ceil(rh + inflate * 2));
-      }
-    };
-    fill('#413b32', Math.max(1, s * 0.06), false);   // dark outline
-    fill('#9d9484', 0, false);                       // stone body
-    fill('#c7bda9', 0, true);                         // sunlit top edge
+    this.drawTileCanvas(straight ? Assets.wallSprite : Assets.towerSprite, b.x, b.y);
     ctx.globalAlpha = 1;
-    const [px, py] = [sx, sy];
-    if (!b.done) this.bar(px, py - 5, s, b.progress, '#7ac');
-    else if (b.hp < b.type.hp) this.bar(px, py - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
+    if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
+    else if (b.hp < b.type.hp) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
     if (this.selection.building === b) {
       ctx.strokeStyle = '#fff';
-      ctx.strokeRect(px + 0.5, py + 0.5, s - 1, s - 1);
+      ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
     }
-    // small ownership pip
     ctx.fillStyle = game.factions[b.faction].color.css;
-    ctx.fillRect(Math.floor(cx - post / 2), Math.floor(cy - post / 2), Math.max(2, Math.round(s * 0.12)), Math.max(2, Math.round(s * 0.12)));
+    ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.5), Math.max(2, Math.round(s * 0.12)), Math.max(2, Math.round(s * 0.12)));
   }
 
   drawUnit(u) {
@@ -1150,12 +1149,13 @@ class UI {
     this.ctx.globalAlpha = 0.6;
     let art = type.art;
     if (type.pair) art = art[1];
-    if (this.placing === 'bridge') art = this.placeVertical ? AT.BRIDGE_V : AT.BRIDGE_H;
     if (this.placing === 'farm') {
       for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) this.tile(AT.CROP_VARS[(dx + dy) % 2], tx + dx, ty + dy);
     } else if (this.placing === 'wall') {
-      this.ctx.fillStyle = '#9d9484';
-      this.ctx.fillRect(sx + s * 0.22, sy + s * 0.22, s * 0.56, s * 0.56);
+      this.drawTileCanvas(Assets.towerSprite, tx, ty);
+    } else if (this.placing === 'bridge') {
+      if (this.placeVertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
+      else this.tile(AT.BRIDGE_H, tx, ty);
     } else if (art) {
       this.ctx.drawImage(Assets.tileset, art[0] * TILE, art[1] * TILE, TILE, TILE, sx, sy, s * type.size, s * type.size);
     }
