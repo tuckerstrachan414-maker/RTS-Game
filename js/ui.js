@@ -407,6 +407,12 @@ class UI {
   // ---------- HUD ----------
   buildHud() {
     const bar = document.getElementById('buildbar');
+    // toggle goes in first so it's always reachable even once the row overflows and scrolls
+    const buildToggle = document.createElement('button');
+    buildToggle.className = 'collapse-btn';
+    buildToggle.title = 'Hide build menu';
+    buildToggle.textContent = '▾';
+    bar.appendChild(buildToggle);
     for (const key of BUILD_MENU) {
       const t = BUILDING_TYPES[key];
       const btn = document.createElement('button');
@@ -435,6 +441,30 @@ class UI {
       game.factions[0].nation.tax = tax.value / 100;
       document.getElementById('taxval').textContent = tax.value + '%';
     };
+    // per-panel collapse toggles (topbar, menu, minimap, build menu) — independent of Hide UI
+    document.querySelectorAll('.collapse-btn').forEach(btn => {
+      btn.onclick = () => btn.closest('.collapsible').classList.toggle('collapsed');
+    });
+    this.watchLayout();
+  }
+
+  // Keeps --topbar-h / --sidebar-w / --buildbar-h in sync with actual rendered sizes so other
+  // panels (log, tooltip, diplomacy, the build panel) can offset around them without hardcoded
+  // pixel guesses — and so collapsing a panel automatically frees up its space for neighbors.
+  watchLayout() {
+    const topbar = document.getElementById('topbar');
+    const sidebar = document.getElementById('sidebar');
+    const buildbar = document.getElementById('buildbar');
+    const apply = () => {
+      const root = document.documentElement.style;
+      root.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+      root.setProperty('--sidebar-w', sidebar.offsetWidth + 'px');
+      root.setProperty('--buildbar-h', buildbar.offsetHeight + 'px');
+    };
+    new ResizeObserver(apply).observe(topbar);
+    new ResizeObserver(apply).observe(sidebar);
+    new ResizeObserver(apply).observe(buildbar);
+    apply();
   }
 
   refreshTopbar() {
