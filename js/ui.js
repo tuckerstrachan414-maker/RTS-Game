@@ -20,6 +20,11 @@ class UI {
     this.mini = document.createElement('canvas');
     this.mini.width = MAP_W; this.mini.height = MAP_H;
     this.speed = 1;
+    this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    this.touches = new Map();       // identifier -> {x,y,startX,startY,t,lastX,lastY}
+    this.gesture = null;            // null | 'pending' | 'pan' | 'box' | 'placeDrag' | 'pinch'
+    this.longPressTimer = null;
+    this.pinch = null;              // active 2-finger gesture state
     this.bindEvents();
     this.buildHud();
   }
@@ -46,6 +51,8 @@ class UI {
   bindEvents() {
     const c = this.canvas;
     window.addEventListener('resize', () => this.resize());
+    window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 300));
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => this.resize());
     this.resize();
     window.addEventListener('keydown', e => {
       this.keys[e.key.toLowerCase()] = true;
@@ -56,7 +63,7 @@ class UI {
     c.addEventListener('wheel', e => {
       e.preventDefault();
       const dir = e.deltaY > 0 ? -1 : 1;
-      const i = ZOOMS.indexOf(this.cam.zoom);
+      const i = ZOOMS.reduce((best, z, idx) => Math.abs(z - this.cam.zoom) < Math.abs(ZOOMS[best] - this.cam.zoom) ? idx : best, 0);
       const ni = Math.max(0, Math.min(ZOOMS.length - 1, i + dir));
       if (ni !== i) {
         const [wx, wy] = this.screenToWorld(e.offsetX, e.offsetY);
@@ -88,18 +95,182 @@ class UI {
       else this.boxSelect(sx, sy, e.offsetX, e.offsetY);
       this.mouse.dragStart = null;
     });
-    this.minimap.addEventListener('mousedown', e => {
-      const r = this.minimap.getBoundingClientRect();
-      const tx = (e.clientX - r.left) / r.width * MAP_W;
-      const ty = (e.clientY - r.top) / r.height * MAP_H;
-      this.centerOn(tx, ty);
-    });
+    this.minimap.addEventListener('mousedown', e => this.minimapTap(e.clientX, e.clientY));
+    this.minimap.addEventListener('touchstart', e => {
+      e.preventDefault();
+      this.minimapTap(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    this.bindTouchEvents();
+  }
+
+  minimapTap(clientX, clientY) {
+    const r = this.minimap.getBoundingClientRect();
+    const tx = (clientX - r.left) / r.width * MAP_W;
+    const ty = (clientY - r.top) / r.height * MAP_H;
+    this.centerOn(tx, ty);
   }
 
   resize() {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    const vv = window.visualViewport;
+    this.canvas.width = Math.round(vv ? vv.width : window.innerWidth);
+    this.canvas.height = Math.round(vv ? vv.height : window.innerHeight);
     this.ctx.imageSmoothingEnabled = false;
+    this.clampCam();
+  }
+
+  // ---------- touch gestures ----------
+  // 1 finger: quick tap = select (or place, if placing) · drag = pan camera ·
+  //           hold-then-drag = box-select. 2 fingers: pinch = zoom+pan (Maps-style) ·
+  //           quick tap = "right-click" equivalent (move/attack/rally/cancel-placement).
+  bindTouchEvents() {
+    const c = this.canvas;
+    c.addEventListener('touchstart', e => this.onTouchStart(e), { passive: false });
+    c.addEventListener('touchmove', e => this.onTouchMove(e), { passive: false });
+    c.addEventListener('touchend', e => this.onTouchEnd(e), { passive: false });
+    c.addEventListener('touchcancel', e => this.onTouchEnd(e), { passive: false });
+  }
+
+  touchPoint(t) {
+    const r = this.canvas.getBoundingClientRect();
+    return [t.clientX - r.left, t.clientY - r.top];
+  }
+
+  worldFromCam(sx, sy, camX, camY, zoom) {
+    const s = TILE * zoom;
+    return [sx / s + camX, sy / s + camY];
+  }
+
+  onTouchStart(e) {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const [x, y] = this.touchPoint(t);
+      this.touches.set(t.identifier, { x, y, startX: x, startY: y, t: performance.now() });
+    }
+    const ids = [...this.touches.keys()];
+    clearTimeout(this.longPressTimer);
+    if (ids.length === 1) {
+      this.gesture = 'pending';
+      this.pinch = null;
+      const id = ids[0];
+      this.longPressTimer = setTimeout(() => {
+        if (this.gesture === 'pending' && this.touches.has(id)) {
+          this.gesture = 'box';
+          const p = this.touches.get(id);
+          this.mouse.dragStart = [p.startX, p.startY];
+          this.mouse.x = p.x; this.mouse.y = p.y;
+        }
+      }, 380);
+    } else if (ids.length >= 2) {
+      this.mouse.dragStart = null;
+      const [a, b] = ids.slice(0, 2).map(id => this.touches.get(id));
+      const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+      this.pinch = {
+        ids: [ids[0], ids[1]],
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+        midX, midY,
+        anchor: this.worldFromCam(midX, midY, this.cam.x, this.cam.y, this.cam.zoom),
+        moved: false, startT: performance.now(),
+      };
+      this.gesture = 'pinch';
+    }
+  }
+
+  onTouchMove(e) {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const p = this.touches.get(t.identifier);
+      if (p) { const [x, y] = this.touchPoint(t); p.x = x; p.y = y; }
+    }
+    const ids = [...this.touches.keys()];
+
+    if (this.gesture === 'pending' && ids.length === 1) {
+      const p = this.touches.get(ids[0]);
+      if (Math.hypot(p.x - p.startX, p.y - p.startY) > 10) {
+        clearTimeout(this.longPressTimer);
+        this.gesture = this.placing ? 'placeDrag' : 'pan';
+        p.lastX = p.startX; p.lastY = p.startY;
+      }
+    }
+
+    if (this.gesture === 'pan' && ids.length === 1) {
+      const p = this.touches.get(ids[0]);
+      const s = TILE * this.cam.zoom;
+      this.cam.x -= (p.x - p.lastX) / s;
+      this.cam.y -= (p.y - p.lastY) / s;
+      this.clampCam();
+      p.lastX = p.x; p.lastY = p.y;
+    } else if ((this.gesture === 'placeDrag' || this.gesture === 'box') && ids.length === 1) {
+      const p = this.touches.get(ids[0]);
+      this.mouse.x = p.x; this.mouse.y = p.y;
+    } else if (this.gesture === 'pinch' && ids.length >= 2 && this.pinch) {
+      const pn = this.pinch;
+      const a = this.touches.get(pn.ids[0]), b = this.touches.get(pn.ids[1]);
+      if (a && b) {
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+        if (Math.abs(dist - pn.dist) > 8 || Math.hypot(midX - pn.midX, midY - pn.midY) > 8) pn.moved = true;
+        const newZoom = Math.max(1, Math.min(4, this.cam.zoom * (dist / pn.dist)));
+        const s = TILE * newZoom;
+        this.cam.x = pn.anchor[0] - midX / s;
+        this.cam.y = pn.anchor[1] - midY / s;
+        this.cam.zoom = newZoom;
+        this.clampCam();
+        pn.dist = dist; pn.midX = midX; pn.midY = midY;
+        pn.anchor = this.worldFromCam(midX, midY, this.cam.x, this.cam.y, this.cam.zoom);
+      }
+    }
+  }
+
+  onTouchEnd(e) {
+    e.preventDefault();
+    const endedIds = [...e.changedTouches].map(t => t.identifier);
+
+    if (this.gesture === 'pending') {
+      const id = [...this.touches.keys()][0];
+      const p = id !== undefined ? this.touches.get(id) : null;
+      if (p) {
+        if (this.placing) { this.mouse.x = p.x; this.mouse.y = p.y; this.tryPlace(); }
+        else this.clickSelect(p.x, p.y);
+      }
+    } else if (this.gesture === 'placeDrag') {
+      const id = [...this.touches.keys()][0];
+      const p = id !== undefined ? this.touches.get(id) : null;
+      if (p) { this.mouse.x = p.x; this.mouse.y = p.y; this.tryPlace(); }
+    } else if (this.gesture === 'box') {
+      const id = [...this.touches.keys()][0];
+      const p = id !== undefined ? this.touches.get(id) : null;
+      if (p && this.mouse.dragStart) this.boxSelect(this.mouse.dragStart[0], this.mouse.dragStart[1], p.x, p.y);
+      this.mouse.dragStart = null;
+    } else if (this.gesture === 'pinch' && this.pinch) {
+      const pn = this.pinch;
+      if (!pn.moved && performance.now() - pn.startT < 300 && endedIds.some(id => pn.ids.includes(id))) {
+        if (this.placing) this.placing = null;
+        else this.rightClick(pn.midX, pn.midY);
+        // resolved as a two-finger tap: ignore the trailing finger so its
+        // lift doesn't also register as a separate single-finger tap
+        this.gesture = 'ignore';
+      }
+    }
+
+    clearTimeout(this.longPressTimer);
+    for (const id of endedIds) this.touches.delete(id);
+    if (this.touches.size === 0) {
+      this.gesture = null; this.pinch = null; this.mouse.dragStart = null;
+    } else if (this.touches.size === 1 && this.gesture !== 'ignore') {
+      // a real pinch/pan lost one finger mid-gesture: keep tracking the other
+      this.gesture = 'pending';
+      this.pinch = null;
+      const p = this.touches.get([...this.touches.keys()][0]);
+      p.startX = p.x; p.startY = p.y; p.t = performance.now();
+      const id2 = [...this.touches.keys()][0];
+      this.longPressTimer = setTimeout(() => {
+        if (this.gesture === 'pending' && this.touches.has(id2)) {
+          this.gesture = 'box';
+          this.mouse.dragStart = [p.x, p.y];
+        }
+      }, 380);
+    }
   }
 
   tickInput(dt) {
@@ -112,6 +283,13 @@ class UI {
   }
 
   clearSelection() { this.selection.units = []; this.selection.building = null; this.refreshPanel(); }
+
+  selectArmy() {
+    const units = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy);
+    if (units.length === 0) { game.log('No army to select.'); return; }
+    this.selection.units = units; this.selection.building = null;
+    this.refreshPanel();
+  }
 
   clickSelect(sx, sy) {
     const [wx, wy] = this.screenToWorld(sx, sy);
@@ -209,6 +387,8 @@ class UI {
       bar.appendChild(btn);
     }
     document.getElementById('diplo-btn').onclick = () => this.toggleDiplomacy();
+    document.getElementById('army-btn').onclick = () => this.selectArmy();
+    document.getElementById('cancel-place').onclick = () => { this.placing = null; };
     document.getElementById('speed-btn').onclick = () => {
       this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
       document.getElementById('speed-btn').textContent = '⏩ ' + this.speed + 'x';
@@ -258,7 +438,9 @@ class UI {
           const q = b.trainQueue[0];
           html += `<div class="dim">Training ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / UNIT_TYPES[q.unitKey].trainTime * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
         }
-        html += `<div class="dim">Right-click the map to set a rally point.</div>`;
+        html += this.isTouch
+          ? `<div class="dim">Two-finger tap the map to set a rally point.</div>`
+          : `<div class="dim">Right-click the map to set a rally point.</div>`;
         if (!b.grand && b.grandProgress === 0) {
           html += `<button id="grand" title="Prosperity victory: requires 50 population and 70% happiness.\nCosts 300 gold, 200 wood, 200 stone.">👑 Build Grand Castle</button>`;
         } else if (!b.grand) {
@@ -298,7 +480,9 @@ class UI {
       for (const u of us) byType[u.type.name] = (byType[u.type.name] || 0) + 1;
       let html = `<h3>${us.length} unit${us.length > 1 ? 's' : ''} selected</h3>`;
       html += '<div>' + Object.entries(byType).map(([n, c]) => `${c}× ${n}`).join(', ') + '</div>';
-      html += `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
+      html += this.isTouch
+        ? `<div class="dim">Two-finger tap: move / attack. Hold + drag: box-select.</div>`
+        : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
       p.innerHTML = html;
     }
   }
@@ -360,6 +544,8 @@ class UI {
 
   // ---------- rendering ----------
   render() {
+    const cancelBtn = document.getElementById('cancel-place');
+    cancelBtn.style.display = this.placing ? 'block' : 'none';
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
     ctx.fillStyle = '#2a3038';
