@@ -136,7 +136,12 @@ async function boot() {
   ui = new UI(document.getElementById('game'));
   ui.centerOn(game.map.startZones[0].x, game.map.startZones[0].y);
   game.log('Welcome to your nation! Feed your people, house them, and choose: trade or war.', 'good');
-  game.log('Build farms and houses first. WASD to pan, wheel to zoom.');
+  if (ui.isTouch) {
+    game.log('Build farms and houses first. Drag to pan, pinch to zoom, tap to select.');
+    game.log('Two-finger tap to move/attack/set rally. Hold and drag to box-select an army.');
+  } else {
+    game.log('Build farms and houses first. WASD to pan, wheel to zoom.');
+  }
 
   let last = performance.now();
   let acc = 0;
