@@ -113,8 +113,13 @@ class GameMap {
     const i = this.idx(x, y);
     const b = this.buildingAt[i];
     if (b) {
-      if (b.type.key === 'gate' && (faction === undefined || b.faction === faction || (typeof game !== 'undefined' && game.diplomacy.status(b.faction, faction) === 'alliance'))) return true;
-      return false;
+      // Gates open for their owner and allies; walls and keeps (town hall / castle) are
+      // solid barriers. Everything else — houses, farms, camps, markets — is walkable, so
+      // troops can move freely between the buildings of a settlement.
+      if (b.type.key === 'gate') return faction === undefined || b.faction === faction
+        || (typeof game !== 'undefined' && game.diplomacy.status(b.faction, faction) === 'alliance');
+      if (b.type.solid) return false;
+      return true;
     }
     const t = this.terrain[i];
     if (t === T_WATER) return this.bridge[i] !== 0;

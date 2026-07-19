@@ -6,7 +6,7 @@
 const BUILDING_TYPES = {
   townhall: {
     key: 'townhall', name: 'Town Hall', art: AT.TOWNHALL, pair: true, size: 2,
-    cost: {}, hp: 900, buildTime: 0, slots: 0,
+    cost: {}, hp: 900, buildTime: 0, slots: 0, solid: true,
     storage: { food: 300, wood: 300, stone: 300, gold: 1e9 },
     desc: 'Heart of your nation. Stores resources. Lose it and your nation falls.',
   },
@@ -70,23 +70,23 @@ const BUILDING_TYPES = {
   },
   castle: {
     key: 'castle', name: 'Castle', art: AT.CASTLE, size: 2,
-    cost: { wood: 40, stone: 60 }, hp: 600, buildTime: 16, slots: 0,
+    cost: { wood: 40, stone: 60 }, hp: 600, buildTime: 16, slots: 0, solid: true,
     desc: 'Trains your army and envoys. Upgrade to Grand Castle for prosperity victory.',
   },
   wall: {
     key: 'wall', name: 'Wall', art: AT.WALL, size: 1,
-    cost: { stone: 5 }, hp: 300, buildTime: 2, slots: 0,
-    desc: 'Stone wall. Keeps enemies out.',
+    cost: { stone: 5 }, hp: 300, buildTime: 2, slots: 0, solid: true, line: true,
+    desc: 'Stone wall. Segments join up into a solid barrier. Keeps enemies out.',
   },
   gate: {
     key: 'gate', name: 'Gate', art: AT.GATE, size: 1,
-    cost: { stone: 15 }, hp: 250, buildTime: 3, slots: 0,
-    desc: 'A wall your own people (and allies) can pass through.',
+    cost: { stone: 15 }, hp: 250, buildTime: 3, slots: 0, line: true,
+    desc: 'A wall your own people (and allies) can pass through. Joins onto walls.',
   },
   bridge: {
     key: 'bridge', name: 'Bridge', art: AT.BRIDGE_H, size: 1,
-    cost: { wood: 20 }, hp: 120, buildTime: 5, slots: 0,
-    desc: 'Cross rivers and lakes.',
+    cost: { wood: 20 }, hp: 120, buildTime: 5, slots: 0, line: true,
+    desc: 'Cross rivers and lakes. Drag to lay a span; press R (or the rotate button) to turn it.',
     waterOnly: true,
   },
 };
@@ -149,11 +149,12 @@ function canPlace(map, typeKey, x, y, factionId) {
   return true;
 }
 
-function placeBuilding(game, typeKey, x, y, factionId) {
+// orient (bridges only): 1 = horizontal, 2 = vertical.
+function placeBuilding(game, typeKey, x, y, factionId, orient = 1) {
   const b = new Building(typeKey, factionId, x, y);
   for (const [tx, ty] of b.footprint()) {
     const i = game.map.idx(tx, ty);
-    if (b.type.key === 'bridge') game.map.bridge[i] = 1;
+    if (b.type.key === 'bridge') game.map.bridge[i] = orient;
     else game.map.buildingAt[i] = b;
   }
   game.factions[factionId].buildings.push(b);
@@ -164,11 +165,24 @@ function placeBuilding(game, typeKey, x, y, factionId) {
 function removeBuilding(game, b) {
   for (const [tx, ty] of b.footprint()) {
     const i = game.map.idx(tx, ty);
-    if (game.map.buildingAt[i] === b) game.map.buildingAt[i] = null;
+    if (b.type.key === 'bridge') { if (game.map.bridge[i]) game.map.bridge[i] = 0; }
+    else if (game.map.buildingAt[i] === b) game.map.buildingAt[i] = null;
   }
   const arr = game.factions[b.faction].buildings;
   const at = arr.indexOf(b);
   if (at >= 0) arr.splice(at, 1);
+}
+
+// Tear down a building, reclaiming 75% of its build cost (rounded up).
+function demolishBuilding(game, b) {
+  const refund = {};
+  for (const [r, v] of Object.entries(b.type.cost || {})) refund[r] = Math.ceil(v * 0.75);
+  removeBuilding(game, b);
+  if (b.faction >= 0) {
+    const n = game.factions[b.faction].nation;
+    for (const r in refund) n.res[r] += refund[r];
+  }
+  return refund;
 }
 
 // Production per tick for one worked building. Returns {resource, amount} or null.
