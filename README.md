@@ -33,12 +33,42 @@ Starving citizens die, and starving armies fight poorly.
 | 🍞 Food | crop fields (bonus next to water/wells) | Farm workers |
 | 🪵 Wood | tree tiles (they deplete!) | Lumber Camp workers |
 | 🪨 Stone | rock tiles | Quarry workers |
-| 🪙 Gold | cave tiles, taxes, trade caravans | Gold Mine, Market |
+| 🪙 Gold | cave tiles, taxes, trade, plunder | Gold Mine, Market |
 
 Click a finished building and use **+/−** to assign idle citizens to its worker
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
 happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, and
 the Town Hall is your nation's heart — lose it and you lose the game.
+
+**Resources are stored physically.** Goods pile up in your **Town Hall** and
+**Storehouses**, not in an abstract bank — so storage is finite (build Storehouses
+to hold more) and, crucially, **lootable**. Select any storehouse to see exactly
+what's inside it.
+
+## Trade & the market
+
+Select your **Market** to open the commodity exchange:
+- **Buy / Sell** food, wood, and stone for gold at live prices. Prices move with
+  **supply and demand** — flood the market selling and the price drops; buy heavily
+  and it climbs. When nations run short of a good, its price **spikes** — sell your
+  surplus to desperate neighbors for a fortune.
+- **Barter** goods directly (e.g. 🪵→🪨) at market-implied rates, no gold needed.
+- Trade pacts still spawn caravans that pay both partners; alliances still hold.
+
+**Embargo (🚫, Diplomacy panel):** cut a rival off from trade without going to war.
+Your allies join the blockade, and the target's market terms worsen the more nations
+shun them — a way to strangle an economy by diplomacy alone.
+
+## Raiding & plunder
+
+At war, you don't just burn buildings — you rob them.
+- **Bandits** (train at the Castle) are fast, fragile raiders. Send one onto an enemy
+  **Storehouse** and it siphons the goods inside, then flees home to bank them. Robbery
+  doesn't destroy the building — it just empties it.
+- **Full raid:** send your army to raze a storehouse. When it falls, its entire stock
+  **spills onto the ground as loot**. Your troops must physically **carry the plunder
+  home** to a storehouse to keep it — cut down a laden porter and the loot spills again
+  for anyone to grab. Idle troops near spilled loot will move to collect it.
 
 **Diplomacy (🕊️ button):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.
@@ -56,9 +86,15 @@ the Town Hall is your nation's heart — lose it and you lose the game.
 - 🤝 **Diplomatic** — every surviving nation allied with you.
 - ⚔️ **Conquest** — every rival Town Hall destroyed.
 
-**Controls:** WASD/arrows pan · wheel zooms · left-click/drag selects ·
-right-click moves/attacks (or sets rally with a Castle selected) · Shift+click
-places multiple buildings · Esc cancels.
+**Controls (desktop):** WASD/arrows pan · wheel zooms · left-click/drag selects ·
+right-click moves/attacks — or, with bandits selected, sends them to rob an enemy
+storehouse; sets rally with a Castle selected · Shift+click places multiple
+buildings · Esc cancels.
+
+**Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
+anyway" to dismiss the rotate hint). One-finger drag pans · pinch zooms · tap selects
+or places · hold-and-drag box-selects an army · two-finger tap moves/attacks/robs or
+sets a rally.
 
 ## Code layout
 
@@ -67,11 +103,13 @@ Plain `<script>` modules, no build step:
 - `js/assets.js` — atlas coordinates, animation auto-detection, faction palette-swap
   (the blue Minifolks art and orange roofs are hue-shifted per nation at load)
 - `js/map.js` — seeded map generation, water autotiling, A* pathfinding
-- `js/buildings.js`, `js/economy.js` — building defs/placement and the nation sim
-- `js/units.js` — unit stats, movement, combat, projectiles
-- `js/factions.js` — faction state and the AI (economy build order + military)
-- `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes
-- `js/ui.js`, `js/main.js` — rendering, input, HUD, game loop
+- `js/buildings.js` — building defs/placement, incl. physical storage buildings
+- `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
+- `js/market.js` — supply/demand commodity pricing, buy/sell, barter
+- `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
+- `js/factions.js` — faction state and the AI (economy, trading, military, raiding)
+- `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
+- `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, game loop
 
 ## Credits
 

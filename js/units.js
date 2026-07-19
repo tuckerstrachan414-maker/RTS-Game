@@ -15,9 +15,14 @@ const UNIT_TYPES = {
   cavalier: { key: 'cavalier', name: 'Cavalier',   cost: { food: 40, gold: 30 }, hp: 100, dmg: 12, dmgType: 'melee',  range: 0.9, speed: 3.2, cooldown: 1.1, trainTime: 12, desc: 'Heavy shock cavalry.' },
   king:     { key: 'king',     name: 'King',       cost: { food: 100, gold: 100 }, hp: 200, dmg: 14, dmgType: 'melee', range: 1.0, speed: 2.4, cooldown: 1.0, trainTime: 20, aura: 1.15, auraR: 4, unique: true, desc: 'One per nation. Nearby troops fight harder. If he falls, morale suffers.' },
   prince:   { key: 'prince',   name: 'Prince (Envoy)', cost: { food: 20, gold: 20 }, hp: 50, dmg: 4, dmgType: 'melee', range: 0.9, speed: 2.8, cooldown: 1.2, trainTime: 8, envoy: true, desc: 'Diplomat. Carries proposals to other nations.' },
+  bandit:   { key: 'bandit',   name: 'Bandit',     spriteKey: 'horseman', cost: { food: 15, gold: 15 }, hp: 45, dmg: 5, dmgType: 'melee', range: 0.9, speed: 3.4, cooldown: 1.1, trainTime: 7, robber: true, desc: 'Fast raider. Send onto an enemy Storehouse to rob it and flee home with the loot.' },
 };
 
-const TRAIN_MENU = ['sword', 'spear', 'shield', 'halberd', 'archer', 'crossbow', 'mage', 'archmage', 'horseman', 'cavalier', 'prince', 'king'];
+// carry capacity: how much plunder a unit can haul (0 = cannot carry loot)
+const UNIT_CARRY = { archer: 12, crossbow: 12, mage: 10, archmage: 10, horseman: 30, cavalier: 30, king: 0, prince: 0, bandit: 45 };
+for (const k in UNIT_TYPES) UNIT_TYPES[k].carry = UNIT_CARRY[k] !== undefined ? UNIT_CARRY[k] : 20;
+
+const TRAIN_MENU = ['sword', 'spear', 'shield', 'halberd', 'archer', 'crossbow', 'mage', 'archmage', 'horseman', 'cavalier', 'bandit', 'prince', 'king'];
 
 let nextUnitId = 1;
 
@@ -36,13 +41,16 @@ class Unit {
     this.anim = 'idle'; this.animT = 0;
     this.facing = 1;           // 1 right, -1 left
     this.dead = false; this.deathT = 0;
-    this.mission = null;       // envoy/caravan mission data
+    this.mission = null;       // envoy/caravan/rob/haul mission data
     this.repathT = 0;
+    this.carry = { food: 0, wood: 0, stone: 0, gold: 0 };  // plunder being hauled
+    this.carryCap = this.type.carry || 0;
   }
 
   get tileX() { return Math.floor(this.x); }
   get tileY() { return Math.floor(this.y); }
   get alive() { return !this.dead; }
+  carryTotal() { return this.carry.food + this.carry.wood + this.carry.stone + this.carry.gold; }
 
   orderMove(tx, ty) {
     this.target = null;
@@ -51,8 +59,32 @@ class Unit {
   }
 
   orderAttack(target) {
+    this.mission = null;
     this.target = target;
     this.dest = null;
+  }
+
+  // send a robber to steal from an enemy storage building, then flee home
+  orderRob(building) {
+    this.mission = { kind: 'rob', target: building };
+    this.target = null; this.dest = null; this.path = [];
+    this.aggressive = false;
+  }
+
+  nearestStorage() {
+    let best = null, bd = Infinity;
+    for (const b of game.factions[this.faction].buildings) {
+      if (!b.done || b.hp <= 0 || !b.type.storage) continue;
+      const d = Math.hypot(b.cx - this.x, b.cy - this.y);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
+
+  startHaul() {
+    if (this.carryTotal() < 0.5) { this.mission = null; this.aggressive = true; return; }
+    this.mission = { kind: 'haul' };
+    this.target = null; this.path = [];
   }
 
   distTo(t) {
@@ -66,8 +98,12 @@ class Unit {
     if (this.cool > 0) this.cool -= dt;
     this.repathT -= dt;
 
-    // envoy / caravan missions manage their own destinations
-    if (this.mission) game.diplomacy.tickMission(this, dt);
+    // raid missions manage their own movement + actions
+    if (this.mission) {
+      if (this.mission.kind === 'rob') return this.tickRob(dt);
+      if (this.mission.kind === 'haul') return this.tickHaul(dt);
+      game.diplomacy.tickMission(this, dt);  // caravan / envoy
+    }
 
     // auto-acquire enemies in range
     if (!this.target && this.aggressive && !this.type.envoy && !this.mission) {
@@ -92,8 +128,63 @@ class Unit {
       }
     } else if (this.path.length > 0) {
       this.followPath(dt);
+    } else if (this.carryTotal() > 0 && !this.type.envoy) {
+      this.startHaul();   // idle with plunder → carry it home
     } else {
       this.setAnim('idle');
+    }
+  }
+
+  // steal goods from an enemy storage building, then haul them home
+  tickRob(dt) {
+    const b = this.mission.target;
+    if (!b || b.hp <= 0 || !game.diplomacy.hostile(this.faction, b.faction) || this.carryTotal() >= this.carryCap - 0.01) {
+      return this.startHaul();
+    }
+    if (this.distTo(b) <= this.type.range + 0.3) {
+      this.path = [];
+      this.setAnim('attack');
+      let room = this.carryCap - this.carryTotal();
+      const rate = 30 * dt;
+      let grabbed = rate;
+      for (const r of ['gold', 'stone', 'wood', 'food']) {   // grab the valuables first
+        if (room <= 0 || grabbed <= 0) break;
+        const take = Math.min(b.store[r], grabbed, room);
+        if (take <= 0) continue;
+        b.store[r] -= take; this.carry[r] += take; room -= take; grabbed -= take;
+      }
+      const left = b.store.food + b.store.wood + b.store.stone + b.store.gold;
+      if (b.faction === 0 && this.robWarn !== true) { this.robWarn = true; game.log(`Bandits are robbing your ${b.type.name}!`, 'bad'); }
+      if (room <= 0.01 || left < 0.5) this.startHaul();
+    } else {
+      if (this.path.length === 0 || this.repathT <= 0) {
+        const [tx, ty] = targetCenter(b);
+        this.path = findPath(game.map, this.tileX, this.tileY, Math.floor(tx), Math.floor(ty), this.faction);
+        this.repathT = 1.2;
+      }
+      this.followPath(dt);
+    }
+  }
+
+  // carry plunder back to a friendly storehouse and deposit it
+  tickHaul(dt) {
+    const home = this.nearestStorage();
+    if (!home) { this.mission = null; this.aggressive = true; return; }  // nowhere to bank it
+    if (this.distTo(home) <= this.type.range + 0.4) {
+      const n = game.factions[this.faction].nation;
+      let banked = 0;
+      for (const r of RES_KEYS) {
+        if (this.carry[r] > 0) { n.deposit(r, this.carry[r]); banked += this.carry[r]; this.carry[r] = 0; }
+      }
+      this.mission = null; this.aggressive = true; this.robWarn = false;
+      if (this.faction === 0 && banked > 0.5) game.log(`Your raiders banked ${Math.round(banked)} plunder!`, 'good');
+    } else {
+      if (this.path.length === 0 || this.repathT <= 0) {
+        const [tx, ty] = targetCenter(home);
+        this.path = findPath(game.map, this.tileX, this.tileY, Math.floor(tx), Math.floor(ty), this.faction);
+        this.repathT = 1.2;
+      }
+      this.followPath(dt);
     }
   }
 

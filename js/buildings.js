@@ -7,7 +7,14 @@ const BUILDING_TYPES = {
   townhall: {
     key: 'townhall', name: 'Town Hall', art: AT.TOWNHALL, pair: true, size: 2,
     cost: {}, hp: 900, buildTime: 0, slots: 0,
+    storage: { food: 300, wood: 300, stone: 300, gold: 1e9 },
     desc: 'Heart of your nation. Stores resources. Lose it and your nation falls.',
+  },
+  storehouse: {
+    key: 'storehouse', name: 'Storehouse', art: AT.LUMBER, size: 1,
+    cost: { wood: 40, stone: 20 }, hp: 400, buildTime: 10, slots: 0,
+    storage: { food: 500, wood: 500, stone: 500, gold: 1e9 },
+    desc: 'Holds a large stockpile of goods. Enemies can rob it or raze it for loot — guard it well.',
   },
   house: {
     key: 'house', name: 'House', art: AT.HOUSE, pair: true, size: 1,
@@ -84,7 +91,7 @@ const BUILDING_TYPES = {
   },
 };
 
-const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
+const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
 
 let nextBuildingId = 1;
 
@@ -101,6 +108,7 @@ class Building {
     this.trainQueue = [];                    // {unitKey, t}
     this.grand = false;                      // grand castle upgrade
     this.grandProgress = 0;
+    this.store = { food: 0, wood: 0, stone: 0, gold: 0 };  // physical goods held (storage buildings)
   }
   get done() { return this.progress >= 1; }
   get cx() { return this.x + this.type.size / 2; }   // center in tile coords

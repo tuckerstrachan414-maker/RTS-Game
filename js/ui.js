@@ -343,7 +343,14 @@ class UI {
       }
     }
     if (target) {
-      for (const u of this.selection.units) if (u.alive && !u.mission) u.orderAttack(target);
+      const robbable = target instanceof Building && target.type.storage;
+      let robbed = 0, razed = 0;
+      for (const u of this.selection.units) {
+        if (!u.alive || u.type.envoy) continue;
+        if (robbable && u.type.robber) { u.orderRob(target); robbed++; }
+        else { u.orderAttack(target); razed++; }
+      }
+      if (robbed && robbable) game.log(`${robbed} bandit${robbed > 1 ? 's' : ''} moving to rob the ${target.type.name}.`);
     } else {
       // spread move formation
       const n = this.selection.units.length;
@@ -426,9 +433,15 @@ class UI {
       let html = `<h3><span class="dot" style="background:${game.factions[b.faction].color.css}"></span> ${b.type.name}${own ? '' : ' — ' + game.factions[b.faction].name}</h3>`;
       html += `<div>HP ${Math.max(0, Math.ceil(b.hp))}/${b.type.hp}${b.done ? '' : ` — building ${Math.round(b.progress * 100)}%`}</div>`;
       html += `<div class="desc">${b.type.desc}</div>`;
+      if (b.type.storage && b.done) {
+        const s = b.store;
+        html += `<div class="dim">Stored here: 🍞${Math.floor(s.food)} 🪵${Math.floor(s.wood)} 🪨${Math.floor(s.stone)} 🪙${Math.floor(s.gold)}</div>`;
+        if (!own) html += `<div class="dim">Send Bandits to rob it, or an army to raze it and grab the loot.</div>`;
+      }
       if (own && b.done && b.type.slots) {
         html += `<div class="workers">Workers: <button id="wminus">−</button> <b>${b.workers}/${b.type.slots}</b> <button id="wplus">+</button> <span class="dim">(idle: ${game.factions[0].nation.idleWorkers()})</span></div>`;
       }
+      if (own && b.done && b.type.key === 'market') html += this.marketPanelHTML();
       if (own && b.done && b.type.key === 'castle') {
         html += `<div class="trainrow">` + TRAIN_MENU.map(k => {
           const t = UNIT_TYPES[k];
@@ -456,6 +469,7 @@ class UI {
         if (minus) minus.onclick = () => { if (b.workers > 0) b.workers--; this.refreshPanel(); };
         if (plus) plus.onclick = () => { if (b.workers < b.type.slots && n.idleWorkers() > 0) b.workers++; this.refreshPanel(); };
       }
+      if (own && b.done && b.type.key === 'market') this.wireMarket(p);
       if (own && b.type.key === 'castle') {
         p.querySelectorAll('.tbtn').forEach(btn => {
           btn.onclick = () => {
@@ -480,11 +494,55 @@ class UI {
       for (const u of us) byType[u.type.name] = (byType[u.type.name] || 0) + 1;
       let html = `<h3>${us.length} unit${us.length > 1 ? 's' : ''} selected</h3>`;
       html += '<div>' + Object.entries(byType).map(([n, c]) => `${c}× ${n}`).join(', ') + '</div>';
+      const carried = { food: 0, wood: 0, stone: 0, gold: 0 };
+      let hauling = 0;
+      for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
+      if (hauling) html += `<div class="good">Hauling plunder: 🍞${Math.floor(carried.food)} 🪵${Math.floor(carried.wood)} 🪨${Math.floor(carried.stone)} 🪙${Math.floor(carried.gold)}</div>`;
+      if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
       html += this.isTouch
         ? `<div class="dim">Two-finger tap: move / attack. Hold + drag: box-select.</div>`
         : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
       p.innerHTML = html;
     }
+  }
+
+  // ---------- market trade UI ----------
+  marketPanelHTML() {
+    const n = game.factions[0].nation;
+    const m = game.market;
+    const ic = { food: '🍞', wood: '🪵', stone: '🪨', gold: '🪙' };
+    const pen = m.accessPenalty(0);
+    let html = `<div class="market"><div class="dim">Market — buy / sell for gold:</div>`;
+    for (const r of TRADE_RES) {
+      html += `<div class="mrow">${ic[r]} <b>${m.buyPrice(n, r).toFixed(1)}</b>/<b>${m.sellPrice(n, r).toFixed(1)}</b>
+        <button data-buy="${r}">Buy 20</button><button data-sell="${r}">Sell 20</button></div>`;
+    }
+    html += `<div class="dim">Barter 20 (give → get):</div><div class="brow">`;
+    const pairs = [['wood', 'stone'], ['stone', 'wood'], ['food', 'wood'], ['wood', 'food'], ['food', 'stone'], ['stone', 'food']];
+    for (const [g, gt] of pairs) {
+      const out = m.barterRate(n, g, 20, gt);
+      html += `<button data-barter="${g}:${gt}" title="20 ${g} → ~${out.toFixed(0)} ${gt}">${ic[g]}→${ic[gt]}</button>`;
+    }
+    html += `</div>`;
+    if (pen > 0) html += `<div class="bad">Embargoed — trade terms worsened ${Math.round(pen * 100)}%.</div>`;
+    html += `</div>`;
+    return html;
+  }
+  wireMarket(p) {
+    const n = game.factions[0].nation, m = game.market;
+    p.querySelectorAll('[data-buy]').forEach(btn => btn.onclick = () => {
+      const err = m.buy(n, btn.dataset.buy, 20); if (err) game.log(err, 'bad'); this.refreshPanel();
+    });
+    p.querySelectorAll('[data-sell]').forEach(btn => btn.onclick = () => {
+      const err = m.sell(n, btn.dataset.sell, 20); if (err) game.log(err, 'bad'); this.refreshPanel();
+    });
+    p.querySelectorAll('[data-barter]').forEach(btn => btn.onclick = () => {
+      const [g, gt] = btn.dataset.barter.split(':');
+      const res = m.barter(n, g, 20, gt);
+      if (typeof res === 'string') game.log(res, 'bad');
+      else game.log(`Bartered ${Math.round(res.gave)} ${g} for ${Math.round(res.got)} ${gt}.`);
+      this.refreshPanel();
+    });
   }
 
   // ---------- diplomacy panel ----------
@@ -520,6 +578,9 @@ class UI {
             ${st === 'war'
               ? `<button data-act="peace" data-f="${i}" title="Pay 100 gold in reparations.">🕊️ Sue for Peace</button>`
               : `<button data-act="war" data-f="${i}" title="No going back cheaply.">⚔️ Declare War</button>`}
+            ${dip.embargoed(0, i)
+              ? `<button data-act="lift" data-f="${i}" title="Reopen trade with them.">🚫 Lift Embargo</button>`
+              : `<button data-act="embargo" data-f="${i}" title="Cut them off from trade. Allies join; worsens their market prices.">🚫 Embargo</button>`}
           </div>`;
       }
       html += `</div>`;
@@ -536,6 +597,8 @@ class UI {
         else if (act === 'ally') err = game.diplomacy.propose(0, fid, 'alliance');
         else if (act === 'war') game.diplomacy.declareWar(0, fid);
         else if (act === 'peace') err = game.diplomacy.suePeace(0, fid);
+        else if (act === 'embargo') err = game.diplomacy.declareEmbargo(0, fid);
+        else if (act === 'lift') err = game.diplomacy.liftEmbargo(0, fid);
         if (err) game.log(err, 'bad');
         this.refreshDiplomacy();
       };
@@ -595,6 +658,9 @@ class UI {
     }
     units.sort((a, b) => a.y - b.y);
     for (const u of units) this.drawUnit(u);
+
+    // loot piles on the ground
+    for (const pile of game.loot) this.drawLoot(pile);
 
     // projectiles
     for (const p of game.projectiles) this.drawProjectile(p);
@@ -662,7 +728,7 @@ class UI {
   drawUnit(u) {
     const ctx = this.ctx;
     const z = this.cam.zoom;
-    const sheet = Assets.unitSheets[u.faction][u.type.key];
+    const sheet = Assets.unitSheets[u.faction][u.type.spriteKey || u.type.key];
     const anim = sheet.anims[u.anim] || sheet.anims.idle;
     let frame;
     if (anim.loop) frame = Math.floor(u.animT * anim.fps) % anim.frames;
@@ -698,8 +764,28 @@ class UI {
         ctx.fillStyle = '#fff';
         ctx.fillRect(sx - 1.5 * z, drawY - 2 * z, 3 * z, 3 * z);
       }
+      if (u.carryTotal() > 0) {   // hauling plunder — draw a little sack
+        ctx.fillStyle = '#a6763a';
+        ctx.fillRect(sx - 2 * z, drawY - 3 * z, 4 * z, 3.5 * z);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillRect(sx - 1 * z, drawY - 3 * z, 2 * z, 1 * z);
+      }
     }
     ctx.globalAlpha = 1;
+  }
+
+  drawLoot(pile) {
+    const z = this.cam.zoom;
+    const [sx, sy] = this.worldToScreen(pile.x, pile.y);
+    const ctx = this.ctx;
+    const blink = pile.t > 105 && Math.floor(pile.t * 3) % 2 === 0;  // flash before it decays
+    if (blink) return;
+    ctx.fillStyle = '#7a5228';
+    ctx.fillRect(sx - 4 * z, sy - 3 * z, 8 * z, 6 * z);
+    ctx.fillStyle = '#a6763a';
+    ctx.fillRect(sx - 4 * z, sy - 3 * z, 8 * z, 2 * z);
+    ctx.fillStyle = '#ffd24a';
+    ctx.fillRect(sx - 1.5 * z, sy - 2 * z, 3 * z, 3 * z);
   }
 
   drawProjectile(p) {
