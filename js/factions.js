@@ -100,10 +100,12 @@ function aiTick(f, dt) {
   const counts = {};
   for (const b of f.buildings) counts[b.type.key] = (counts[b.type.key] || 0) + 1;
   const needFood = foodRate < n.pop * EAT_RATE * 0.5;
+  const nearCap = ['food', 'wood', 'stone'].some(r => n.capacityFor(r) > 0 && n.total(r) > n.capacityFor(r) * 0.85);
   const buildWish =
     !counts.farm ? 'farm' :
     !counts.lumber ? 'lumber' :                      // wood income before anything else
     needFood && (counts.farm || 0) < 4 ? 'farm' :
+    nearCap && (counts.storehouse || 0) < 3 ? 'storehouse' :   // stop wasting production
     !counts.market && f.personality.mercantile > 0.5 ? 'market' :
     n.pop >= n.housingCap() - 2 ? 'house' :
     (counts.lumber || 0) < 1 + Math.floor(n.pop / 25) ? 'lumber' :
@@ -111,6 +113,7 @@ function aiTick(f, dt) {
     !counts.market && f.personality.mercantile > 0.4 ? 'market' :
     !counts.castle ? 'castle' :
     !counts.mine ? 'mine' :
+    !counts.storehouse ? 'storehouse' :
     !counts.market ? 'market' :
     !counts.church ? 'church' :
     (counts.house || 0) < Math.ceil(n.pop / 6) ? 'house' :
@@ -124,20 +127,47 @@ function aiTick(f, dt) {
     }
   }
 
-  // 3. military: maintain an army proportional to threat + aggression
+  // 3. market trading: sell gluts, buy shortfalls — creates real price movement
+  if (game.market && f.buildings.some(b => b.type.key === 'market' && b.done)) {
+    for (const r of ['wood', 'stone']) {
+      if (n.total(r) > n.pop * 1.5 + 90) game.market.sell(n, r, 15);
+    }
+    if (n.total('food') > n.pop * 4 + 120) game.market.sell(n, 'food', 15);
+    if (n.total('gold') > 160) {
+      for (const r of ['food', 'wood', 'stone']) {
+        const need = r === 'food' ? n.pop * 2 : 35;
+        if (n.total(r) < need) game.market.buy(n, r, 15);
+      }
+    }
+  }
+
+  // 4. military: maintain an army proportional to threat + aggression
   const castle = f.buildings.find(b => b.type.key === 'castle' && b.done);
+  const enemies = game.factions.filter(o => !o.eliminated && game.diplomacy.status(f.id, o.id) === 'war');
   if (castle && castle.trainQueue.length < 2) {
     const armySize = f.armyUnits().length;
     const threat = maxThreatAgainst(f);
     const wantArmy = Math.min(14, 2 + Math.floor(threat * 0.12) + Math.floor(f.personality.aggression * 6) + Math.floor(n.pop / 8));
-    if (armySize < wantArmy && n.res.food > 60) {
+    if (armySize < wantArmy && n.total('food') > 60) {
       const pick = ['sword', 'spear', 'archer', 'sword', 'shield', 'crossbow', 'halberd', 'cavalier'][Math.floor(Math.random() * 8)];
       f.trainUnit(pick);
+    } else if (enemies.length && f.personality.aggression >= 0.4 && n.total('food') > 40) {
+      const bandits = f.units.filter(u => u.alive && u.type.robber).length;
+      if (bandits < 2 && Math.random() < 0.5) f.trainUnit('bandit');
     }
   }
 
-  // 4. war behavior
-  const enemies = game.factions.filter(o => !o.eliminated && game.diplomacy.status(f.id, o.id) === 'war');
+  // 5. raiders: send bandits to rob the richest enemy storehouse
+  if (enemies.length) {
+    for (const bnd of f.units) {
+      if (bnd.alive && bnd.type.robber && !bnd.mission && bnd.carryTotal() === 0) {
+        const tgt = richestEnemyStorage(enemies);
+        if (tgt) bnd.orderRob(tgt);
+      }
+    }
+  }
+
+  // 6. war behavior
   if (enemies.length) {
     const army = f.armyUnits();
     if (army.length >= 6 && !f.attackWave) {
@@ -171,6 +201,18 @@ function estimateFoodRate(f) {
     if (b.done && b.type.key === 'farm') rate += b.type.rate * b.workers;
   }
   return rate;
+}
+
+function richestEnemyStorage(enemies) {
+  let best = null, bv = 15;
+  for (const o of enemies) {
+    for (const b of o.buildings) {
+      if (!b.done || b.hp <= 0 || !b.type.storage) continue;
+      const v = b.store.food + b.store.wood + b.store.stone + b.store.gold;
+      if (v > bv) { bv = v; best = b; }
+    }
+  }
+  return best;
 }
 
 function maxThreatAgainst(f) {

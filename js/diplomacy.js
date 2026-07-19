@@ -9,12 +9,14 @@ class Diplomacy {
     this.rel = [];      // rel[a][b] = -100..100
     this.stat = [];     // status matrix
     this.routes = [];   // {a, b, path, caravans: [unit], t}
+    this.embargo = [];  // embargo[a][b] = a refuses trade with b
     this.driftT = 0;
     for (let a = 0; a < nFactions; a++) {
-      this.rel[a] = []; this.stat[a] = [];
+      this.rel[a] = []; this.stat[a] = []; this.embargo[a] = [];
       for (let b = 0; b < nFactions; b++) {
         this.rel[a][b] = 0;
         this.stat[a][b] = a === b ? STATUS.ALLIANCE : STATUS.NEUTRAL;
+        this.embargo[a][b] = false;
       }
     }
   }
@@ -24,6 +26,33 @@ class Diplomacy {
   hostile(a, b) { return a !== b && this.stat[a][b] === STATUS.WAR; }
   allied(a, b) { return a === b || this.stat[a][b] === STATUS.ALLIANCE; }
   atWarAny(a) { return this.stat[a].some((s, b) => b !== a && s === STATUS.WAR); }
+  embargoed(a, b) { return a !== b && this.embargo[a][b]; }
+
+  // ---------- embargo / blockade ----------
+  declareEmbargo(a, b) {
+    if (this.embargo[a][b]) return 'Already embargoing';
+    this.embargo[a][b] = true;
+    this.cancelRoute(a, b);
+    this.addRel(a, b, -15);
+    game.log(`${game.factions[a].name} placed a trade EMBARGO on ${game.factions[b].name}.`, b === 0 ? 'bad' : '');
+    // allies of the embargoing nation join the blockade
+    for (let c = 0; c < this.n; c++) {
+      if (c !== a && c !== b && !game.factions[c].eliminated && this.status(a, c) === STATUS.ALLIANCE && !this.embargo[c][b]) {
+        this.embargo[c][b] = true;
+        this.cancelRoute(c, b);
+        this.addRel(c, b, -8);
+        game.log(`${game.factions[c].name} joins the embargo against ${game.factions[b].name}.`);
+      }
+    }
+    return null;
+  }
+  liftEmbargo(a, b) {
+    if (!this.embargo[a][b]) return 'No embargo to lift';
+    this.embargo[a][b] = false;
+    this.addRel(a, b, 6);
+    game.log(`${game.factions[a].name} lifted its embargo on ${game.factions[b].name}.`, b === 0 ? 'good' : '');
+    return null;
+  }
 
   addRel(a, b, amount) {
     this.rel[a][b] = Math.max(-100, Math.min(100, this.rel[a][b] + amount));
