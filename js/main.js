@@ -141,7 +141,7 @@ class Game {
     this.over = true;
     const el = document.getElementById('gameover');
     el.style.display = 'flex';
-    el.querySelector('h1').textContent = won ? '🏆 Victory' : '💀 Defeat';
+    el.querySelector('h1').innerHTML = won ? '<span class="icon icon-trophy"></span> Victory' : '<span class="icon icon-skull"></span> Defeat';
     el.querySelector('p').textContent = text;
   }
 }

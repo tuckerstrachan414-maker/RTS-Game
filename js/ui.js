@@ -3,6 +3,9 @@
 
 const ZOOMS = [1, 2, 3, 4];
 
+// Pixel-art icon (assets/icons16x16.png via CSS sprite, see .icon-* rules) in place of an emoji glyph.
+const icon = key => `<span class="icon icon-${key}"></span>`;
+
 class UI {
   constructor(canvas) {
     this.canvas = canvas;
@@ -425,7 +428,7 @@ class UI {
     document.getElementById('ui-show').onclick = () => document.body.classList.remove('ui-hidden');
     document.getElementById('speed-btn').onclick = () => {
       this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
-      document.getElementById('speed-btn').textContent = '⏩ ' + this.speed + 'x';
+      document.getElementById('speed-val').textContent = this.speed + 'x';
     };
     const tax = document.getElementById('tax');
     tax.oninput = () => {
@@ -444,7 +447,7 @@ class UI {
     el('r-pop').textContent = `${n.pop}/${n.housingCap()}`;
     el('r-idle').textContent = n.idleWorkers();
     const hap = Math.round(n.happiness);
-    el('r-happy').textContent = hap + '%' + (n.starving ? ' 🥀' : hap >= 70 ? ' 😊' : hap >= 40 ? ' 😐' : ' 😠');
+    el('r-happy').innerHTML = hap + '%' + (n.starving ? ' ' + icon('wilted') : hap >= 70 ? ' ' + icon('happy') : hap >= 40 ? ' ' + icon('neutral') : ' ' + icon('angry'));
     el('r-happy').className = hap >= 70 ? 'good' : hap >= 40 ? '' : 'bad';
     el('r-food').className = n.starving ? 'bad' : '';
   }
@@ -462,7 +465,7 @@ class UI {
       html += `<div class="desc">${b.type.desc}</div>`;
       if (b.type.storage && b.done) {
         const s = b.store;
-        html += `<div class="dim">Stored here: 🍞${Math.floor(s.food)} 🪵${Math.floor(s.wood)} 🪨${Math.floor(s.stone)} 🪙${Math.floor(s.gold)}</div>`;
+        html += `<div class="dim">Stored here: ${icon('food')}${Math.floor(s.food)} ${icon('wood')}${Math.floor(s.wood)} ${icon('stone')}${Math.floor(s.stone)} ${icon('gold')}${Math.floor(s.gold)}</div>`;
         if (!own) html += `<div class="dim">Send Bandits to rob it, or an army to raze it and grab the loot.</div>`;
       }
       if (own && b.done && b.type.slots) {
@@ -476,16 +479,16 @@ class UI {
         html += `<div class="trainrow">` + TRAIN_MENU.map(k => {
           const t = UNIT_TYPES[k];
           if (t.tier > f0.castleTier) {
-            return `<button class="tbtn locked" title="Locked — the ${CASTLE_UPGRADES[t.tier].name} upgrade unlocks the ${t.name}.">🔒 ${t.name}</button>`;
+            return `<button class="tbtn locked" title="Locked — the ${CASTLE_UPGRADES[t.tier].name} upgrade unlocks the ${t.name}.">${icon('lock')} ${t.name}</button>`;
           }
           return `<button class="tbtn" data-u="${k}" title="${t.desc}\n${costText(t.cost)} · ${t.trainTime}s">${t.name}</button>`;
         }).join('') + `</div>`;
         if (b.upgrading) {
           const up = CASTLE_UPGRADES[b.upgrading.tier];
-          html += `<div class="good">⬆️ ${up.name} rising… ${Math.round(b.upgrading.t / up.time * 100)}%</div>`;
+          html += `<div class="good">${icon('upgrade')} ${up.name} rising… ${Math.round(b.upgrading.t / up.time * 100)}%</div>`;
         } else if (CASTLE_UPGRADES[f0.castleTier + 1]) {
           const up = CASTLE_UPGRADES[f0.castleTier + 1];
-          html += `<button id="castle-up" title="${up.desc}\n${costText(up.cost)} · ${up.time}s">⬆️ ${up.name} (${costText(up.cost)})</button>`;
+          html += `<button id="castle-up" title="${up.desc}\n${costText(up.cost)} · ${up.time}s">${icon('upgrade')} ${up.name} (${costText(up.cost)})</button>`;
         }
         if (b.trainQueue.length) {
           const q = b.trainQueue[0];
@@ -495,11 +498,11 @@ class UI {
           ? `<div class="dim">Double-tap the map to set a rally point.</div>`
           : `<div class="dim">Right-click the map to set a rally point.</div>`;
         if (!b.grand && b.grandProgress === 0) {
-          html += `<button id="grand" title="Prosperity victory: requires 50 population and 70% happiness.\nCosts 300 gold, 200 wood, 200 stone.">👑 Build Grand Castle</button>`;
+          html += `<button id="grand" title="Prosperity victory: requires 50 population and 70% happiness.\nCosts 300 gold, 200 wood, 200 stone.">${icon('crown')} Build Grand Castle</button>`;
         } else if (!b.grand) {
           html += `<div class="good">Grand Castle rising… ${Math.round(b.grandProgress / 30 * 100)}%</div>`;
         } else {
-          html += `<div class="good">👑 Grand Castle</div>`;
+          html += `<div class="good">${icon('crown')} Grand Castle</div>`;
         }
       }
       p.innerHTML = html;
@@ -547,7 +550,7 @@ class UI {
       const carried = { food: 0, wood: 0, stone: 0, gold: 0 };
       let hauling = 0;
       for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
-      if (hauling) html += `<div class="good">Hauling plunder: 🍞${Math.floor(carried.food)} 🪵${Math.floor(carried.wood)} 🪨${Math.floor(carried.stone)} 🪙${Math.floor(carried.gold)}</div>`;
+      if (hauling) html += `<div class="good">Hauling plunder: ${icon('food')}${Math.floor(carried.food)} ${icon('wood')}${Math.floor(carried.wood)} ${icon('stone')}${Math.floor(carried.stone)} ${icon('gold')}${Math.floor(carried.gold)}</div>`;
       if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
       html += this.isTouch
         ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
@@ -574,12 +577,12 @@ class UI {
   tooltipHTML(key) {
     const f = game.factions[0];
     const n = f.nation;
-    const head = (icon, name) => `<h3>${icon} ${name} <button id="tip-close">✕</button></h3>`;
+    const head = (ic, name) => `<h3>${ic} ${name} <button id="tip-close">✕</button></h3>`;
     const stock = r => `<div class="row"><span>In storage</span><b>${Math.floor(n.total(r))} / ${n.capacityFor(r) >= 1e8 ? '∞' : n.capacityFor(r)}</b></div>`;
     const count = k => f.buildings.filter(b => b.done && b.type.key === k).length;
     if (key === 'food') {
       const inc = estimateIncome(f, 'food'), eat = n.pop * EAT_RATE;
-      return head('🍞', 'Food')
+      return head(icon('food'), 'Food')
         + `<div class="desc">Grown by Farm workers on crop fields — +50% next to water, +25% near a Well. Feeds your people; a surplus lets the nation grow.</div>`
         + stock('food')
         + `<div class="row"><span>From ${count('farm')} farm${count('farm') === 1 ? '' : 's'}</span><b class="good">+${inc.toFixed(1)}/s</b></div>`
@@ -588,21 +591,21 @@ class UI {
         + (n.starving ? `<div class="bad">Your people are STARVING — build farms now!</div>` : '');
     }
     if (key === 'wood') {
-      return head('🪵', 'Wood')
+      return head(icon('wood'), 'Wood')
         + `<div class="desc">Chopped from real tree tiles by Lumber Camp workers. Forests deplete as they're logged — camps idle when the trees run out.</div>`
         + stock('wood')
         + `<div class="row"><span>From ${count('lumber')} lumber camp${count('lumber') === 1 ? '' : 's'}</span><b class="good">+${estimateIncome(f, 'wood').toFixed(1)}/s</b></div>`
         + `<div class="dim">Spent on most buildings. Sell surplus at the Market.</div>`;
     }
     if (key === 'stone') {
-      return head('🪨', 'Stone')
+      return head(icon('stone'), 'Stone')
         + `<div class="desc">Cut from rock tiles by Quarry workers. Builds walls, castles and churches.</div>`
         + stock('stone')
         + `<div class="row"><span>From ${count('quarry')} quarr${count('quarry') === 1 ? 'y' : 'ies'}</span><b class="good">+${estimateIncome(f, 'stone').toFixed(1)}/s</b></div>`;
     }
     if (key === 'gold') {
       const taxes = n.pop * n.tax * 0.06;
-      return head('🪙', 'Gold')
+      return head(icon('gold'), 'Gold')
         + `<div class="desc">Dug from caves by Gold Mines, collected as taxes, and earned through trade, caravans and plunder.</div>`
         + stock('gold')
         + `<div class="row"><span>From ${count('mine')} mine${count('mine') === 1 ? '' : 's'} + ${count('market')} market${count('market') === 1 ? '' : 's'}</span><b class="good">+${estimateIncome(f, 'gold').toFixed(1)}/s</b></div>`
@@ -610,7 +613,7 @@ class UI {
         + `<div class="dim">Lifetime trade earnings: ${Math.floor(game.tradeGold)} gold.</div>`;
     }
     if (key === 'pop') {
-      return head('👥', 'Population')
+      return head(icon('pop'), 'Population')
         + `<div class="desc">Your citizens. They eat food, need housing, work your buildings, and become soldiers when trained.</div>`
         + `<div class="row"><span>Citizens / housing</span><b>${n.pop} / ${n.housingCap()}</b></div>`
         + `<div class="row"><span>Working</span><b>${n.workersAssigned()}</b></div>`
@@ -618,7 +621,7 @@ class UI {
         + `<div class="dim">Grows when there's surplus food, free housing, and happiness above 50%. Build Houses to raise the cap.</div>`;
     }
     if (key === 'idle') {
-      return head('💤', 'Idle citizens')
+      return head(icon('idle'), 'Idle citizens')
         + `<div class="desc">Citizens without a job. Select a farm, camp, quarry, mine or market and use +/− to put them to work.</div>`
         + `<div class="row"><span>Idle now</span><b>${n.idleWorkers()}</b></div>`
         + `<div class="dim">Training a soldier at the Castle also consumes a citizen.</div>`;
@@ -634,7 +637,7 @@ class UI {
         [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * 55)],
       ];
       if (f.kingAlive === false) rows.push(['The King is dead', -12]);
-      return head('❤️', 'Happiness')
+      return head(icon('heart'), 'Happiness')
         + `<div class="desc">How content your people are. Above 50% the nation can grow; low happiness stalls it.</div>`
         + `<div class="row"><span>Current</span><b>${Math.round(n.happiness)}%</b></div>`
         + rows.map(([label, v]) =>
@@ -648,7 +651,7 @@ class UI {
   marketPanelHTML() {
     const n = game.factions[0].nation;
     const m = game.market;
-    const ic = { food: '🍞', wood: '🪵', stone: '🪨', gold: '🪙' };
+    const ic = { food: icon('food'), wood: icon('wood'), stone: icon('stone'), gold: icon('gold') };
     const pen = m.accessPenalty(0);
     let html = `<div class="market"><div class="dim">Market — buy / sell for gold:</div>`;
     for (const r of TRADE_RES) {
@@ -701,24 +704,24 @@ class UI {
       const f = game.factions[i];
       const rel = Math.round(dip.relation(0, i));
       const st = dip.status(0, i);
-      const stLabel = { war: '⚔️ AT WAR', neutral: '· Neutral', trade: '🐎 Trade Pact', alliance: '🤝 Alliance' }[st];
+      const stLabel = { war: icon('sword') + ' AT WAR', neutral: '· Neutral', trade: icon('horse') + ' Trade Pact', alliance: icon('handshake') + ' Alliance' }[st];
       html += `<div class="nation ${f.eliminated ? 'dead' : ''}">
         <div class="nhead"><span class="dot" style="background:${f.color.css}"></span> <b>${f.name}</b>
-        <span class="dim">(${f.personality.label})</span> — ${f.eliminated ? '☠️ fallen' : stLabel}</div>`;
+        <span class="dim">(${f.personality.label})</span> — ${f.eliminated ? icon('skull') + ' fallen' : stLabel}</div>`;
       if (!f.eliminated) {
         const pct = (rel + 100) / 2;
         html += `<div class="relbar"><div class="relfill" style="width:${pct}%;background:${rel >= 0 ? '#6a5' : '#a55'}"></div></div>
           <div class="dim">Relations: ${rel}</div>
           <div class="dipbtns">
-            <button data-act="gift" data-f="${i}" title="Send 50 gold. Improves relations.">🎁 Gift 50g</button>
-            <button data-act="trade" data-f="${i}" title="A Prince envoy carries the offer. Both markets earn gold from caravans.">🐎 Trade Pact</button>
-            <button data-act="ally" data-f="${i}" title="Requires strong relations. Allies defend each other.">🤝 Alliance</button>
+            <button data-act="gift" data-f="${i}" title="Send 50 gold. Improves relations.">${icon('gift')} Gift 50g</button>
+            <button data-act="trade" data-f="${i}" title="A Prince envoy carries the offer. Both markets earn gold from caravans.">${icon('horse')} Trade Pact</button>
+            <button data-act="ally" data-f="${i}" title="Requires strong relations. Allies defend each other.">${icon('handshake')} Alliance</button>
             ${st === 'war'
-              ? `<button data-act="peace" data-f="${i}" title="Pay 100 gold in reparations.">🕊️ Sue for Peace</button>`
-              : `<button data-act="war" data-f="${i}" title="No going back cheaply.">⚔️ Declare War</button>`}
+              ? `<button data-act="peace" data-f="${i}" title="Pay 100 gold in reparations.">${icon('dove')} Sue for Peace</button>`
+              : `<button data-act="war" data-f="${i}" title="No going back cheaply.">${icon('sword')} Declare War</button>`}
             ${dip.embargoed(0, i)
-              ? `<button data-act="lift" data-f="${i}" title="Reopen trade with them.">🚫 Lift Embargo</button>`
-              : `<button data-act="embargo" data-f="${i}" title="Cut them off from trade. Allies join; worsens their market prices.">🚫 Embargo</button>`}
+              ? `<button data-act="lift" data-f="${i}" title="Reopen trade with them.">${icon('noentry')} Lift Embargo</button>`
+              : `<button data-act="embargo" data-f="${i}" title="Cut them off from trade. Allies join; worsens their market prices.">${icon('noentry')} Embargo</button>`}
           </div>`;
       }
       html += `</div>`;
@@ -1031,6 +1034,6 @@ function estimateIncome(f, res) {
 }
 
 function costText(cost) {
-  const icons = { food: '🍞', wood: '🪵', stone: '🪨', gold: '🪙' };
+  const icons = { food: icon('food'), wood: icon('wood'), stone: icon('stone'), gold: icon('gold') };
   return Object.entries(cost).map(([k, v]) => `${icons[k]}${v}`).join(' ') || 'free';
 }
