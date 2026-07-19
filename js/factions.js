@@ -52,7 +52,12 @@ class Faction {
 
   tickTraining(dt) {
     for (const b of this.buildings) {
-      if (b.type.key !== 'castle' || !b.done || b.trainQueue.length === 0) continue;
+      if (b.type.key !== 'castle' || !b.done) continue;
+      if (b.grandProgress > 0 && !b.grand) {
+        b.grandProgress += dt;
+        if (b.grandProgress >= 30) { b.grand = true; if (this.isPlayer) game.log('The Grand Castle is complete!', 'good'); }
+      }
+      if (b.trainQueue.length === 0) continue;
       const q = b.trainQueue[0];
       q.t += dt;
       if (q.t >= UNIT_TYPES[q.unitKey].trainTime) {
@@ -62,11 +67,6 @@ class Faction {
         this.units.push(u);
         if (q.unitKey === 'king') this.kingAlive = true;
         if (b.rally) u.orderMove(b.rally[0], b.rally[1]);
-      }
-      // grand castle upgrade
-      if (b.grandProgress > 0 && !b.grand) {
-        b.grandProgress += dt;
-        if (b.grandProgress >= 30) { b.grand = true; if (this.isPlayer) game.log('The Grand Castle is complete!', 'good'); }
       }
     }
   }

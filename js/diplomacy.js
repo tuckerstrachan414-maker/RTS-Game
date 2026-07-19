@@ -236,8 +236,12 @@ class Diplomacy {
             && f.nation.warWeariness < 8;
           if (tempted) this.declareWar(a, b);
         }
-        // idle relations drift toward slight friendliness in peace
-        if (st === STATUS.NEUTRAL) this.addRel(a, b, this.rel[a][b] < 0 ? 0.15 : 0.05);
+        // idle relations drift: friendly by default, but warlike nations covet
+        // weaker neighbors — trade with them or gift them to stay off their list
+        if (st === STATUS.NEUTRAL) {
+          const covets = f.personality.aggression > 0.6 && f.strength() > game.factions[b].strength();
+          this.addRel(a, b, covets ? -0.35 : this.rel[a][b] < 0 ? 0.15 : 0.05);
+        }
       }
     }
   }
