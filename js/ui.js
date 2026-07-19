@@ -15,6 +15,9 @@ class UI {
     this.mouse = { x: 0, y: 0, down: false, dragStart: null };
     this.selection = { units: [], building: null };
     this.placing = null;            // building type key while placing
+    this.placeVertical = false;     // bridge orientation while placing (false=H, true=V)
+    this.paint = null;              // active click-drag "draw a line of walls/bridges" state
+    this.paused = false;            // pause menu open → sim frozen
     this.keys = {};
     this.minimapT = 0;
     this.minimap = document.getElementById('minimap');
@@ -62,7 +65,12 @@ class UI {
     this.resize();
     window.addEventListener('keydown', e => {
       this.keys[e.key.toLowerCase()] = true;
-      if (e.key === 'Escape') { this.placing = null; this.clearSelection(); this.closeDiplomacy(); }
+      if (e.key === 'Escape') {
+        if (this.paused) { this.closePause(); return; }
+        if (this.placing) { this.placing = null; return; }
+        this.clearSelection(); this.closeDiplomacy();
+      }
+      if (e.key.toLowerCase() === 'r' && this.placing) this.rotatePlacing();
       if (e.key.toLowerCase() === 'h') document.body.classList.toggle('ui-hidden');
     });
     window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
@@ -84,7 +92,11 @@ class UI {
     c.addEventListener('mousedown', e => {
       this.mouse.x = e.offsetX; this.mouse.y = e.offsetY;
       if (e.button === 0) {
-        if (this.placing) { this.tryPlace(); return; }
+        if (this.placing) {
+          if (this.isLinePlace()) this.beginPaint();  // drag to draw a run of walls/bridges
+          else this.tryPlace();
+          return;
+        }
         this.mouse.down = true;
         this.mouse.dragStart = [e.offsetX, e.offsetY];
       } else if (e.button === 2) {
@@ -92,9 +104,14 @@ class UI {
         this.rightClick(e.offsetX, e.offsetY);
       }
     });
-    c.addEventListener('mousemove', e => { this.mouse.x = e.offsetX; this.mouse.y = e.offsetY; });
+    c.addEventListener('mousemove', e => {
+      this.mouse.x = e.offsetX; this.mouse.y = e.offsetY;
+      if (this.paint) this.paintTo(...this.screenToTile(e.offsetX, e.offsetY));
+    });
     c.addEventListener('mouseup', e => {
-      if (e.button !== 0 || !this.mouse.down) return;
+      if (e.button !== 0) return;
+      if (this.paint) { this.endPaint(); return; }
+      if (!this.mouse.down) return;
       this.mouse.down = false;
       const [sx, sy] = this.mouse.dragStart;
       const dx = Math.abs(e.offsetX - sx), dy = Math.abs(e.offsetY - sy);
@@ -197,6 +214,9 @@ class UI {
         clearTimeout(this.longPressTimer);
         this.gesture = this.placing ? 'placeDrag' : 'pan';
         p.lastX = p.startX; p.lastY = p.startY;
+        if (this.gesture === 'placeDrag' && this.isLinePlace()) {
+          this.mouse.x = p.startX; this.mouse.y = p.startY; this.beginPaint();
+        }
       }
     }
 
@@ -210,6 +230,7 @@ class UI {
     } else if ((this.gesture === 'placeDrag' || this.gesture === 'box') && ids.length === 1) {
       const p = this.touches.get(ids[0]);
       this.mouse.x = p.x; this.mouse.y = p.y;
+      if (this.paint) this.paintTo(...this.screenToTile(p.x, p.y));
     } else if (this.gesture === 'pinch' && ids.length >= 2 && this.pinch) {
       const pn = this.pinch;
       const a = this.touches.get(pn.ids[0]), b = this.touches.get(pn.ids[1]);
@@ -241,9 +262,12 @@ class UI {
         else this.handleTap(p.x, p.y);
       }
     } else if (this.gesture === 'placeDrag') {
-      const id = [...this.touches.keys()][0];
-      const p = id !== undefined ? this.touches.get(id) : null;
-      if (p) { this.mouse.x = p.x; this.mouse.y = p.y; this.tryPlace(); }
+      if (this.paint) { this.endPaint(); }
+      else {
+        const id = [...this.touches.keys()][0];
+        const p = id !== undefined ? this.touches.get(id) : null;
+        if (p) { this.mouse.x = p.x; this.mouse.y = p.y; this.tryPlace(); }
+      }
     } else if (this.gesture === 'box') {
       const id = [...this.touches.keys()][0];
       const p = id !== undefined ? this.touches.get(id) : null;
@@ -400,8 +424,79 @@ class UI {
     }
     if (!nation.canAfford(type.cost)) { game.log('Not enough resources.', 'bad'); return; }
     nation.pay(type.cost);
-    placeBuilding(game, key, tx, ty, 0);
+    placeBuilding(game, key, tx, ty, 0, this.placeVertical ? 2 : 1);
     if (!this.keys['shift']) this.placing = null;
+  }
+
+  // ---------- click-drag placement (walls, gates, bridges) ----------
+  isLinePlace() { return this.placing && BUILDING_TYPES[this.placing].line; }
+
+  rotatePlacing() {
+    if (this.placing === 'bridge') {
+      this.placeVertical = !this.placeVertical;
+      game.log(`Bridge orientation: ${this.placeVertical ? 'vertical' : 'horizontal'}.`);
+    }
+  }
+
+  // Straight axis-locked run: whichever of dx/dy is larger wins, so a drag lays a clean
+  // line of segments rather than an L-shaped scribble. Bridges auto-face along that run.
+  beginPaint() {
+    const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
+    this.paint = { anchor: [tx, ty], done: new Set(), horizontal: true };
+    this.paintTo(tx, ty);
+  }
+
+  paintTo(tx, ty) {
+    if (!this.paint) return;
+    const [ax, ay] = this.paint.anchor;
+    const horizontal = Math.abs(tx - ax) >= Math.abs(ty - ay);
+    this.paint.horizontal = horizontal;
+    const line = [];
+    if (horizontal) { const s = Math.sign(tx - ax) || 1; for (let x = ax; x !== tx + s; x += s) line.push([x, ay]); }
+    else { const s = Math.sign(ty - ay) || 1; for (let y = ay; y !== ty + s; y += s) line.push([ax, y]); }
+    for (const [x, y] of line) this.paintPlace(x, y, horizontal);
+  }
+
+  paintPlace(tx, ty, horizontal) {
+    const kkey = tx + ',' + ty;
+    if (this.paint.done.has(kkey)) return;
+    this.paint.done.add(kkey);
+    const key = this.placing;
+    const type = BUILDING_TYPES[key];
+    if (!canPlace(game.map, key, tx, ty, 0)) return;               // skip blocked tiles silently
+    const nation = game.factions[0].nation;
+    if (!nation.canAfford(type.cost)) return;                       // stop spending when broke
+    nation.pay(type.cost);
+    const orient = key === 'bridge' ? (horizontal ? 1 : 2) : 1;
+    placeBuilding(game, key, tx, ty, 0, orient);
+  }
+
+  endPaint() {
+    this.paint = null;
+    if (!this.keys['shift']) this.placing = null;
+  }
+
+  // ---------- pause menu ----------
+  openPause() {
+    this.paused = true;
+    this.placing = null;
+    document.getElementById('pause-menu').classList.add('open');
+  }
+  closePause() {
+    this.paused = false;
+    document.getElementById('pause-menu').classList.remove('open');
+  }
+
+  // ---------- demolish ----------
+  demolishSelected() {
+    const b = this.selection.building;
+    if (!b || b.faction !== 0) return;
+    if (b.type.key === 'townhall') { game.log('You cannot demolish your Town Hall.', 'bad'); return; }
+    const refund = demolishBuilding(game, b);
+    const parts = Object.entries(refund).filter(([, v]) => v > 0)
+      .map(([r, v]) => `${icon(r)}${v}`).join(' ');
+    game.log(`${b.type.name} demolished${parts ? ' — reclaimed ' + parts : ''}.`, 'good');
+    this.clearSelection();
   }
 
   // ---------- HUD ----------
@@ -422,17 +517,22 @@ class UI {
       btn.onclick = () => { this.placing = key; this.clearSelection(); };
       bar.appendChild(btn);
     }
-    document.getElementById('diplo-btn').onclick = () => this.toggleDiplomacy();
-    document.getElementById('army-btn').onclick = () => this.selectArmy();
     document.getElementById('cancel-place').onclick = () => { this.placing = null; };
+    document.getElementById('rotate-place').onclick = () => this.rotatePlacing();
     // tap a topbar stat to open a live info tooltip about it
     document.querySelectorAll('#topbar .stat[data-tip]').forEach(el => {
       el.onclick = () => this.toggleTooltip(el.dataset.tip);
     });
-    // hide/show the whole interface to clear screen space
-    document.getElementById('ui-btn').onclick = () => document.body.classList.add('ui-hidden');
+    // Menu button opens the pause menu; the pause menu holds the game actions.
+    document.getElementById('menu-btn').onclick = () => this.openPause();
+    document.getElementById('pause-menu').onclick = e => { if (e.target.id === 'pause-menu') this.closePause(); };
+    document.getElementById('resume-btn').onclick = () => this.closePause();
+    document.getElementById('pm-diplo').onclick = () => { this.closePause(); this.toggleDiplomacy(); };
+    document.getElementById('pm-army').onclick = () => { this.closePause(); this.selectArmy(); };
+    document.getElementById('pm-hide').onclick = () => { this.closePause(); document.body.classList.add('ui-hidden'); };
+    document.getElementById('pm-restart').onclick = () => { if (confirm('Abandon this game and start a new one?')) location.reload(); };
     document.getElementById('ui-show').onclick = () => document.body.classList.remove('ui-hidden');
-    document.getElementById('speed-btn').onclick = () => {
+    document.getElementById('pm-speed').onclick = () => {
       this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
       document.getElementById('speed-val').textContent = this.speed + 'x';
     };
@@ -535,7 +635,14 @@ class UI {
           html += `<div class="good">${icon('crown')} Grand Castle</div>`;
         }
       }
+      if (own && b.type.key !== 'townhall') {
+        const refund = Object.entries(b.type.cost || {}).filter(([, v]) => v > 0)
+          .map(([r, v]) => `${icon(r)}${Math.ceil(v * 0.75)}`).join(' ');
+        html += `<div style="margin-top:8px"><button id="demolish" title="Tear this down and reclaim 75% of its cost">Demolish${refund ? ` (+ ${refund})` : ''}</button></div>`;
+      }
       p.innerHTML = html;
+      const dem = document.getElementById('demolish');
+      if (dem) dem.onclick = () => this.demolishSelected();
       if (own && b.type.slots) {
         const n = game.factions[0].nation;
         const minus = document.getElementById('wminus'), plus = document.getElementById('wplus');
@@ -780,6 +887,7 @@ class UI {
   render() {
     const cancelBtn = document.getElementById('cancel-place');
     cancelBtn.style.display = this.placing ? 'block' : 'none';
+    document.getElementById('rotate-place').style.display = this.placing === 'bridge' ? 'block' : 'none';
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
     ctx.fillStyle = '#2a3038';
@@ -811,12 +919,20 @@ class UI {
       }
     }
 
-    // buildings (skip bridges: drawn as terrain)
+    // buildings (skip bridges: drawn as terrain; skip walls: drawn as a connected structure)
     for (const f of game.factions) {
       for (const b of f.buildings) {
-        if (b.type.key === 'bridge') continue;
+        if (b.type.key === 'bridge' || b.type.key === 'wall') continue;
         if (b.x + b.type.size < x0 || b.x > x1 || b.y + b.type.size < y0 || b.y > y1) continue;
         this.drawBuilding(b);
+      }
+    }
+    // walls: rendered with neighbour-aware joinery so runs read as one continuous barrier
+    for (const f of game.factions) {
+      for (const b of f.buildings) {
+        if (b.type.key !== 'wall') continue;
+        if (b.x + 1 < x0 || b.x > x1 || b.y + 1 < y0 || b.y > y1) continue;
+        this.drawWall(b);
       }
     }
 
@@ -894,6 +1010,52 @@ class UI {
     }
     ctx.fillStyle = game.factions[b.faction].color.css;
     ctx.fillRect(px + 1, py + 1, 4, 4);
+  }
+
+  // Walls draw as a central stone post plus a beam toward every adjacent wall/gate of the
+  // same nation, so a placed run visually fuses into one continuous rampart.
+  drawWall(b) {
+    const ctx = this.ctx;
+    const s = TILE * this.cam.zoom;
+    const map = game.map;
+    const [sx, sy] = this.worldToScreen(b.x, b.y);
+    const joins = (x, y) => {
+      if (!map.inBounds(x, y)) return false;
+      const nb = map.buildingAt[map.idx(x, y)];
+      return nb && nb.faction === b.faction && (nb.type.key === 'wall' || nb.type.key === 'gate');
+    };
+    const up = joins(b.x, b.y - 1), dn = joins(b.x, b.y + 1),
+          lf = joins(b.x - 1, b.y), rt = joins(b.x + 1, b.y);
+    const cx = sx + s / 2, cy = sy + s / 2;
+    const post = Math.max(3, s * 0.5), beam = Math.max(2, s * 0.34), hb = beam / 2;
+    // rectangles making up this segment: a post, plus a beam to each joined side
+    const rects = [[cx - post / 2, cy - post / 2, post, post]];
+    if (up) rects.push([cx - hb, sy, beam, cy - sy]);
+    if (dn) rects.push([cx - hb, cy, beam, sy + s - cy]);
+    if (lf) rects.push([sx, cy - hb, cx - sx, beam]);
+    if (rt) rects.push([cx, cy - hb, sx + s - cx, beam]);
+    ctx.globalAlpha = b.done ? 1 : 0.5;
+    const fill = (col, inflate, topOnly) => {
+      ctx.fillStyle = col;
+      for (const [rx, ry, rw, rh] of rects) {
+        if (topOnly) ctx.fillRect(Math.floor(rx), Math.floor(ry), Math.ceil(rw), Math.max(1, Math.round(rh * 0.28)));
+        else ctx.fillRect(Math.floor(rx - inflate), Math.floor(ry - inflate), Math.ceil(rw + inflate * 2), Math.ceil(rh + inflate * 2));
+      }
+    };
+    fill('#413b32', Math.max(1, s * 0.06), false);   // dark outline
+    fill('#9d9484', 0, false);                       // stone body
+    fill('#c7bda9', 0, true);                         // sunlit top edge
+    ctx.globalAlpha = 1;
+    const [px, py] = [sx, sy];
+    if (!b.done) this.bar(px, py - 5, s, b.progress, '#7ac');
+    else if (b.hp < b.type.hp) this.bar(px, py - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
+    if (this.selection.building === b) {
+      ctx.strokeStyle = '#fff';
+      ctx.strokeRect(px + 0.5, py + 0.5, s - 1, s - 1);
+    }
+    // small ownership pip
+    ctx.fillStyle = game.factions[b.faction].color.css;
+    ctx.fillRect(Math.floor(cx - post / 2), Math.floor(cy - post / 2), Math.max(2, Math.round(s * 0.12)), Math.max(2, Math.round(s * 0.12)));
   }
 
   drawUnit(u) {
@@ -988,8 +1150,12 @@ class UI {
     this.ctx.globalAlpha = 0.6;
     let art = type.art;
     if (type.pair) art = art[1];
+    if (this.placing === 'bridge') art = this.placeVertical ? AT.BRIDGE_V : AT.BRIDGE_H;
     if (this.placing === 'farm') {
       for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) this.tile(AT.CROP_VARS[(dx + dy) % 2], tx + dx, ty + dy);
+    } else if (this.placing === 'wall') {
+      this.ctx.fillStyle = '#9d9484';
+      this.ctx.fillRect(sx + s * 0.22, sy + s * 0.22, s * 0.56, s * 0.56);
     } else if (art) {
       this.ctx.drawImage(Assets.tileset, art[0] * TILE, art[1] * TILE, TILE, TILE, sx, sy, s * type.size, s * type.size);
     }

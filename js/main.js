@@ -219,8 +219,11 @@ async function boot() {
   function frame(now) {
     const real = Math.min(0.1, (now - last) / 1000);
     last = now;
-    acc += real * ui.speed;
-    while (acc >= SIM_DT) { game.tick(SIM_DT); acc -= SIM_DT; }
+    if (ui.paused) { acc = 0; }   // pause menu open: freeze the sim, keep rendering the frozen frame
+    else {
+      acc += real * ui.speed;
+      while (acc >= SIM_DT) { game.tick(SIM_DT); acc -= SIM_DT; }
+    }
     ui.tickInput(real);
     // advance animation clocks smoothly between sim ticks
     ui.render();
