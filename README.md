@@ -40,6 +40,10 @@ slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets 
 happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, and
 the Town Hall is your nation's heart — lose it and you lose the game.
 
+**Tap any resource in the top bar** to open a live tooltip explaining what it is,
+which tiles and buildings it comes from, and your income vs. consumption per second.
+The happiness tooltip breaks down exactly what's pleasing (or angering) your people.
+
 **Resources are stored physically.** Goods pile up in your **Town Hall** and
 **Storehouses**, not in an abstract bank — so storage is finite (build Storehouses
 to hold more) and, crucially, **lootable**. Select any storehouse to see exactly
@@ -70,6 +74,18 @@ At war, you don't just burn buildings — you rob them.
   home** to a storehouse to keep it — cut down a laden porter and the loot spills again
   for anyone to grab. Idle troops near spilled loot will move to collect it.
 
+## Your army
+
+**Castle upgrades unlock troops.** A fresh Castle trains Swordsmen, Spearmen,
+Archers, Bandits and the Prince. Buy the **Garrison** upgrade to unlock the
+Shieldman, Halberdier, Crossbowman and Horseman, then the **Royal Academy** for
+the Mage, Archmage, Cavalier and King. Locked troops show a 🔒 with what unlocks
+them — and AI nations climb the same tiers.
+
+**Armies march in formation.** Group move orders arrange your troops into ranks
+facing the direction of travel — melee up front, ranged and mages behind — and
+units physically push apart so they never stand inside each other.
+
 **Diplomacy (🕊️ button):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.
 - 🐎 **Trade pacts** need a Market on both sides and a **Prince** envoy (trained at
@@ -93,8 +109,11 @@ buildings · Esc cancels.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
 anyway" to dismiss the rotate hint). One-finger drag pans · pinch zooms · tap selects
-or places · hold-and-drag box-selects an army · two-finger tap moves/attacks/robs or
-sets a rally.
+or places · hold-and-drag box-selects an army · **double-tap** (or two-finger tap)
+moves/attacks/robs or sets a rally.
+
+**🙈 Hide UI** (sidebar, or press H) clears every panel off the screen to watch the
+battle; tap the 👁 eye to bring the interface back.
 
 ## Code layout
 

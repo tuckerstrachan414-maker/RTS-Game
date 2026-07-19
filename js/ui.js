@@ -21,6 +21,9 @@ class UI {
     this.mini.width = MAP_W; this.mini.height = MAP_H;
     this.speed = 1;
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    this.tooltip = null;            // topbar stat key with an open info tooltip
+    this.lastTap = null;            // {x,y,t} of the previous single tap (double-tap detect)
+    this.tapTimer = null;
     this.touches = new Map();       // identifier -> {x,y,startX,startY,t,lastX,lastY}
     this.gesture = null;            // null | 'pending' | 'pan' | 'box' | 'placeDrag' | 'pinch'
     this.longPressTimer = null;
@@ -57,6 +60,7 @@ class UI {
     window.addEventListener('keydown', e => {
       this.keys[e.key.toLowerCase()] = true;
       if (e.key === 'Escape') { this.placing = null; this.clearSelection(); this.closeDiplomacy(); }
+      if (e.key.toLowerCase() === 'h') document.body.classList.toggle('ui-hidden');
     });
     window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
     c.addEventListener('contextmenu', e => e.preventDefault());
@@ -231,7 +235,7 @@ class UI {
       const p = id !== undefined ? this.touches.get(id) : null;
       if (p) {
         if (this.placing) { this.mouse.x = p.x; this.mouse.y = p.y; this.tryPlace(); }
-        else this.clickSelect(p.x, p.y);
+        else this.handleTap(p.x, p.y);
       }
     } else if (this.gesture === 'placeDrag') {
       const id = [...this.touches.keys()][0];
@@ -270,6 +274,30 @@ class UI {
           this.mouse.dragStart = [p.x, p.y];
         }
       }, 380);
+    }
+  }
+
+  // Single tap selects; a quick second tap nearby issues the action command
+  // (move / attack / rob / rally) — double-tap to attack. When something that
+  // can take orders is selected, the select is deferred briefly so the first
+  // tap of a double-tap doesn't deselect it.
+  handleTap(x, y) {
+    const now = performance.now();
+    const lt = this.lastTap;
+    this.lastTap = { x, y, t: now };
+    if (lt && now - lt.t < 350 && Math.hypot(x - lt.x, y - lt.y) < 40) {
+      clearTimeout(this.tapTimer);
+      this.lastTap = null;
+      this.rightClick(x, y);
+      return;
+    }
+    const castleSel = this.selection.building && this.selection.building.faction === 0
+      && this.selection.building.type.key === 'castle';
+    if (this.selection.units.length > 0 || castleSel) {
+      clearTimeout(this.tapTimer);
+      this.tapTimer = setTimeout(() => this.clickSelect(x, y), 260);
+    } else {
+      this.clickSelect(x, y);
     }
   }
 
@@ -317,6 +345,7 @@ class UI {
   }
 
   rightClick(sx, sy) {
+    clearTimeout(this.tapTimer);   // an action command supersedes any deferred tap-select
     const [wx, wy] = this.screenToWorld(sx, sy);
     const tx = Math.floor(wx), ty = Math.floor(wy);
     if (!game.map.inBounds(tx, ty)) return;
@@ -352,17 +381,8 @@ class UI {
       }
       if (robbed && robbable) game.log(`${robbed} bandit${robbed > 1 ? 's' : ''} moving to rob the ${target.type.name}.`);
     } else {
-      // spread move formation
-      const n = this.selection.units.length;
-      const side = Math.ceil(Math.sqrt(n));
-      this.selection.units.forEach((u, i) => {
-        if (!u.alive || u.mission) return;
-        const ox = (i % side) - (side - 1) / 2;
-        const oy = Math.floor(i / side) - (side - 1) / 2;
-        let gx = tx + Math.round(ox), gy = ty + Math.round(oy);
-        if (!game.map.passable(gx, gy, 0)) { gx = tx; gy = ty; }
-        u.orderMove(gx, gy);
-      });
+      // march in formation: ranks facing the destination, melee up front
+      formationMove(this.selection.units, tx, ty);
     }
   }
 
@@ -396,6 +416,13 @@ class UI {
     document.getElementById('diplo-btn').onclick = () => this.toggleDiplomacy();
     document.getElementById('army-btn').onclick = () => this.selectArmy();
     document.getElementById('cancel-place').onclick = () => { this.placing = null; };
+    // tap a topbar stat to open a live info tooltip about it
+    document.querySelectorAll('#topbar .stat[data-tip]').forEach(el => {
+      el.onclick = () => this.toggleTooltip(el.dataset.tip);
+    });
+    // hide/show the whole interface to clear screen space
+    document.getElementById('ui-btn').onclick = () => document.body.classList.add('ui-hidden');
+    document.getElementById('ui-show').onclick = () => document.body.classList.remove('ui-hidden');
     document.getElementById('speed-btn').onclick = () => {
       this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
       document.getElementById('speed-btn').textContent = '⏩ ' + this.speed + 'x';
@@ -443,16 +470,29 @@ class UI {
       }
       if (own && b.done && b.type.key === 'market') html += this.marketPanelHTML();
       if (own && b.done && b.type.key === 'castle') {
+        const f0 = game.factions[0];
+        const tierName = ['', 'Castle', 'Garrison', 'Royal Academy'][f0.castleTier];
+        html += `<div class="dim">Tier ${f0.castleTier} — ${tierName}</div>`;
         html += `<div class="trainrow">` + TRAIN_MENU.map(k => {
           const t = UNIT_TYPES[k];
+          if (t.tier > f0.castleTier) {
+            return `<button class="tbtn locked" title="Locked — the ${CASTLE_UPGRADES[t.tier].name} upgrade unlocks the ${t.name}.">🔒 ${t.name}</button>`;
+          }
           return `<button class="tbtn" data-u="${k}" title="${t.desc}\n${costText(t.cost)} · ${t.trainTime}s">${t.name}</button>`;
         }).join('') + `</div>`;
+        if (b.upgrading) {
+          const up = CASTLE_UPGRADES[b.upgrading.tier];
+          html += `<div class="good">⬆️ ${up.name} rising… ${Math.round(b.upgrading.t / up.time * 100)}%</div>`;
+        } else if (CASTLE_UPGRADES[f0.castleTier + 1]) {
+          const up = CASTLE_UPGRADES[f0.castleTier + 1];
+          html += `<button id="castle-up" title="${up.desc}\n${costText(up.cost)} · ${up.time}s">⬆️ ${up.name} (${costText(up.cost)})</button>`;
+        }
         if (b.trainQueue.length) {
           const q = b.trainQueue[0];
           html += `<div class="dim">Training ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / UNIT_TYPES[q.unitKey].trainTime * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
         }
         html += this.isTouch
-          ? `<div class="dim">Two-finger tap the map to set a rally point.</div>`
+          ? `<div class="dim">Double-tap the map to set a rally point.</div>`
           : `<div class="dim">Right-click the map to set a rally point.</div>`;
         if (!b.grand && b.grandProgress === 0) {
           html += `<button id="grand" title="Prosperity victory: requires 50 population and 70% happiness.\nCosts 300 gold, 200 wood, 200 stone.">👑 Build Grand Castle</button>`;
@@ -471,12 +511,22 @@ class UI {
       }
       if (own && b.done && b.type.key === 'market') this.wireMarket(p);
       if (own && b.type.key === 'castle') {
-        p.querySelectorAll('.tbtn').forEach(btn => {
+        p.querySelectorAll('.tbtn[data-u]').forEach(btn => {
           btn.onclick = () => {
             const err = game.factions[0].trainUnit(btn.dataset.u);
             if (err) game.log(err, 'bad'); else this.refreshPanel();
           };
         });
+        p.querySelectorAll('.tbtn.locked').forEach(btn => {
+          btn.onclick = () => game.log(btn.title, 'bad');
+        });
+        const cu = document.getElementById('castle-up');
+        if (cu) cu.onclick = () => {
+          const err = game.factions[0].startCastleUpgrade();
+          if (err) game.log(err, 'bad');
+          else game.log('Castle upgrade underway — new troops soon!', 'good');
+          this.refreshPanel();
+        };
         const g = document.getElementById('grand');
         if (g) g.onclick = () => {
           const n = game.factions[0].nation;
@@ -500,10 +550,98 @@ class UI {
       if (hauling) html += `<div class="good">Hauling plunder: 🍞${Math.floor(carried.food)} 🪵${Math.floor(carried.wood)} 🪨${Math.floor(carried.stone)} 🪙${Math.floor(carried.gold)}</div>`;
       if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
       html += this.isTouch
-        ? `<div class="dim">Two-finger tap: move / attack. Hold + drag: box-select.</div>`
+        ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
         : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
       p.innerHTML = html;
     }
+  }
+
+  // ---------- topbar info tooltips ----------
+  toggleTooltip(key) {
+    this.tooltip = this.tooltip === key ? null : key;
+    this.refreshTooltip();
+  }
+
+  refreshTooltip() {
+    const el = document.getElementById('tooltip');
+    if (!this.tooltip) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    el.innerHTML = this.tooltipHTML(this.tooltip);
+    const c = document.getElementById('tip-close');
+    if (c) c.onclick = () => { this.tooltip = null; this.refreshTooltip(); };
+  }
+
+  tooltipHTML(key) {
+    const f = game.factions[0];
+    const n = f.nation;
+    const head = (icon, name) => `<h3>${icon} ${name} <button id="tip-close">✕</button></h3>`;
+    const stock = r => `<div class="row"><span>In storage</span><b>${Math.floor(n.total(r))} / ${n.capacityFor(r) >= 1e8 ? '∞' : n.capacityFor(r)}</b></div>`;
+    const count = k => f.buildings.filter(b => b.done && b.type.key === k).length;
+    if (key === 'food') {
+      const inc = estimateIncome(f, 'food'), eat = n.pop * EAT_RATE;
+      return head('🍞', 'Food')
+        + `<div class="desc">Grown by Farm workers on crop fields — +50% next to water, +25% near a Well. Feeds your people; a surplus lets the nation grow.</div>`
+        + stock('food')
+        + `<div class="row"><span>From ${count('farm')} farm${count('farm') === 1 ? '' : 's'}</span><b class="good">+${inc.toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Eaten by ${n.pop} citizens</span><b class="bad">−${eat.toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Net</span><b class="${inc - eat >= 0 ? 'good' : 'bad'}">${inc - eat >= 0 ? '+' : ''}${(inc - eat).toFixed(1)}/s</b></div>`
+        + (n.starving ? `<div class="bad">Your people are STARVING — build farms now!</div>` : '');
+    }
+    if (key === 'wood') {
+      return head('🪵', 'Wood')
+        + `<div class="desc">Chopped from real tree tiles by Lumber Camp workers. Forests deplete as they're logged — camps idle when the trees run out.</div>`
+        + stock('wood')
+        + `<div class="row"><span>From ${count('lumber')} lumber camp${count('lumber') === 1 ? '' : 's'}</span><b class="good">+${estimateIncome(f, 'wood').toFixed(1)}/s</b></div>`
+        + `<div class="dim">Spent on most buildings. Sell surplus at the Market.</div>`;
+    }
+    if (key === 'stone') {
+      return head('🪨', 'Stone')
+        + `<div class="desc">Cut from rock tiles by Quarry workers. Builds walls, castles and churches.</div>`
+        + stock('stone')
+        + `<div class="row"><span>From ${count('quarry')} quarr${count('quarry') === 1 ? 'y' : 'ies'}</span><b class="good">+${estimateIncome(f, 'stone').toFixed(1)}/s</b></div>`;
+    }
+    if (key === 'gold') {
+      const taxes = n.pop * n.tax * 0.06;
+      return head('🪙', 'Gold')
+        + `<div class="desc">Dug from caves by Gold Mines, collected as taxes, and earned through trade, caravans and plunder.</div>`
+        + stock('gold')
+        + `<div class="row"><span>From ${count('mine')} mine${count('mine') === 1 ? '' : 's'} + ${count('market')} market${count('market') === 1 ? '' : 's'}</span><b class="good">+${estimateIncome(f, 'gold').toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Taxes (${Math.round(n.tax * 100)}%)</span><b class="good">+${taxes.toFixed(1)}/s</b></div>`
+        + `<div class="dim">Lifetime trade earnings: ${Math.floor(game.tradeGold)} gold.</div>`;
+    }
+    if (key === 'pop') {
+      return head('👥', 'Population')
+        + `<div class="desc">Your citizens. They eat food, need housing, work your buildings, and become soldiers when trained.</div>`
+        + `<div class="row"><span>Citizens / housing</span><b>${n.pop} / ${n.housingCap()}</b></div>`
+        + `<div class="row"><span>Working</span><b>${n.workersAssigned()}</b></div>`
+        + `<div class="row"><span>Idle</span><b>${n.idleWorkers()}</b></div>`
+        + `<div class="dim">Grows when there's surplus food, free housing, and happiness above 50%. Build Houses to raise the cap.</div>`;
+    }
+    if (key === 'idle') {
+      return head('💤', 'Idle citizens')
+        + `<div class="desc">Citizens without a job. Select a farm, camp, quarry, mine or market and use +/− to put them to work.</div>`
+        + `<div class="row"><span>Idle now</span><b>${n.idleWorkers()}</b></div>`
+        + `<div class="dim">Training a soldier at the Castle also consumes a citizen.</div>`;
+    }
+    if (key === 'happy') {
+      const housed = n.pop <= n.housingCap();
+      const rows = [
+        ['Base', 50],
+        [n.starving ? 'Starving' : 'Fed', n.starving ? -35 : 12],
+        [housed ? 'Housed' : 'Overcrowded', housed ? 8 : -18],
+        ['Comforts (church/well/market)', Math.round(Math.min(20, n.auraScore()))],
+        ['War weariness', -Math.round(n.warWeariness)],
+        [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * 55)],
+      ];
+      if (f.kingAlive === false) rows.push(['The King is dead', -12]);
+      return head('❤️', 'Happiness')
+        + `<div class="desc">How content your people are. Above 50% the nation can grow; low happiness stalls it.</div>`
+        + `<div class="row"><span>Current</span><b>${Math.round(n.happiness)}%</b></div>`
+        + rows.map(([label, v]) =>
+          `<div class="row"><span>${label}</span><b class="${v >= 0 ? 'good' : 'bad'}">${v >= 0 ? '+' : ''}${v}</b></div>`).join('')
+        + `<div class="dim">Happiness drifts toward the total above over time.</div>`;
+    }
+    return '';
   }
 
   // ---------- market trade UI ----------
@@ -870,6 +1008,26 @@ class UI {
     mm.strokeStyle = '#fff';
     mm.strokeRect(this.cam.x * kx, this.cam.y * ky, this.canvas.width / s * kx, this.canvas.height / s * ky);
   }
+}
+
+// Side-effect-free estimate of a faction's production rate for one resource
+// (mirrors buildingProduction's math without consuming trees).
+function estimateIncome(f, res) {
+  let rate = 0;
+  for (const b of f.buildings) {
+    if (!b.done || b.type.produces !== res || !b.workers) continue;
+    let r = b.type.rate * b.workers;
+    if (b.type.key === 'farm') {
+      let bonus = 1;
+      if (game.map.countAdjacent(b.x, b.y, T_WATER, 2) > 0) bonus += 0.5;
+      for (const [tx, ty] of b.footprint()) {
+        if (nearBuilding(game.map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
+      }
+      r *= bonus;
+    }
+    rate += r;
+  }
+  return rate;
 }
 
 function costText(cost) {

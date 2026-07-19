@@ -59,6 +59,7 @@ class Game {
       for (const u of f.units) u.tick(dt);
       f.units = f.units.filter(u => !u.dead || u.deathT < 8);
     }
+    separateUnits(dt);
     for (const p of this.projectiles) p.tick(dt);
     this.projectiles = this.projectiles.filter(p => !p.done);
     this.market.tick(dt);
@@ -207,7 +208,7 @@ async function boot() {
   game.log('Welcome to your nation! Feed your people, house them, and choose: trade or war.', 'good');
   if (ui.isTouch) {
     game.log('Build farms and houses first. Drag to pan, pinch to zoom, tap to select.');
-    game.log('Two-finger tap to move/attack/set rally. Hold and drag to box-select an army.');
+    game.log('Double-tap (or two-finger tap) to move/attack/set rally. Hold and drag to box-select.');
   } else {
     game.log('Build farms and houses first. WASD to pan, wheel to zoom.');
   }
@@ -225,7 +226,7 @@ async function boot() {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

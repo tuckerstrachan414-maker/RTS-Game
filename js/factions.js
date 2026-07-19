@@ -13,6 +13,7 @@ class Faction {
     this.units = [];
     this.eliminated = false;
     this.kingAlive = null;            // null = never had one; true/false once trained
+    this.castleTier = 1;              // rises with CASTLE_UPGRADES, gating troop unlocks
     this.aiT = Math.random() * 2;
     this.attackWave = null;           // units currently raiding
   }
@@ -41,6 +42,7 @@ class Faction {
     const castle = this.buildings.find(b => b.type.key === 'castle' && b.done && b.hp > 0);
     if (!castle) return 'Needs a Castle';
     const type = UNIT_TYPES[typeKey];
+    if (type.tier > this.castleTier) return `Locked — requires the ${CASTLE_UPGRADES[type.tier].name} castle upgrade`;
     if (type.unique && (this.kingAlive || this.units.some(u => u.alive && u.type.key === 'king') || castle.trainQueue.some(q => q.unitKey === 'king'))) return 'Only one King';
     if (this.nation.pop <= this.nation.workersAssigned() + 1) return 'No free citizens';
     if (!this.nation.canAfford(type.cost)) return 'Not enough resources';
@@ -50,12 +52,33 @@ class Faction {
     return null;
   }
 
+  startCastleUpgrade() {
+    const castle = this.buildings.find(b => b.type.key === 'castle' && b.done && b.hp > 0);
+    if (!castle) return 'Needs a Castle';
+    const up = CASTLE_UPGRADES[this.castleTier + 1];
+    if (!up) return 'The Castle is fully upgraded';
+    if (castle.upgrading) return 'An upgrade is already underway';
+    if (!this.nation.canAfford(up.cost)) return 'Not enough resources';
+    this.nation.pay(up.cost);
+    castle.upgrading = { tier: this.castleTier + 1, t: 0 };
+    return null;
+  }
+
   tickTraining(dt) {
     for (const b of this.buildings) {
       if (b.type.key !== 'castle' || !b.done) continue;
       if (b.grandProgress > 0 && !b.grand) {
         b.grandProgress += dt;
         if (b.grandProgress >= 30) { b.grand = true; if (this.isPlayer) game.log('The Grand Castle is complete!', 'good'); }
+      }
+      if (b.upgrading) {
+        b.upgrading.t += dt;
+        const up = CASTLE_UPGRADES[b.upgrading.tier];
+        if (b.upgrading.t >= up.time) {
+          this.castleTier = Math.max(this.castleTier, b.upgrading.tier);
+          b.upgrading = null;
+          if (this.isPlayer) game.log(`${up.name} complete — new troops unlocked at the Castle!`, 'good');
+        }
       }
       if (b.trainQueue.length === 0) continue;
       const q = b.trainQueue[0];
@@ -147,9 +170,17 @@ function aiTick(f, dt) {
   if (castle && castle.trainQueue.length < 2) {
     const armySize = f.armyUnits().length;
     const threat = maxThreatAgainst(f);
+    // invest in castle upgrades to unlock stronger troops
+    if (!castle.upgrading && CASTLE_UPGRADES[f.castleTier + 1]
+        && (threat > 25 || f.personality.aggression >= 0.5 || n.pop > 22)
+        && n.canAfford(CASTLE_UPGRADES[f.castleTier + 1].cost)) {
+      f.startCastleUpgrade();
+    }
     const wantArmy = Math.min(14, 2 + Math.floor(threat * 0.12) + Math.floor(f.personality.aggression * 6) + Math.floor(n.pop / 8));
     if (armySize < wantArmy && n.total('food') > 60) {
-      const pick = ['sword', 'spear', 'archer', 'sword', 'shield', 'crossbow', 'halberd', 'cavalier'][Math.floor(Math.random() * 8)];
+      const pool = ['sword', 'spear', 'archer', 'sword', 'shield', 'crossbow', 'halberd', 'cavalier']
+        .filter(k => UNIT_TYPES[k].tier <= f.castleTier);
+      const pick = pool[Math.floor(Math.random() * pool.length)];
       f.trainUnit(pick);
     } else if (enemies.length && f.personality.aggression >= 0.4 && n.total('food') > 40) {
       const bandits = f.units.filter(u => u.alive && u.type.robber).length;
