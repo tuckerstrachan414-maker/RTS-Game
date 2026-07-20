@@ -112,12 +112,14 @@ function reevaluateDoctrine(f, silent = false) {
   const richLootNorm = clamp(Math.max(...rivals.map(o =>
     o.nation.total('gold') + o.nation.total('food') * 0.3)) / 400, 0, 1);
 
+  const snow = aiSnowballLeader();
   const score = {
     conquest: p.aggression * 2 + clamp(myStr / Math.max(1, avgStr) - 1, -1, 1.5)
       + maxGrudge * 0.02 + (game.diff.warAppetite - 1),
     prosperity: p.mercantile * 2 + goldNorm + (atPeace ? 0.5 : -0.5) - threatNorm,
     turtle: threatNorm * 1.8 + (recentlyHurt ? 1.5 : 0) + (1 - p.aggression) * 0.5,
-    hegemon: p.mercantile + allyCount * 0.5 + (leader.strength() > myStr * 1.5 ? 1.4 : 0),
+    hegemon: p.mercantile + allyCount * 0.5 + (leader.strength() > myStr * 1.5 ? 1.4 : 0)
+      + (snow >= 0 && snow !== f.id ? 1.2 : 0),   // a runaway power calls for coalitions
     raider: p.aggression + (goldNorm < 0.3 ? 1 : 0) + richLootNorm,
   };
   let best = ai.doctrine;
@@ -255,21 +257,80 @@ function aiDiplomacy(f) {
         && dip.status(f.id, o.id) === STATUS.NEUTRAL && dip.relation(f.id, o.id) < 20);
       if (threat) dip.sendGift(f.id, threat.id, 60);
     }
-    // merchants and diplomats punish hated rivals economically
+    // merchants and diplomats punish hated rivals — and runaway powers — economically
     if ((ai.doctrine === 'hegemon' || ai.doctrine === 'prosperity') && Math.random() < 0.4) {
+      const snow = aiSnowballLeader();
       const target = rivals.find(o => dip.status(f.id, o.id) !== STATUS.ALLIANCE
-        && !dip.embargoed(f.id, o.id) && dip.relation(f.id, o.id) < -35);
+        && !dip.embargoed(f.id, o.id)
+        && (dip.relation(f.id, o.id) < -35 || o.id === snow));
       if (target) dip.declareEmbargo(f.id, target.id);
     }
   }
 
-  // 3. new wars, per doctrine and difficulty
+  // 3. rally the player against a runaway power we're already fighting
+  const snowNow = aiSnowballLeader();
+  if (snowNow >= 0 && snowNow !== f.id && snowNow !== 0
+      && dip.status(f.id, snowNow) === STATUS.WAR && dip.status(0, snowNow) !== STATUS.WAR
+      && !game.factions[0].eliminated) {
+    aiInviteCoalition(f, snowNow);
+  }
+
+  // 4. new wars, per doctrine and difficulty
   aiConsiderWar(f, rivals);
+}
+
+// The strongest nation becomes a "snowball leader" once it towers over the
+// runner-up in strength AND holds nearly half the claimed land. Coalitions
+// (paced difficulties only) then form against it.
+function aiSnowballLeader() {
+  if (!game.diff.coalitions || !game.territory) return -1;
+  const alive = game.factions.filter(o => !o.eliminated);
+  if (alive.length < 3) return -1;
+  const sorted = [...alive].sort((a, b) => b.strength() - a.strength());
+  const top = sorted[0], second = sorted[1];
+  const total = game.territory.claimCount.reduce(
+    (s, c, fid) => (game.factions[fid].eliminated ? s : s + c), 0);
+  if (total > 0 && top.strength() > second.strength() * 1.7
+      && game.territory.claimCount[top.id] > total * 0.45) return top.id;
+  return -1;
+}
+
+function aiInviteCoalition(f, leaderFid) {
+  const leader = game.factions[leaderFid];
+  const pushed = pushPlayerEvent({
+    kind: 'coalition', from: f.id,
+    title: `${f.name} calls for a coalition`,
+    body: `${leader.name} towers over the continent, and ${f.name} bleeds holding them back. They beg you to join the war before ${leader.name} swallows everyone — you included.`,
+    options: [
+      { label: `Join the war on ${leader.name}`, cls: 'bad', apply: () => {
+          game.diplomacy.declareWar(0, leaderFid);
+          game.diplomacy.addRel(0, f.id, 15);
+        } },
+      { label: 'Send 50 gold in aid', cls: '', apply: () => {
+          const n = game.factions[0].nation;
+          if (n.res.gold < 50) return game.log('Your treasury cannot spare the aid.', 'bad');
+          n.res.gold -= 50;
+          f.nation.res.gold += 50;
+          game.diplomacy.addRel(0, f.id, 8);
+          game.log(`Your gold shores up ${f.name}'s war effort.`, 'good');
+        } },
+      { label: 'Stay out of it', cls: '', apply: () => {
+          game.diplomacy.addRel(0, f.id, -3);
+        } },
+    ],
+    onExpire: () => game.diplomacy.addRel(0, f.id, -3),
+  });
+  if (pushed) game.log(`${f.name} pleads for allies against ${leader.name}.`, 'bad');
 }
 
 function aiConsiderWar(f, rivals) {
   const ai = f.ai, prof = DOCTRINES[ai.doctrine], dip = game.diplomacy;
-  if (prof.warRatio === Infinity) return;          // peaceful doctrines never initiate
+  const snow = aiSnowballLeader();
+  // peaceful doctrines never initiate — except hegemons and turtles joining
+  // the coalition against a runaway power
+  const pacifist = prof.warRatio === Infinity;
+  if (pacifist && !(snow >= 0 && snow !== f.id
+      && (ai.doctrine === 'hegemon' || ai.doctrine === 'turtle'))) return;
   if (game.time < ai.consolidationUntil) return;   // resting after a conquest
   if (ai.warAt) return;                            // an ultimatum is already ticking
   if (f.nation.warWeariness > 8 || dip.atWarAny(f.id)) return;   // one war at a time
@@ -284,8 +345,11 @@ function aiConsiderWar(f, rivals) {
       if (game.time < game.diff.playerGrace) continue;
       if (game.diff.provokedOnly && ai.provocation < 3) continue;
     }
-    if (dip.relation(f.id, o.id) > relGate && ai.grudge[o.id] < 5) continue;   // needs a casus belli
-    if (f.strength() <= o.strength() * ratio) continue;
+    // a runaway power is casus belli for everyone, and worth longer odds
+    const dogpile = o.id === snow;
+    if (pacifist && !dogpile) continue;
+    if (!dogpile && dip.relation(f.id, o.id) > relGate && ai.grudge[o.id] < 5) continue;
+    if (f.strength() <= o.strength() * (dogpile ? Math.min(ratio, 1.4) * 0.6 : ratio)) continue;
     const reach = aiReachInfo(f, o);
     if (!reach.reachable && !reach.crossing) continue;   // no route and no way to build one
     const score = f.strength() / Math.max(1, o.strength())
@@ -346,6 +410,8 @@ function aiUltimatumRefused(f) {
 }
 
 function aiOfferPeaceToPlayer(f) {
+  if (game.time < (f.ai.peaceOfferAt || 0)) return;   // don't beg every card cycle
+  f.ai.peaceOfferAt = game.time + 120;
   const pushed = pushPlayerEvent({
     kind: 'peace', from: f.id,
     title: `Peace offer from ${f.name}`,

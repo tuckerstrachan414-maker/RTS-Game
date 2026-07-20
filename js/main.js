@@ -237,7 +237,12 @@ function dropLoot(b) {
   const s = b.store;
   if (!s || s.food + s.wood + s.stone + s.gold < 0.5) return;
   game.loot.push({ x: b.cx, y: b.cy, res: { food: s.food, wood: s.wood, stone: s.stone, gold: s.gold }, t: 0 });
-  if (b.faction !== 0) game.log(`${game.factions[b.faction].name}'s ${b.type.name} spills its stores — grab the loot!`, 'good');
+  // only tempt the player when it's actually their fight (or their troops are close)
+  if (b.faction !== 0) {
+    const relevant = game.diplomacy.hostile(0, b.faction)
+      || game.factions[0].units.some(u => u.alive && Math.hypot(u.x - b.cx, u.y - b.cy) < 20);
+    if (relevant) game.log(`${game.factions[b.faction].name}'s ${b.type.name} spills its stores — grab the loot!`, 'good');
+  }
 }
 
 function onBuildingDestroyed(b, attacker) {
@@ -250,6 +255,15 @@ function onBuildingDestroyed(b, attacker) {
     game.diplomacy.lastBlood[b.faction][attacker.faction] = game.time;
     game.diplomacy.lastBlood[attacker.faction][b.faction] = game.time;
     aiAddGrudge(b.faction, attacker.faction, 8);
+    // a felled townhall ends a nation; on paced difficulties the victor
+    // rests and digests instead of rolling straight into the next war
+    if (b.type.key === 'townhall' && attacker.faction !== b.faction) {
+      const victor = game.factions[attacker.faction];
+      if (victor.ai && game.diff.consolidation) {
+        victor.ai.consolidationUntil = game.time + game.diff.consolidation;
+        game.log(`${victor.name}'s armies rest and garrison their conquests.`);
+      }
+    }
   }
   aiPoke(b.faction, true);
 }
