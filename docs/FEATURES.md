@@ -68,9 +68,10 @@ or spillable as loot. This underpins the entire raiding design.
 `js/buildings.js`. 13 types: Town Hall, Storehouse, House, Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles; idles when forest exhausted), Quarry, Gold Mine (needs a cave), Market,
-Church, Well, Castle, Wall/Gate (line-drag placement, neighbor-aware joined
-rendering), Bridge (water-only, rotatable, drag to lay a span). Placement
-validation with per-type requirements, construction time, HP/damage,
+Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals,
+tileset-baked sprite rendering — straight runs vs. corner/junction/end towers),
+Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
+Placement validation with per-type requirements, construction time, HP/damage,
 demolish with 75% refund (except Town Hall). Gaps: no building upgrades
 outside the Castle, no repair, bridges can't be removed once placed (see BUGS).
 

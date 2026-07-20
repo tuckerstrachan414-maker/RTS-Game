@@ -3,8 +3,9 @@
 Reference for whoever (human or Claude) picks this codebase up next. Covers the
 feature set added on top of the M1–M5 + mobile/trade/raiding milestones: army
 formations with crowd separation, castle-tier troop unlocks, double-tap
-gestures, HUD resource tooltips, and the hide-UI toggle. Read alongside the
-top-level `README.md` (player-facing) — this file is implementation-facing.
+gestures, HUD resource tooltips, the hide-UI toggle, and fortification
+rendering/placement. Read alongside the top-level `README.md` (player-facing)
+— this file is implementation-facing.
 
 ## Formations & crowd separation — `js/units.js`
 
@@ -171,6 +172,40 @@ New HUD elements should get the `.hud` class if they should disappear with
 everything else; anything meant to stay visible while hidden (like the
 restore button) needs to be added to the exclusion list explicitly, not just
 left unclassed, since default CSS specificity won't save you.
+
+## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
+
+Walls used to draw as procedural rectangles (a post + a beam toward each
+joined neighbor). They now render from the tileset's own art: straight runs
+draw the wall sprite, while corners, junctions, ends, lone posts and
+diagonals draw the tower sprite — so a run reads as one continuous
+crenellated rampart with turrets instead of isolated blocks (`drawWall` in
+`js/ui.js`, `straight` = exactly one opposing pair of neighbors joined).
+
+**Sprite baking (`bakeTile` in `js/assets.js`)** extracts a single 16×16
+atlas tile into its own canvas at load time and cleans it up so structures
+tile without seams, via three independent options:
+- `stripGreen` — knocks out the grass baked into a sprite's corners (opaque
+  green pixels become transparent). Used for the wall and tower sprites.
+- `fullBleed` — edge-replicates the sprite body into empty right/bottom
+  margins so straight wall segments join without a seam.
+- `replicateMid: [a, b]` — rebuilds every row from the clamped `[a..b]` band,
+  erasing the sprite's top/bottom end-caps. Used for the vertical bridge
+  (`Assets.bridgeVmid`) so a north–south span reads as one continuous bridge
+  instead of broken segments at each tile boundary; the horizontal bridge
+  doesn't need this and still draws straight from the atlas.
+
+`drawTileCanvas(canvas, x, y)` is the shared helper that blits one of these
+baked canvases at a tile position (walls, towers, the vertical bridge mid,
+and the wall/bridge placement ghosts all go through it instead of
+`tile()`, which draws straight from the shared atlas image).
+
+**Diagonal wall drag (`paintTo` in `js/ui.js`)** snaps a build-drag to
+whichever axis it's closest to — horizontal, vertical, or, for walls only, a
+45° diagonal (Clash-of-Clans style: `adx`/`ady` within a 2.5:1 ratio of each
+other picks the diagonal). Gates and bridges never go diagonal; bridge
+orientation still comes from whichever of horizontal/vertical the drag
+resolved to.
 
 ## Testing this feature set
 
