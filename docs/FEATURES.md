@@ -25,14 +25,34 @@ absent: tree regrowth (the `SAPLING` atlas entry is unused), map sizes, biomes.
 
 ## Economy & population — Deep
 
-`js/economy.js`. Citizens eat continuously; growth requires surplus food
-(> 2× pop), free housing, and happiness > 50; starvation kills a citizen every
-12s (floor of 2) and weakens the army (−30% damage). Happiness is a drift
-toward a computed target: base 50, fed/starving, housed/overcrowded, building
-auras (church/well/market, diminishing with pop), war weariness (0–25),
-taxes (slider, 0–40%), −12 while the nation's King is dead. Tax slider converts
-happiness into gold income. Worker assignment is manual per building (+/−)
-with idle-worker accounting; over-assignment after deaths is auto-unassigned.
+`js/economy.js`. Citizens eat continuously; population grows once per dawn
+(see Day/night cycle below) by 30% of the housing cap (rounded, capped at the
+cap), gated on surplus food (> 2× pop), free housing, and happiness > 50;
+starvation kills a citizen every 12s (floor of 2) and weakens the army (−30%
+damage). Happiness is a drift toward a computed target: base 50, fed/starving,
+housed/overcrowded, building auras (church/well/market, diminishing with pop),
+war weariness (0–25), taxes (slider, 0–40%), −12 while the nation's King is
+dead. Tax slider converts happiness into gold income. Worker assignment is
+manual per building (+/−) with idle-worker accounting; over-assignment after
+deaths is auto-unassigned.
+
+## Day/night cycle — Basic
+
+`js/main.js` (`Game.lightLevel()`, `Game.tick`), `js/ui.js`
+(`drawDayNightOverlay`, `drawHouseGlow`). A 5-minute cycle — 2.5 minutes of
+day, 2.5 of night (`DAY_LENGTH`/`NIGHT_LENGTH`) — driven by a single cosine
+over `game.time % DAY_NIGHT_CYCLE`, so brightness shifts continuously with no
+visible jump between day and night (peak brightness at midday, darkest at
+midnight, dawn/dusk sit at the halfway point). `game.dayCount` increments and
+each nation's `growForNewDay()` fires once at every dawn — this is what drives
+the 30%-of-housing-cap population growth. Rendered as a translucent
+deep-blue overlay across the whole canvas (`drawDayNightOverlay`) plus a warm
+radial-gradient glow over each house's door/window area at night
+(`drawHouseGlow`, faded in with darkness — there's no distinct window sprite
+in the tileset, so this lights the same spot on every house sprite). Topbar
+shows `Day N` with a sun/moon glyph. Notably absent: no gameplay effects tied
+to night beyond the population trigger (no vision/stealth changes, no AI
+behavior changes), no seasons.
 
 ## Physical resource storage — Deep
 

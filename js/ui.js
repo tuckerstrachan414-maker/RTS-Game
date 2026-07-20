@@ -580,6 +580,7 @@ class UI {
     el('r-happy').innerHTML = hap + '%' + (n.starving ? ' ' + icon('wilted') : hap >= 70 ? ' ' + icon('happy') : hap >= 40 ? ' ' + icon('neutral') : ' ' + icon('angry'));
     el('r-happy').className = hap >= 70 ? 'good' : hap >= 40 ? '' : 'bad';
     el('r-food').className = n.starving ? 'bad' : '';
+    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'}`;
   }
 
   refreshPanel() {
@@ -755,7 +756,7 @@ class UI {
         + `<div class="row"><span>Citizens / housing</span><b>${n.pop} / ${n.housingCap()}</b></div>`
         + `<div class="row"><span>Working</span><b>${n.workersAssigned()}</b></div>`
         + `<div class="row"><span>Idle</span><b>${n.idleWorkers()}</b></div>`
-        + `<div class="dim">Grows when there's surplus food, free housing, and happiness above 50%. Build Houses to raise the cap.</div>`;
+        + `<div class="dim">Each dawn, if there's surplus food, free housing, and happiness above 50%, population grows by 30% of the housing cap. Build Houses to raise the cap.</div>`;
     }
     if (key === 'idle') {
       return head(icon('idle'), 'Idle citizens')
@@ -952,6 +953,9 @@ class UI {
     // projectiles
     for (const p of game.projectiles) this.drawProjectile(p);
 
+    // day/night tint over the whole scene
+    this.drawDayNightOverlay();
+
     // placement ghost
     if (this.placing) this.drawGhost();
 
@@ -965,6 +969,36 @@ class UI {
     this.minimapT -= 1;
     if (this.minimapT <= 0) { this.minimapT = 20; this.renderMinimap(); }
     this.blitMinimap();
+  }
+
+  // Darkens the whole canvas toward a deep blue as night falls, brightens back at dawn.
+  // Driven by game.lightLevel(), a smooth cosine over the day/night cycle, so the shift
+  // has no visible jump.
+  drawDayNightOverlay() {
+    const dark = 1 - game.lightLevel();
+    if (dark <= 0.01) return;
+    const ctx = this.ctx;
+    ctx.fillStyle = `rgba(8, 12, 38, ${(dark * 0.62).toFixed(3)})`;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  // Warm window glow that fades in as night falls; there's no distinct window sprite in
+  // the tileset, so this lights the door/window area of the house sprite directly.
+  drawHouseGlow(sx, sy, s) {
+    const dark = 1 - game.lightLevel();
+    if (dark <= 0.05) return;
+    const ctx = this.ctx;
+    const gx = sx + s * 0.5, gy = sy + s * 0.72;
+    const r = s * 0.3;
+    const a = Math.min(1, dark * 1.3) * 0.85;
+    const glow = ctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+    glow.addColorStop(0, `rgba(255, 214, 120, ${a})`);
+    glow.addColorStop(0.5, `rgba(255, 180, 80, ${a * 0.5})`);
+    glow.addColorStop(1, 'rgba(255, 160, 60, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(gx, gy, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   tile(at, x, y, sheet, scale = 1) {
@@ -995,6 +1029,7 @@ class UI {
         ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
         ctx.strokeRect(Math.floor(sx) + 1, Math.floor(sy) + 1, s * b.type.size - 2, s * b.type.size - 2);
       }
+      if (b.type.key === 'house' && b.done) this.drawHouseGlow(sx, sy, s);
     }
     const [px, py] = this.worldToScreen(b.x, b.y);
     // construction progress
