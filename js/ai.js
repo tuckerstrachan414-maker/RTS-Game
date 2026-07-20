@@ -56,7 +56,8 @@ function initFactionAI(f) {
   f.ai = {
     doctrine: f.personality.aggression > 0.6 ? 'conquest'
       : f.personality.mercantile > 0.7 ? 'prosperity' : 'turtle',
-    doctrineSince: -999,
+    doctrineSince: game.time,   // seeded ambitions get the full hysteresis window
+
     reevalAt: game.time + 15 + Math.random() * 10,
     grudge: game.factions.map(() => 0),   // per-rival grievance, decays slowly
     provocation: 0,                       // player-directed; gates wars on 'slanted'
@@ -67,6 +68,8 @@ function initFactionAI(f) {
     expansionSite: null,                  // {x, y} anchor for a second build cluster
     diploAt: game.time + 8 + Math.random() * 8,
     eventCooldownUntil: 0,                // min spacing between event cards to the player
+    warAt: null,                          // pending war vs the player after an ultimatum
+    bridgePlan: null,                     // surveyed water crossing being built
   };
   if (f.ai.doctrine === 'turtle') reevaluateDoctrine(f, true);  // cautious seeds re-score
 }
@@ -181,6 +184,187 @@ function aiStrategy(f) {
   for (let i = 0; i < ai.grudge.length; i++) ai.grudge[i] = Math.max(0, ai.grudge[i] - 0.12);
   ai.provocation = Math.max(0, ai.provocation - 0.02);
   if (game.time >= ai.reevalAt) reevaluateDoctrine(f);
+  aiBuildBridges(f);
+  if (game.time >= ai.diploAt) {
+    ai.diploAt = game.time + 8 + Math.random() * 7;
+    aiDiplomacy(f);
+  }
+  // a refused/ignored ultimatum turns into a declared war after the telegraph
+  if (ai.warAt && game.time >= ai.warAt) {
+    ai.warAt = null;
+    if (!game.factions[0].eliminated && game.diplomacy.status(f.id, 0) !== STATUS.WAR) {
+      game.diplomacy.declareWar(f.id, 0);
+    }
+  }
+}
+
+// ---------- proactive diplomacy ----------
+// AI factions drive the SAME mechanisms the player uses: envoy-borne proposals,
+// gifts, embargoes, declared wars and sued peace — with the player and with
+// each other. (Diplomacy.tick keeps only ambient relations drift.)
+
+function aiDiplomacy(f) {
+  const ai = f.ai, prof = DOCTRINES[ai.doctrine], dip = game.diplomacy, n = f.nation;
+  const rivals = game.factions.filter(o => o.id !== f.id && !o.eliminated);
+  if (!rivals.length) return;
+
+  // 1. ongoing wars: sue for peace when weary and losing (or the war drags),
+  //    and let mutually exhausted, bloodless wars gutter out in a white peace
+  for (const o of rivals) {
+    if (dip.status(f.id, o.id) !== STATUS.WAR) continue;
+    const dur = game.time - dip.warSince[f.id][o.id];
+    const durLimit = prof.plunderGoal ? 90 : 240;   // raid wars are short by design
+    const losing = f.strength() < o.strength() * 0.8;
+    const winning = f.strength() > o.strength() * 1.5;
+    if (n.warWeariness > prof.peaceWeariness && (losing || dur > durLimit)
+        && (!winning || prof.plunderGoal)) {        // raiders quit while ahead; conquerors don't
+      if (o.isPlayer) aiOfferPeaceToPlayer(f);
+      else if (n.res.gold >= 100) dip.suePeace(f.id, o.id);
+    } else if (n.warWeariness > 18 && o.nation.warWeariness > 18
+        && game.time - dip.lastBlood[f.id][o.id] > (o.isPlayer ? 180 : 120)) {
+      dip.setStatus(f.id, o.id, STATUS.NEUTRAL);
+      dip.rel[f.id][o.id] = Math.max(dip.rel[f.id][o.id], -30);
+      dip.rel[o.id][f.id] = Math.max(dip.rel[o.id][f.id], -30);
+      game.log(`The war between ${f.name} and ${o.name} gutters out — an exhausted peace.`, o.isPlayer ? 'good' : '');
+    }
+  }
+
+  // 2. peacetime initiative: court trade partners and allies, buy off threats,
+  //    strangle enemies with embargoes instead of blades
+  if (!dip.atWarAny(f.id)) {
+    if (prof.trainsPrince) {
+      const cands = rivals.filter(o => dip.status(f.id, o.id) === STATUS.NEUTRAL
+        && !dip.embargoed(f.id, o.id) && !dip.embargoed(o.id, f.id)
+        && dip.relation(f.id, o.id) > -5
+        && dip.findMarket(f.id) && dip.findMarket(o.id));
+      if (cands.length) {
+        const best = cands.reduce((a, b) => (dip.relation(f.id, a.id) > dip.relation(f.id, b.id) ? a : b));
+        dip.propose(f.id, best.id, 'trade');   // real envoy; silently skipped if none idle
+      }
+      const allyRel = ai.doctrine === 'hegemon' ? 35 : 55;
+      const ally = rivals.find(o => dip.status(f.id, o.id) === STATUS.TRADE && dip.relation(f.id, o.id) > allyRel);
+      if (ally) dip.propose(f.id, ally.id, 'alliance');
+    }
+    // gift a looming stronger neighbor to stay off their list
+    if (n.res.gold > 200) {
+      const threat = rivals.find(o => o.strength() > f.strength() * 1.3
+        && dip.status(f.id, o.id) === STATUS.NEUTRAL && dip.relation(f.id, o.id) < 20);
+      if (threat) dip.sendGift(f.id, threat.id, 60);
+    }
+    // merchants and diplomats punish hated rivals economically
+    if ((ai.doctrine === 'hegemon' || ai.doctrine === 'prosperity') && Math.random() < 0.4) {
+      const target = rivals.find(o => dip.status(f.id, o.id) !== STATUS.ALLIANCE
+        && !dip.embargoed(f.id, o.id) && dip.relation(f.id, o.id) < -35);
+      if (target) dip.declareEmbargo(f.id, target.id);
+    }
+  }
+
+  // 3. new wars, per doctrine and difficulty
+  aiConsiderWar(f, rivals);
+}
+
+function aiConsiderWar(f, rivals) {
+  const ai = f.ai, prof = DOCTRINES[ai.doctrine], dip = game.diplomacy;
+  if (prof.warRatio === Infinity) return;          // peaceful doctrines never initiate
+  if (game.time < ai.consolidationUntil) return;   // resting after a conquest
+  if (ai.warAt) return;                            // an ultimatum is already ticking
+  if (f.nation.warWeariness > 8 || dip.atWarAny(f.id)) return;   // one war at a time
+  const ratio = prof.warRatio / game.diff.warAppetite;
+  // raiders need loot, conquerors need only a strength edge; others need bad blood
+  const relGate = prof.plunderGoal ? 25 : ai.doctrine === 'conquest' ? 10 : -10;
+  let best = null, bestScore = 0;
+  for (const o of rivals) {
+    const st = dip.status(f.id, o.id);
+    if (st === STATUS.WAR || st === STATUS.ALLIANCE) continue;
+    if (o.isPlayer) {
+      if (game.time < game.diff.playerGrace) continue;
+      if (game.diff.provokedOnly && ai.provocation < 3) continue;
+    }
+    if (dip.relation(f.id, o.id) > relGate && ai.grudge[o.id] < 5) continue;   // needs a casus belli
+    if (f.strength() <= o.strength() * ratio) continue;
+    const reach = aiReachInfo(f, o);
+    if (!reach.reachable && !reach.crossing) continue;   // no route and no way to build one
+    const score = f.strength() / Math.max(1, o.strength())
+      + ai.grudge[o.id] * 0.05 - dip.relation(f.id, o.id) * 0.01
+      + (prof.plunderGoal ? aiLootValue(o) * 0.001 : 0);
+    if (score > bestScore) { bestScore = score; best = o; }
+  }
+  if (!best) return;
+  if (best.isPlayer && game.diff.ultimatums) return aiSendUltimatum(f);
+  dip.declareWar(f.id, best.id);
+}
+
+// Wars against the player on telegraphed difficulties open with an ultimatum
+// card: pay up, haggle, or refuse and face a declared war 60 seconds later.
+function aiSendUltimatum(f) {
+  const ai = f.ai;
+  const tribute = 80;
+  const pushed = pushPlayerEvent({
+    kind: 'ultimatum', from: f.id,
+    title: `Ultimatum from ${f.name}`,
+    body: `${f.name} masses its army and demands ${tribute} gold in tribute — or face war.`,
+    options: [
+      { label: `Pay ${tribute} gold`, cls: '', apply: () => {
+          const pn = game.factions[0].nation;
+          if (pn.res.gold < tribute) {
+            game.log('Your treasury cannot cover the tribute!', 'bad');
+            return aiUltimatumRefused(f);
+          }
+          pn.res.gold -= tribute;
+          f.nation.res.gold += tribute;
+          game.diplomacy.addRel(f.id, 0, 8);
+          ai.consolidationUntil = Math.max(ai.consolidationUntil, game.time + 180);
+          game.log(`Tribute paid. ${f.name}'s army stands down — for now.`);
+        } },
+      { label: 'Counter-offer 40', cls: '', apply: () => {
+          const pn = game.factions[0].nation;
+          const odds = (game.diplomacy.relation(0, f.id) + 100) / 200;   // warmer relations, better odds
+          if (pn.res.gold >= 40 && Math.random() < odds + 0.2) {
+            pn.res.gold -= 40;
+            f.nation.res.gold += 40;
+            ai.consolidationUntil = Math.max(ai.consolidationUntil, game.time + 120);
+            game.log(`${f.name} grumbles, but accepts your lesser tribute.`);
+          } else {
+            game.log(`${f.name} scorns your counter-offer!`, 'bad');
+            aiUltimatumRefused(f);
+          }
+        } },
+      { label: 'Refuse', cls: 'bad', apply: () => aiUltimatumRefused(f) },
+    ],
+    onExpire: () => aiUltimatumRefused(f),
+  });
+  if (pushed) game.log(`${f.name} has issued an ULTIMATUM!`, 'bad');
+}
+
+function aiUltimatumRefused(f) {
+  f.ai.warAt = game.time + 60;
+  game.log(`${f.name} begins final preparations for war…`, 'bad');
+}
+
+function aiOfferPeaceToPlayer(f) {
+  const pushed = pushPlayerEvent({
+    kind: 'peace', from: f.id,
+    title: `Peace offer from ${f.name}`,
+    body: `${f.name} is weary of war and offers peace, with 100 gold in reparations.`,
+    options: [
+      { label: 'Accept peace', cls: 'good', apply: () => {
+          const dip = game.diplomacy;
+          if (dip.status(0, f.id) !== STATUS.WAR) return;
+          const pay = Math.min(100, f.nation.res.gold);
+          f.nation.res.gold -= pay;
+          game.factions[0].nation.res.gold += pay;
+          dip.setStatus(0, f.id, STATUS.NEUTRAL);
+          dip.rel[0][f.id] = Math.max(dip.rel[0][f.id], -20);
+          dip.rel[f.id][0] = Math.max(dip.rel[f.id][0], -20);
+          game.log(`Peace with ${f.name} — ${Math.round(pay)} gold in reparations paid to you.`, 'good');
+        } },
+      { label: 'Fight on', cls: 'bad', apply: () => {
+          game.log(`You reject ${f.name}'s plea. The war continues.`, 'bad');
+        } },
+    ],
+    onExpire: null,   // war simply continues
+  });
+  if (pushed) game.log(`${f.name} sues for peace.`, 'good');
 }
 
 // ---------- war waves ----------
@@ -200,13 +384,20 @@ function aiWarTick(f, enemies) {
   if (f.strength() < target.strength() * 0.9) return;   // outmatched: defend, don't suicide
   const th = target.townhall(), myTh = f.townhall();
   if (!th || !myTh) return;
+  // water in the way? engineer a bridge first, march later
+  const reach = aiReachInfo(f, target);
+  if (!reach.reachable) {
+    if (reach.crossing && !ai.bridgePlan) ai.bridgePlan = { tiles: reach.crossing, i: 0 };
+    return;
+  }
   const waveUnits = army.slice(0, Math.max(4, Math.floor(army.length * prof.waveFraction)));
   const dx = myTh.cx - th.cx, dy = myTh.cy - th.cy;
   const d = Math.hypot(dx, dy) || 1;
   const sx = clamp(Math.round(th.cx + dx / d * 10), 1, MAP_W - 2);
   const sy = clamp(Math.round(th.cy + dy / d * 10), 1, MAP_H - 2);
   ai.wave = { units: waveUnits, size: waveUnits.length, state: 'staging',
-    stagePos: [sx, sy], stageUntil: game.time + 20, targetFid: target.id, objective: null };
+    stagePos: [sx, sy], stageUntil: game.time + 20, targetFid: target.id,
+    objective: null, deadline: game.time + 300 };
   formationMove(waveUnits, sx, sy);
 }
 
@@ -215,7 +406,8 @@ function aiTickWave(f) {
   w.units = w.units.filter(u => u.alive);
   const target = game.factions[w.targetFid];
   if (w.units.length < Math.max(2, w.size * 0.3) || target.eliminated
-      || game.diplomacy.status(f.id, w.targetFid) !== 'war') {
+      || game.diplomacy.status(f.id, w.targetFid) !== 'war'
+      || game.time > w.deadline) {   // stuck campaigns go home instead of milling forever
     return aiDisbandWave(f);
   }
   if (w.state === 'staging') {
@@ -264,4 +456,62 @@ function aiDisbandWave(f) {
 function aiLootValue(o) {
   const n = o.nation;
   return n.total('gold') * 2 + n.total('food') + n.total('wood') + n.total('stone');
+}
+
+// ---------- military engineering ----------
+// Seeded maps can leave nations separated by water. AI factions survey the
+// route to a war target and, when blocked, span the water with bridges —
+// paid for tile by tile, and a loud hint to anyone watching the map.
+
+function aiReachInfo(f, o) {
+  const a = f.townhall(), b = o.townhall();
+  if (!a || !b) return { reachable: false, crossing: null };
+  const bx = Math.floor(b.cx), by = Math.floor(b.cy);
+  const path = findPath(game.map, Math.floor(a.cx), Math.floor(a.cy), bx, by, f.id, 12000);
+  const end = path.length ? path[path.length - 1] : [Math.floor(a.cx), Math.floor(a.cy)];
+  if (Math.abs(end[0] - bx) + Math.abs(end[1] - by) <= 4) return { reachable: true, crossing: null };
+  return { reachable: false, crossing: aiFindCrossing(end, [bx, by]) };
+}
+
+// L-shaped survey from the closest reachable shore toward the target: collect
+// the water tiles to bridge (orient 1 = horizontal leg, 2 = vertical leg).
+function aiFindCrossing(from, to) {
+  const survey = legs => {
+    const tiles = [];
+    for (const [x0, y0, x1, y1, orient] of legs) {
+      const sx = Math.sign(x1 - x0), sy = Math.sign(y1 - y0);
+      let x = x0, y = y0;
+      while (x !== x1 || y !== y1) {
+        x += sx; y += sy;
+        if (!game.map.inBounds(x, y)) return null;
+        const i = game.map.idx(x, y);
+        if (game.map.terrain[i] === T_WATER && !game.map.bridge[i]) {
+          tiles.push([x, y, orient]);
+          if (tiles.length > 16) return null;   // too wide to bridge
+        }
+      }
+    }
+    return tiles.length ? tiles : null;
+  };
+  return survey([[from[0], from[1], to[0], from[1], 1], [to[0], from[1], to[0], to[1], 2]])
+      || survey([[from[0], from[1], from[0], to[1], 2], [from[0], to[1], to[0], to[1], 1]]);
+}
+
+// Lay one affordable bridge segment per AI tick from the surveyed plan.
+function aiBuildBridges(f) {
+  const bp = f.ai.bridgePlan;
+  if (!bp) return;
+  if (bp.i >= bp.tiles.length) { f.ai.bridgePlan = null; return; }
+  const [x, y, orient] = bp.tiles[bp.i];
+  const i = game.map.idx(x, y);
+  if (game.map.bridge[i] || game.map.terrain[i] !== T_WATER
+      || !canPlace(game.map, 'bridge', x, y, f.id)) { bp.i++; return; }
+  if (!f.nation.canAfford(BUILDING_TYPES.bridge.cost)) return;   // wait for wood
+  f.nation.pay(BUILDING_TYPES.bridge.cost);
+  placeBuilding(game, 'bridge', x, y, f.id, orient);
+  bp.i++;
+  if (bp.i >= bp.tiles.length) {
+    f.ai.bridgePlan = null;
+    game.log(`${f.name} has bridged the water — a road across now lies open.`, 'bad');
+  }
 }

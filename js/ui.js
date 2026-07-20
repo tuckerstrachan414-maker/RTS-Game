@@ -892,6 +892,32 @@ class UI {
     });
   }
 
+  // ---------- event cards ----------
+  // Shows the head of game.events with its response buttons and a draining
+  // timer bar. Rebuilt only when the shown card (or queue depth) changes.
+  refreshEventCard() {
+    const el = document.getElementById('eventcard');
+    const ev = game.events[0];
+    if (!ev) { el.style.display = 'none'; this.eventShownKey = null; return; }
+    const key = ev.id + ':' + game.events.length;
+    if (this.eventShownKey !== key) {
+      this.eventShownKey = key;
+      const f = game.factions[ev.from];
+      let html = `<div class="ehead"><span class="dot" style="background:${f.color.css}"></span> <b>${ev.title}</b>` +
+        (game.events.length > 1 ? ` <span class="dim">+${game.events.length - 1} more</span>` : '') + `</div>` +
+        `<div class="ebody">${ev.body}</div><div class="ebtns">`;
+      ev.options.forEach((o, i) => { html += `<button data-opt="${i}" class="${o.cls || ''}">${o.label}</button>`; });
+      html += `</div><div class="etimer"><div class="etfill"></div></div>`;
+      el.innerHTML = html;
+      el.querySelectorAll('button[data-opt]').forEach(btn => {
+        btn.onclick = () => { resolveEvent(ev, +btn.dataset.opt); this.refreshEventCard(); };
+      });
+    }
+    el.style.display = 'block';
+    const fill = el.querySelector('.etfill');
+    if (fill) fill.style.width = `${Math.max(0, Math.min(100, (ev.expires - game.time) / ev.span * 100))}%`;
+  }
+
   // ---------- rendering ----------
   render() {
     const cancelBtn = document.getElementById('cancel-place');

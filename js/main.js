@@ -45,6 +45,7 @@ class Game {
     this.over = false;
     this.tradeGold = 0;   // lifetime gold earned from trade (stats)
     this.msgs = [];
+    this.events = [];     // pending player choice-cards (js/events.js)
     this.market = new Market();
     for (let i = 0; i < 4; i++) {
       this.factions.push(new Faction(i, i === 0, AI_PERSONALITIES[i] || { aggression: 0, mercantile: 0.5, label: 'you' }));
@@ -115,6 +116,7 @@ class Game {
     this.market.tick(dt);
     this.tickLoot(dt);
     this.diplomacy.tick(dt);
+    tickEvents();
     this.checkVictory();
   }
 
@@ -209,6 +211,10 @@ function onUnitDeath(unit, attacker) {
     f.kingAlive = false;
     game.log(`The King of ${f.name} has fallen in battle!`, unit.faction === 0 ? 'bad' : '');
     aiPoke(unit.faction, true);
+  }
+  // a slain envoy takes its undelivered proposal to the grave
+  if (unit.type.envoy && unit.mission && unit.mission.kind === 'envoy') {
+    game.log(`${f.name}'s envoy was slain on the road — the proposal died with him.`, unit.faction === 0 ? 'bad' : '');
   }
   // a slain porter spills whatever plunder it was carrying
   if (unit.carryTotal && unit.carryTotal() > 0.5) {
@@ -314,7 +320,7 @@ function startGame(seed, diffKey) {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
