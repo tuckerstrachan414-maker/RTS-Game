@@ -10,13 +10,18 @@ class Diplomacy {
     this.stat = [];     // status matrix
     this.routes = [];   // {a, b, path, caravans: [unit], t}
     this.embargo = [];  // embargo[a][b] = a refuses trade with b
+    this.warSince = []; // game.time each war started (for peace-seeking)
+    this.lastBlood = [];// last time a pair actually drew blood (for white peace)
     this.driftT = 0;
     for (let a = 0; a < nFactions; a++) {
       this.rel[a] = []; this.stat[a] = []; this.embargo[a] = [];
+      this.warSince[a] = []; this.lastBlood[a] = [];
       for (let b = 0; b < nFactions; b++) {
         this.rel[a][b] = 0;
         this.stat[a][b] = a === b ? STATUS.ALLIANCE : STATUS.NEUTRAL;
         this.embargo[a][b] = false;
+        this.warSince[a][b] = 0;
+        this.lastBlood[a][b] = -999;
       }
     }
   }
@@ -97,13 +102,22 @@ class Diplomacy {
     this.setStatus(a, b, STATUS.WAR);
     this.rel[a][b] = Math.min(this.rel[a][b], -50);
     this.rel[b][a] = Math.min(this.rel[b][a], -50);
+    this.warSince[a][b] = this.warSince[b][a] = game.time;
+    this.lastBlood[a][b] = this.lastBlood[b][a] = game.time;
     game.log(`${game.factions[a].name} declared WAR on ${game.factions[b].name}!`, b === 0 || a === 0 ? 'bad' : '');
+    // the defender holds a grudge, and both sides rethink their ambitions
+    aiAddGrudge(b, a, 20);
+    aiPoke(a); aiPoke(b);
+    if (a === 0) { const f = game.factions[b]; if (f.ai) f.ai.provocation += 3; }
     // allies of the defender may join
     for (let c = 0; c < this.n; c++) {
       if (c !== a && c !== b && this.stat[b][c] === STATUS.ALLIANCE && this.stat[a][c] !== STATUS.WAR) {
         this.cancelRoute(a, c);
         this.setStatus(a, c, STATUS.WAR);
+        this.warSince[a][c] = this.warSince[c][a] = game.time;
+        this.lastBlood[a][c] = this.lastBlood[c][a] = game.time;
         game.log(`${game.factions[c].name} joins the war to defend ${game.factions[b].name}!`);
+        aiPoke(c);
       }
     }
   }
@@ -127,34 +141,64 @@ class Diplomacy {
 
   // ---------- envoy arrival ----------
 
+  // Seal an accepted pact (shared by AI acceptance and the player's event card).
+  acceptProposal(a, b, kind) {
+    if (this.stat[a][b] === STATUS.WAR) return;   // the moment has passed
+    if (kind === 'trade') {
+      this.setStatus(a, b, STATUS.TRADE);
+      this.addRel(a, b, 10);
+      this.createRoute(a, b);
+      game.log(`${game.factions[a].name} and ${game.factions[b].name} signed a TRADE PACT. Caravans are rolling!`, 'good');
+    } else {
+      this.setStatus(a, b, STATUS.ALLIANCE);
+      this.addRel(a, b, 15);
+      game.log(`${game.factions[a].name} and ${game.factions[b].name} formed an ALLIANCE!`, 'good');
+    }
+  }
+
   resolveEnvoy(envoy) {
     const m = envoy.mission;
     envoy.mission = null;
     const a = envoy.faction, b = m.to;
     const them = game.factions[b];
     const rel = this.rel[b][a];
-    let accepted;
     if (them.isPlayer) {
-      accepted = true;  // AI→player offers auto-accept (player benefit both ways)
-    } else if (m.proposal === 'trade') {
-      accepted = rel > -10 + them.personality.mercantile * -20;
+      // AI→player offers are the player's call: a choice card, not an auto-accept
+      const fromF = game.factions[a];
+      const kindName = m.proposal === 'trade' ? 'a trade pact' : 'an alliance';
+      const pushed = pushPlayerEvent({
+        kind: 'proposal', from: a,
+        title: `Envoy from ${fromF.name}`,
+        body: `${fromF.name} proposes ${kindName}. ${m.proposal === 'trade'
+          ? 'Caravans would earn both nations gold with every run.'
+          : 'Allies defend each other when war comes.'}`,
+        options: [
+          { label: 'Accept', cls: 'good', apply: () => this.acceptProposal(a, 0, m.proposal) },
+          { label: 'Decline politely', cls: '', apply: () => {
+              this.addRel(a, 0, -3);
+              game.log(`You declined ${fromF.name}'s offer.`);
+            } },
+          { label: 'Rebuff', cls: 'bad', apply: () => {
+              this.addRel(a, 0, -10);
+              game.log(`Your court rebuffed ${fromF.name}'s envoy. They will remember it.`, 'bad');
+            } },
+        ],
+        onExpire: () => {
+          this.addRel(a, 0, -3);
+          game.log(`Your silence was answer enough for ${fromF.name}'s envoy.`);
+        },
+      });
+      if (pushed) game.log(`An envoy from ${fromF.name} has arrived with ${kindName} proposal.`, 'good');
     } else {
-      accepted = rel > 45 - them.personality.mercantile * 15;
-    }
-    if (accepted) {
-      if (m.proposal === 'trade') {
-        this.setStatus(a, b, STATUS.TRADE);
-        this.addRel(a, b, 10);
-        this.createRoute(a, b);
-        game.log(`${game.factions[a].name} and ${them.name} signed a TRADE PACT. Caravans are rolling!`, 'good');
+      let accepted;
+      if (m.proposal === 'trade') accepted = rel > -10 + them.personality.mercantile * -20;
+      else accepted = rel > 45 - them.personality.mercantile * 15;
+      if (accepted) {
+        this.acceptProposal(a, b, m.proposal);
       } else {
-        this.setStatus(a, b, STATUS.ALLIANCE);
-        this.addRel(a, b, 15);
-        game.log(`${game.factions[a].name} and ${them.name} formed an ALLIANCE!`, 'good');
+        this.addRel(a, b, -3);
+        if (a === 0) game.log(`${them.name} rejected your ${m.proposal === 'trade' ? 'trade pact' : 'alliance'} proposal. Improve relations first.`, 'bad');
       }
-    } else {
-      this.addRel(a, b, -3);
-      if (a === 0) game.log(`${them.name} rejected your ${m.proposal === 'trade' ? 'trade pact' : 'alliance'} proposal. Improve relations first.`, 'bad');
     }
     // envoy walks home
     const th = game.factions[a].townhall();
@@ -231,7 +275,10 @@ class Diplomacy {
     }
   }
 
-  // ---------- ambient AI diplomacy ----------
+  // ---------- ambient relations drift ----------
+  // Pure atmosphere: pacts warm relations, covetous nations cool them. All AI
+  // *initiative* — proposals, gifts, embargoes, wars, peace — lives in js/ai.js
+  // (aiDiplomacy), which uses real envoys and the same mechanisms the player does.
 
   tick(dt) {
     this.tickRoutes(dt);
@@ -247,28 +294,13 @@ class Diplomacy {
         // trading & alliance slowly warm relations; wars cool them
         if (st === STATUS.TRADE) this.addRel(a, b, 0.4);
         if (st === STATUS.ALLIANCE) this.addRel(a, b, 0.2);
-        // mercantile AIs seek trade with anyone neutral
-        if (st === STATUS.NEUTRAL && f.personality.mercantile > 0.5 && Math.random() < 0.12) {
-          if (this.rel[a][b] > -10 && this.findMarket(a) && this.findMarket(b)) {
-            this.setStatus(a, b, STATUS.TRADE);
-            this.addRel(a, b, 10);
-            this.createRoute(a, b);
-            game.log(`${f.name} and ${game.factions[b].name} opened a trade route.`, b === 0 ? 'good' : '');
-          }
-        }
-        // aggressive AIs eye weak neighbors
-        if (st !== STATUS.WAR && st !== STATUS.ALLIANCE && Math.random() < 0.05) {
-          const target = game.factions[b];
-          const tempted = f.personality.aggression > 0.5
-            && this.rel[a][b] < -25
-            && f.strength() > target.strength() * 1.4
-            && f.nation.warWeariness < 8;
-          if (tempted) this.declareWar(a, b);
-        }
-        // idle relations drift: friendly by default, but warlike nations covet
-        // weaker neighbors — trade with them or gift them to stay off their list
+        // idle relations drift: friendly by default, but nations whose current
+        // ambition is conquest or plunder covet weaker neighbors — trade with
+        // them or gift them to stay off their list
         if (st === STATUS.NEUTRAL) {
-          const covets = f.personality.aggression > 0.6 && f.strength() > game.factions[b].strength();
+          const hungry = f.personality.aggression > 0.6
+            || (f.ai && (f.ai.doctrine === 'conquest' || f.ai.doctrine === 'raider'));
+          const covets = hungry && f.strength() > game.factions[b].strength();
           this.addRel(a, b, covets ? -0.35 : this.rel[a][b] < 0 ? 0.15 : 0.05);
         }
       }

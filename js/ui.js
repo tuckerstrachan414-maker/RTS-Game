@@ -682,9 +682,8 @@ class UI {
           const n = game.factions[0].nation;
           if (n.pop < 50) return game.log('The Grand Castle needs a great nation: 50 population required.', 'bad');
           if (n.happiness < 70) return game.log('Your people must be content (70% happiness) to raise the Grand Castle.', 'bad');
-          const cost = { gold: 300, wood: 200, stone: 200 };
-          if (!n.canAfford(cost)) return game.log('The Grand Castle costs 300 gold, 200 wood, 200 stone.', 'bad');
-          n.pay(cost);
+          if (!n.canAfford(GRAND_CASTLE_COST)) return game.log('The Grand Castle costs 300 gold, 200 wood, 200 stone.', 'bad');
+          n.pay(GRAND_CASTLE_COST);
           b.grandProgress = 0.01;
           game.log('Construction of the Grand Castle has begun!', 'good');
         };
@@ -893,6 +892,32 @@ class UI {
     });
   }
 
+  // ---------- event cards ----------
+  // Shows the head of game.events with its response buttons and a draining
+  // timer bar. Rebuilt only when the shown card (or queue depth) changes.
+  refreshEventCard() {
+    const el = document.getElementById('eventcard');
+    const ev = game.events[0];
+    if (!ev) { el.style.display = 'none'; this.eventShownKey = null; return; }
+    const key = ev.id + ':' + game.events.length;
+    if (this.eventShownKey !== key) {
+      this.eventShownKey = key;
+      const f = game.factions[ev.from];
+      let html = `<div class="ehead"><span class="dot" style="background:${f.color.css}"></span> <b>${ev.title}</b>` +
+        (game.events.length > 1 ? ` <span class="dim">+${game.events.length - 1} more</span>` : '') + `</div>` +
+        `<div class="ebody">${ev.body}</div><div class="ebtns">`;
+      ev.options.forEach((o, i) => { html += `<button data-opt="${i}" class="${o.cls || ''}">${o.label}</button>`; });
+      html += `</div><div class="etimer"><div class="etfill"></div></div>`;
+      el.innerHTML = html;
+      el.querySelectorAll('button[data-opt]').forEach(btn => {
+        btn.onclick = () => { resolveEvent(ev, +btn.dataset.opt); this.refreshEventCard(); };
+      });
+    }
+    el.style.display = 'block';
+    const fill = el.querySelector('.etfill');
+    if (fill) fill.style.width = `${Math.max(0, Math.min(100, (ev.expires - game.time) / ev.span * 100))}%`;
+  }
+
   // ---------- rendering ----------
   render() {
     const cancelBtn = document.getElementById('cancel-place');
@@ -929,6 +954,9 @@ class UI {
         }
       }
     }
+
+    // territory borders: dashed lines where tile ownership changes hands
+    this.drawBorders(x0, y0, x1, y1);
 
     // buildings (skip bridges: drawn as terrain; skip walls: drawn as a connected structure)
     for (const f of game.factions) {
@@ -979,6 +1007,35 @@ class UI {
     this.minimapT -= 1;
     if (this.minimapT <= 0) { this.minimapT = 20; this.renderMinimap(); }
     this.blitMinimap();
+  }
+
+  // Subtle dashed frontier lines wherever territory ownership changes between
+  // neighboring tiles, drawn in each claimant's color.
+  drawBorders(x0, y0, x1, y1) {
+    const t = game.territory;
+    if (!t) return;
+    const ctx = this.ctx;
+    const s = TILE * this.cam.zoom;
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = Math.max(1, this.cam.zoom);
+    ctx.setLineDash([s * 0.25, s * 0.25]);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const own = t.owner[y * MAP_W + x];
+        if (own < 0) continue;
+        const sx = (x - this.cam.x) * s, sy = (y - this.cam.y) * s;
+        if (x < MAP_W - 1 && t.owner[y * MAP_W + x + 1] !== own) {
+          ctx.strokeStyle = game.factions[own].color.css;
+          ctx.beginPath(); ctx.moveTo(sx + s, sy); ctx.lineTo(sx + s, sy + s); ctx.stroke();
+        }
+        if (y < MAP_H - 1 && t.owner[(y + 1) * MAP_W + x] !== own) {
+          ctx.strokeStyle = game.factions[own].color.css;
+          ctx.beginPath(); ctx.moveTo(sx, sy + s); ctx.lineTo(sx + s, sy + s); ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
   }
 
   // Darkens the whole canvas toward a deep blue as night falls, brightens back at dawn.
@@ -1216,9 +1273,20 @@ class UI {
       [T_GRASS]: [116, 196, 80], [T_WATER]: [64, 120, 200],
       [T_TREE]: [40, 120, 50], [T_ROCK]: [130, 130, 130], [T_CAVE]: [80, 70, 70],
     };
+    // territory tint: claimed tiles blend toward their owner's color
+    const ownerCols = game.factions.map(f => [
+      parseInt(f.color.css.slice(1, 3), 16),
+      parseInt(f.color.css.slice(3, 5), 16),
+      parseInt(f.color.css.slice(5, 7), 16),
+    ]);
     for (let i = 0; i < MAP_W * MAP_H; i++) {
       let c = colors[map.terrain[i]];
       if (map.road[i]) c = [200, 180, 120];
+      const own = game.territory ? game.territory.owner[i] : -1;
+      if (own >= 0) {
+        const oc = ownerCols[own], a = 0.28;
+        c = [c[0] * (1 - a) + oc[0] * a, c[1] * (1 - a) + oc[1] * a, c[2] * (1 - a) + oc[2] * a];
+      }
       img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
     }
     mctx.putImageData(img, 0, 0);

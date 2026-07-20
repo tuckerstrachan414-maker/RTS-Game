@@ -3,6 +3,27 @@
 
 const SIM_DT = 0.1;   // seconds per sim tick
 
+// Difficulty modes, chosen on the pre-game screen (or via ?difficulty=key).
+// They control how ruthlessly AI nations pursue their ambitions:
+//  warAppetite  — multiplies how eagerly AIs start wars (higher = more wars)
+//  ultimatums   — wars against the player are telegraphed by an ultimatum first
+//  consolidation— seconds a victor rests after eliminating a nation
+//  coalitions   — other nations (and the player) can gang up on a runaway power
+//  armyMul      — scales AI army-size targets
+//  playerGrace  — no AI-initiated war on the player before this game time (s)
+//  provokedOnly — AIs only declare war on the player after real provocation
+const DIFFICULTIES = {
+  ramped:   { label: 'Measured March', warAppetite: 0.8, ultimatums: true,  consolidation: 180,
+              coalitions: true,  armyMul: 0.9,  playerGrace: 300, provokedOnly: false,
+              desc: 'Wars are telegraphed — relations sour, armies mass, ultimatums arrive before blades are drawn. Conquerors still snowball if unchecked.' },
+  ruthless: { label: 'Iron Age', warAppetite: 1.4, ultimatums: false, consolidation: 0,
+              coalitions: false, armyMul: 1.15, playerGrace: 0,   provokedOnly: false,
+              desc: 'Nations attack the moment they sense an advantage — including against you, from the very start. The map consolidates fast.' },
+  slanted:  { label: 'Quiet Frontier', warAppetite: 1.0, ultimatums: true,  consolidation: 120,
+              coalitions: true,  armyMul: 1.0,  playerGrace: 0,   provokedOnly: true,
+              desc: 'AI nations wage real wars on each other, but only march on you if provoked — raid, embargo or bully them and they will answer.' },
+};
+
 // day/night cycle: bright day and dark night, each 2.5 minutes, for a 5-minute full day.
 const DAY_LENGTH = 150;
 const NIGHT_LENGTH = 150;
@@ -11,7 +32,9 @@ const DAY_NIGHT_CYCLE = DAY_LENGTH + NIGHT_LENGTH;
 let game = null;
 
 class Game {
-  constructor(seed) {
+  constructor(seed, diffKey = 'ramped') {
+    this.diffKey = DIFFICULTIES[diffKey] ? diffKey : 'ramped';
+    this.diff = DIFFICULTIES[this.diffKey];
     this.map = new GameMap(seed);
     this.factions = [];
     this.projectiles = [];
@@ -22,11 +45,13 @@ class Game {
     this.over = false;
     this.tradeGold = 0;   // lifetime gold earned from trade (stats)
     this.msgs = [];
+    this.events = [];     // pending player choice-cards (js/events.js)
     this.market = new Market();
     for (let i = 0; i < 4; i++) {
       this.factions.push(new Faction(i, i === 0, AI_PERSONALITIES[i] || { aggression: 0, mercantile: 0.5, label: 'you' }));
     }
     this.diplomacy = new Diplomacy(4);
+    this.territory = new Territory(4);
     // found each nation at its start zone
     this.map.startZones.forEach((z, i) => {
       const th = placeBuilding(this, 'townhall', z.x - 1, z.y - 1, i);
@@ -92,6 +117,8 @@ class Game {
     this.market.tick(dt);
     this.tickLoot(dt);
     this.diplomacy.tick(dt);
+    this.territory.tick(dt);
+    tickEvents();
     this.checkVictory();
   }
 
@@ -136,10 +163,15 @@ class Game {
   }
 
   checkVictory() {
-    // prosperity victory
+    // prosperity victory — and prosperity DEFEAT: a rival's Grand Castle ends the game too
     const player = this.factions[0];
     if (player.buildings.some(b => b.grand)) {
       return this.end(true, 'Prosperity Victory! Your Grand Castle stands as proof that a nation can flourish through trade, diplomacy and good governance.');
+    }
+    for (const f of this.factions) {
+      if (!f.isPlayer && !f.eliminated && f.buildings.some(b => b.grand)) {
+        return this.end(false, `${f.name} has completed its Grand Castle. The continent flocks to their banner, and your nation fades into their shadow.`);
+      }
     }
     // conquest / elimination
     let rivalsAlive = 0;
@@ -151,6 +183,8 @@ class Game {
         for (const b of [...f.buildings]) removeBuilding(this, b);
         this.log(`The nation of ${f.name} has fallen!`, f.isPlayer ? 'bad' : '');
         for (let o = 0; o < 4; o++) if (o !== f.id) this.diplomacy.cancelRoute(f.id, o);
+        // the world reshapes: every survivor rethinks its ambitions
+        for (const o of this.factions) if (!o.eliminated) aiPoke(o.id);
       }
     }
     for (const f of this.factions) if (!f.eliminated && !f.isPlayer) rivalsAlive++;
@@ -178,6 +212,11 @@ function onUnitDeath(unit, attacker) {
   if (unit.type.key === 'king') {
     f.kingAlive = false;
     game.log(`The King of ${f.name} has fallen in battle!`, unit.faction === 0 ? 'bad' : '');
+    aiPoke(unit.faction, true);
+  }
+  // a slain envoy takes its undelivered proposal to the grave
+  if (unit.type.envoy && unit.mission && unit.mission.kind === 'envoy') {
+    game.log(`${f.name}'s envoy was slain on the road — the proposal died with him.`, unit.faction === 0 ? 'bad' : '');
   }
   // a slain porter spills whatever plunder it was carrying
   if (unit.carryTotal && unit.carryTotal() > 0.5) {
@@ -186,6 +225,11 @@ function onUnitDeath(unit, attacker) {
   if (attacker && attacker.faction !== undefined) {
     game.diplomacy.addRel(unit.faction, attacker.faction, -4);
     game.factions[unit.faction].nation.warWeariness += 1.5;
+    game.diplomacy.lastBlood[unit.faction][attacker.faction] = game.time;
+    game.diplomacy.lastBlood[attacker.faction][unit.faction] = game.time;
+    aiAddGrudge(unit.faction, attacker.faction, 2);
+    // unprovoked killing by the player is remembered (gates wars on 'slanted')
+    if (attacker.faction === 0 && f.ai && !game.diplomacy.hostile(0, unit.faction)) f.ai.provocation += 1;
   }
 }
 
@@ -193,7 +237,12 @@ function dropLoot(b) {
   const s = b.store;
   if (!s || s.food + s.wood + s.stone + s.gold < 0.5) return;
   game.loot.push({ x: b.cx, y: b.cy, res: { food: s.food, wood: s.wood, stone: s.stone, gold: s.gold }, t: 0 });
-  if (b.faction !== 0) game.log(`${game.factions[b.faction].name}'s ${b.type.name} spills its stores — grab the loot!`, 'good');
+  // only tempt the player when it's actually their fight (or their troops are close)
+  if (b.faction !== 0) {
+    const relevant = game.diplomacy.hostile(0, b.faction)
+      || game.factions[0].units.some(u => u.alive && Math.hypot(u.x - b.cx, u.y - b.cy) < 20);
+    if (relevant) game.log(`${game.factions[b.faction].name}'s ${b.type.name} spills its stores — grab the loot!`, 'good');
+  }
 }
 
 function onBuildingDestroyed(b, attacker) {
@@ -201,7 +250,22 @@ function onBuildingDestroyed(b, attacker) {
   if (b.type.storage) dropLoot(b);
   removeBuilding(game, b);
   if (b.faction === 0) game.log(`Your ${b.type.name} was destroyed!`, 'bad');
-  if (attacker) game.diplomacy.addRel(b.faction, attacker.faction, -8);
+  if (attacker) {
+    game.diplomacy.addRel(b.faction, attacker.faction, -8);
+    game.diplomacy.lastBlood[b.faction][attacker.faction] = game.time;
+    game.diplomacy.lastBlood[attacker.faction][b.faction] = game.time;
+    aiAddGrudge(b.faction, attacker.faction, 8);
+    // a felled townhall ends a nation; on paced difficulties the victor
+    // rests and digests instead of rolling straight into the next war
+    if (b.type.key === 'townhall' && attacker.faction !== b.faction) {
+      const victor = game.factions[attacker.faction];
+      if (victor.ai && game.diff.consolidation) {
+        victor.ai.consolidationUntil = game.time + game.diff.consolidation;
+        game.log(`${victor.name}'s armies rest and garrison their conquests.`);
+      }
+    }
+  }
+  aiPoke(b.faction, true);
 }
 
 // ---------- boot ----------
@@ -229,7 +293,23 @@ async function boot() {
   status.style.display = 'none';
   const params = new URLSearchParams(location.search);
   const seed = parseInt(params.get('seed')) || (Math.random() * 1e9 | 0);
-  game = new Game(seed);
+  const diffKey = params.get('difficulty');
+  if (DIFFICULTIES[diffKey]) return startGame(seed, diffKey);
+  // no difficulty chosen yet: show the pre-game screen; the sim does not start
+  // (and `game` stays null) until a mode is picked
+  const overlay = document.getElementById('difficulty');
+  overlay.querySelectorAll('button[data-diff]').forEach(btn => {
+    const d = DIFFICULTIES[btn.dataset.diff];
+    btn.querySelector('.diff-desc').textContent = d.desc;
+    btn.onclick = () => { overlay.style.display = 'none'; startGame(seed, btn.dataset.diff); };
+  });
+  overlay.style.display = 'flex';
+}
+
+function startGame(seed, diffKey) {
+  // the URL round-trips both seed and difficulty, so replays reproduce the game
+  try { history.replaceState(null, '', `?seed=${seed}&difficulty=${diffKey}`); } catch (e) {}
+  game = new Game(seed, diffKey);
   ui = new UI(document.getElementById('game'));
   ui.centerOn(game.map.startZones[0].x, game.map.startZones[0].y);
   game.log('Welcome to your nation! Feed your people, house them, and choose: trade or war.', 'good');
@@ -256,7 +336,7 @@ async function boot() {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

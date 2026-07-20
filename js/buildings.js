@@ -93,6 +93,10 @@ const BUILDING_TYPES = {
 
 const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
 
+// Grand Castle: the prosperity endgame. Any nation (player or AI) that completes
+// one wins the game. Requirements checked at start: 50 pop, 70% happiness.
+const GRAND_CASTLE_COST = { gold: 300, wood: 200, stone: 200 };
+
 // Castle upgrade tiers: each unlocks new troops at every castle of that nation.
 const CASTLE_UPGRADES = {
   2: { name: 'Garrison', cost: { wood: 100, stone: 80, gold: 60 }, time: 20,

@@ -118,7 +118,8 @@
     right: calc(8px + env(safe-area-inset-right)); background: rgba(20,24,30,0.55); border: 1px solid #3a4250;
     border-radius: 6px; color: #cde; font-size: 18px; padding: 8px 13px; cursor: pointer; touch-action: manipulation; }
   body.ui-hidden #topbar, body.ui-hidden #buildbar, body.ui-hidden #menu-btn, body.ui-hidden #minimap-wrap, body.ui-hidden #panel,
-  body.ui-hidden #diplomacy, body.ui-hidden #log, body.ui-hidden #tooltip, body.ui-hidden #cancel-place, body.ui-hidden #rotate-place { display: none !important; }
+  body.ui-hidden #diplomacy, body.ui-hidden #log, body.ui-hidden #tooltip, body.ui-hidden #cancel-place, body.ui-hidden #rotate-place,
+  body.ui-hidden #eventcard { display: none !important; }
   body.ui-hidden #ui-show { display: block; }
 
   #log { position: absolute; left: calc(8px + env(safe-area-inset-left)); top: calc(var(--topbar-h, 54px) + 10px + env(safe-area-inset-top));
@@ -146,6 +147,22 @@
   #rotate-place { display: none; top: calc(8px + env(safe-area-inset-top));
     left: calc(112px + env(safe-area-inset-left)); padding: 8px 14px; font-size: 14px; color: #ad9; cursor: pointer;
     touch-action: manipulation; }
+
+  /* Event cards: AI-initiated proposals/ultimatums/disputes with response buttons.
+     Non-pausing; a thin timer bar drains toward expiry. */
+  #eventcard { display: none; top: calc(var(--topbar-h, 54px) + 8px + env(safe-area-inset-top));
+    right: calc(var(--sidebar-w, 190px) + 16px); width: 310px; padding: 10px; font-size: 13px; z-index: 6; }
+  #eventcard .ehead { margin-bottom: 4px; }
+  #eventcard .ehead .dim { color: #789; font-size: 11px; }
+  #eventcard .ebody { color: #bcd; margin-bottom: 8px; line-height: 1.35; }
+  #eventcard .ebtns { display: flex; flex-wrap: wrap; gap: 4px; }
+  #eventcard button { background: #2c3442; color: #cde; border: 1px solid #46536a; border-radius: 3px;
+    padding: 4px 9px; cursor: pointer; font-size: 12px; touch-action: manipulation; }
+  #eventcard button:hover { background: #3a4658; }
+  #eventcard button.good { border-color: #5a5; }
+  #eventcard button.bad { border-color: #a55; }
+  #eventcard .etimer { height: 3px; background: #222831; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  #eventcard .etfill { height: 100%; background: #cba55a; }
 
   #diplomacy { display: none; top: calc(var(--topbar-h, 54px) + 6px); right: calc(var(--sidebar-w, 190px) + 16px);
     width: 360px; padding: 12px; font-size: 13px; max-height: 80vh; overflow-y: auto; touch-action: pan-y; }
@@ -176,6 +193,20 @@
   #pause-menu button:hover { background: #3a4658; }
   #resume-btn { background: #35507a; border-color: #4d6da0; }
   #resume-btn:hover { background: #416394; }
+
+  /* Pre-game difficulty screen: shown before the Game is even constructed. Not .hud —
+     it exists outside the running game, like #gameover. */
+  #difficulty { display: none; position: absolute; inset: 0; background: rgba(10,12,16,0.92);
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    text-align: center; padding: 20px; z-index: 30; }
+  #difficulty h1 { font-size: 38px; }
+  #difficulty .sub { color: #9ab; font-size: 15px; max-width: 480px; }
+  #difficulty button { background: #232a36; color: #cde; border: 1px solid #46536a; border-radius: 8px;
+    padding: 12px 16px; cursor: pointer; font-size: 16px; width: min(480px, 92vw); text-align: left;
+    touch-action: manipulation; }
+  #difficulty button:hover { background: #3a4658; }
+  #difficulty button b { display: block; font-size: 17px; margin-bottom: 3px; }
+  #difficulty .diff-desc { font-size: 12.5px; color: #9ab; line-height: 1.4; }
 
   #gameover { display: none; position: absolute; inset: 0; background: rgba(10,12,16,0.85);
     flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center;
@@ -218,6 +249,7 @@
     body:not(.force-play) #loading,
     body:not(.force-play) #log,
     body:not(.force-play) #gameover,
+    body:not(.force-play) #difficulty,
     body:not(.force-play) .hud { display: none !important; }
     body:not(.force-play) #rotate-prompt { display: flex; }
   }
@@ -260,6 +292,7 @@
 <button id="cancel-place" class="hud">✕ Cancel</button>
 <button id="rotate-place" class="hud" title="Rotate the bridge (R)">⟳ Rotate</button>
 <div id="diplomacy" class="hud"></div>
+<div id="eventcard" class="hud"></div>
 <div id="panel" class="hud"></div>
 <div id="buildbar" class="hud collapsible"></div>
 <div id="log"></div>
@@ -268,6 +301,14 @@
   <h1></h1>
   <p></p>
   <button onclick="location.reload()">Play again</button>
+</div>
+
+<div id="difficulty">
+  <h1><span class="icon icon-crown"></span> Nations</h1>
+  <p class="sub">Rival nations pursue their own ambitions — conquest, riches, walls or webs of alliances. Choose how hard they come at you.</p>
+  <button data-diff="ramped"><b>Measured March</b><span class="diff-desc"></span></button>
+  <button data-diff="slanted"><b>Quiet Frontier</b><span class="diff-desc"></span></button>
+  <button data-diff="ruthless"><b>Iron Age</b><span class="diff-desc"></span></button>
 </div>
 
 <div id="pause-menu">
@@ -291,6 +332,9 @@
 <script src="js/units.js"></script>
 <script src="js/factions.js"></script>
 <script src="js/diplomacy.js"></script>
+<script src="js/events.js"></script>
+<script src="js/territory.js"></script>
+<script src="js/ai.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/main.js"></script>
 </body>
