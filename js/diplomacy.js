@@ -10,13 +10,18 @@ class Diplomacy {
     this.stat = [];     // status matrix
     this.routes = [];   // {a, b, path, caravans: [unit], t}
     this.embargo = [];  // embargo[a][b] = a refuses trade with b
+    this.warSince = []; // game.time each war started (for peace-seeking)
+    this.lastBlood = [];// last time a pair actually drew blood (for white peace)
     this.driftT = 0;
     for (let a = 0; a < nFactions; a++) {
       this.rel[a] = []; this.stat[a] = []; this.embargo[a] = [];
+      this.warSince[a] = []; this.lastBlood[a] = [];
       for (let b = 0; b < nFactions; b++) {
         this.rel[a][b] = 0;
         this.stat[a][b] = a === b ? STATUS.ALLIANCE : STATUS.NEUTRAL;
         this.embargo[a][b] = false;
+        this.warSince[a][b] = 0;
+        this.lastBlood[a][b] = -999;
       }
     }
   }
@@ -97,13 +102,22 @@ class Diplomacy {
     this.setStatus(a, b, STATUS.WAR);
     this.rel[a][b] = Math.min(this.rel[a][b], -50);
     this.rel[b][a] = Math.min(this.rel[b][a], -50);
+    this.warSince[a][b] = this.warSince[b][a] = game.time;
+    this.lastBlood[a][b] = this.lastBlood[b][a] = game.time;
     game.log(`${game.factions[a].name} declared WAR on ${game.factions[b].name}!`, b === 0 || a === 0 ? 'bad' : '');
+    // the defender holds a grudge, and both sides rethink their ambitions
+    aiAddGrudge(b, a, 20);
+    aiPoke(a); aiPoke(b);
+    if (a === 0) { const f = game.factions[b]; if (f.ai) f.ai.provocation += 3; }
     // allies of the defender may join
     for (let c = 0; c < this.n; c++) {
       if (c !== a && c !== b && this.stat[b][c] === STATUS.ALLIANCE && this.stat[a][c] !== STATUS.WAR) {
         this.cancelRoute(a, c);
         this.setStatus(a, c, STATUS.WAR);
+        this.warSince[a][c] = this.warSince[c][a] = game.time;
+        this.lastBlood[a][c] = this.lastBlood[c][a] = game.time;
         game.log(`${game.factions[c].name} joins the war to defend ${game.factions[b].name}!`);
+        aiPoke(c);
       }
     }
   }

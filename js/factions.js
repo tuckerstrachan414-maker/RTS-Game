@@ -15,7 +15,7 @@ class Faction {
     this.kingAlive = null;            // null = never had one; true/false once trained
     this.castleTier = 1;              // rises with CASTLE_UPGRADES, gating troop unlocks
     this.aiT = Math.random() * 2;
-    this.attackWave = null;           // units currently raiding
+    this.ai = null;                   // goal-brain state, lazily built by initFactionAI (js/ai.js)
   }
 
   townhall() { return this.buildings.find(b => b.type.key === 'townhall' && b.hp > 0); }
@@ -108,45 +108,40 @@ function aiTick(f, dt) {
   f.aiT -= dt;
   if (f.aiT > 0) return;
   f.aiT = 2 + Math.random();
+  if (!f.ai) initFactionAI(f);
   const n = f.nation;
-  const map = game.map;
+  const prof = DOCTRINES[f.ai.doctrine];
 
-  // 1. keep workers assigned: prioritize farms if food low
+  // 0. strategy layer: doctrine re-evaluation, grudge decay (js/ai.js)
+  aiStrategy(f);
+
+  // 1. keep workers assigned: farms staffed first when food is short
   const foodRate = estimateFoodRate(f);
-  for (const b of f.buildings) {
+  const staffOrder = foodRate < 0
+    ? [...f.buildings].sort((a, b) => (b.type.key === 'farm' ? 1 : 0) - (a.type.key === 'farm' ? 1 : 0))
+    : f.buildings;
+  for (const b of staffOrder) {
     if (!b.done || !b.type.slots) continue;
-    const want = (b.type.key === 'farm' && foodRate < 0) ? b.type.slots : b.type.slots;
-    while (b.workers < want && n.idleWorkers() > 0) b.workers++;
+    while (b.workers < b.type.slots && n.idleWorkers() > 0) b.workers++;
+  }
+  // starving with everyone employed: pull a worker off a non-farm to the fields
+  if (foodRate < 0 && n.idleWorkers() === 0) {
+    const donor = f.buildings.find(b => b.workers > 0 && b.type.key !== 'farm');
+    const field = f.buildings.find(b => b.done && b.type.key === 'farm' && b.workers < b.type.slots);
+    if (donor && field) { donor.workers--; field.workers++; }
   }
 
-  // 2. build order
+  // 2. build: deficit-scored wishes from the doctrine (js/ai.js); try the top
+  // few so an unbuildable first choice doesn't stall growth
   const counts = {};
   for (const b of f.buildings) counts[b.type.key] = (counts[b.type.key] || 0) + 1;
-  const needFood = foodRate < n.pop * EAT_RATE * 0.5;
-  const nearCap = ['food', 'wood', 'stone'].some(r => n.capacityFor(r) > 0 && n.total(r) > n.capacityFor(r) * 0.85);
-  const buildWish =
-    !counts.farm ? 'farm' :
-    !counts.lumber ? 'lumber' :                      // wood income before anything else
-    needFood && (counts.farm || 0) < 4 ? 'farm' :
-    nearCap && (counts.storehouse || 0) < 3 ? 'storehouse' :   // stop wasting production
-    !counts.market && f.personality.mercantile > 0.5 ? 'market' :
-    n.pop >= n.housingCap() - 2 ? 'house' :
-    (counts.lumber || 0) < 1 + Math.floor(n.pop / 25) ? 'lumber' :
-    !counts.quarry ? 'quarry' :
-    !counts.market && f.personality.mercantile > 0.4 ? 'market' :
-    !counts.castle ? 'castle' :
-    !counts.mine ? 'mine' :
-    !counts.storehouse ? 'storehouse' :
-    !counts.market ? 'market' :
-    !counts.church ? 'church' :
-    (counts.house || 0) < Math.ceil(n.pop / 6) ? 'house' :
-    !counts.well ? 'well' :
-    null;
-  if (buildWish && n.canAfford(BUILDING_TYPES[buildWish].cost)) {
-    const spot = findBuildSpot(f, buildWish);
+  for (const wish of aiBuildWishes(f, counts)) {
+    if (!n.canAfford(BUILDING_TYPES[wish].cost)) continue;
+    const spot = findBuildSpot(f, wish, f.ai.expansionSite);
     if (spot) {
-      n.pay(BUILDING_TYPES[buildWish].cost);
-      placeBuilding(game, buildWish, spot[0], spot[1], f.id);
+      n.pay(BUILDING_TYPES[wish].cost);
+      placeBuilding(game, wish, spot[0], spot[1], f.id);
+      break;
     }
   }
 
@@ -164,7 +159,7 @@ function aiTick(f, dt) {
     }
   }
 
-  // 4. military: maintain an army proportional to threat + aggression
+  // 4. military: army sized by the doctrine's ambition, not a fixed cap
   const castle = f.buildings.find(b => b.type.key === 'castle' && b.done);
   const enemies = game.factions.filter(o => !o.eliminated && game.diplomacy.status(f.id, o.id) === 'war');
   if (castle && castle.trainQueue.length < 2) {
@@ -172,21 +167,31 @@ function aiTick(f, dt) {
     const threat = maxThreatAgainst(f);
     // invest in castle upgrades to unlock stronger troops
     if (!castle.upgrading && CASTLE_UPGRADES[f.castleTier + 1]
-        && (threat > 25 || f.personality.aggression >= 0.5 || n.pop > 22)
+        && (threat > 25 || prof.upgradesEagerly || n.pop > 22)
         && n.canAfford(CASTLE_UPGRADES[f.castleTier + 1].cost)) {
       f.startCastleUpgrade();
     }
-    const wantArmy = Math.min(14, 2 + Math.floor(threat * 0.12) + Math.floor(f.personality.aggression * 6) + Math.floor(n.pop / 8));
+    const wantArmy = Math.min(prof.armyMax,
+      Math.round((prof.armyBase + threat * 0.12 + n.pop * prof.armyPerPop) * game.diff.armyMul));
     if (armySize < wantArmy && n.total('food') > 60) {
       const pool = ['sword', 'spear', 'archer', 'sword', 'shield', 'crossbow', 'halberd', 'cavalier']
         .filter(k => UNIT_TYPES[k].tier <= f.castleTier);
       const pick = pool[Math.floor(Math.random() * pool.length)];
       f.trainUnit(pick);
-    } else if (enemies.length && f.personality.aggression >= 0.4 && n.total('food') > 40) {
-      const bandits = f.units.filter(u => u.alive && u.type.robber).length;
-      if (bandits < 2 && Math.random() < 0.5) f.trainUnit('bandit');
+    } else {
+      // diplomats keep an envoy ready; raiders keep a stable of bandits
+      if (prof.trainsPrince && !f.units.some(u => u.alive && u.type.envoy)
+          && !castle.trainQueue.some(q => q.unitKey === 'prince') && n.total('gold') > 60) {
+        f.trainUnit('prince');
+      }
+      const banditWant = prof.bandits || (enemies.length && f.personality.aggression >= 0.4 ? 2 : 0);
+      if (banditWant && n.total('food') > 40) {
+        const bandits = f.units.filter(u => u.alive && u.type.robber).length;
+        if (bandits < banditWant && Math.random() < 0.5) f.trainUnit('bandit');
+      }
     }
   }
+  if (prof.pursuesGrand) aiPursueGrand(f);
 
   // 5. raiders: send bandits to rob the richest enemy storehouse
   if (enemies.length) {
@@ -198,21 +203,11 @@ function aiTick(f, dt) {
     }
   }
 
-  // 6. war behavior
+  // 6. war behavior: staged attack waves planned by the doctrine (js/ai.js)
   if (enemies.length) {
-    const army = f.armyUnits();
-    if (army.length >= 6 && !f.attackWave) {
-      const target = enemies.reduce((a, b) => (a.strength() < b.strength() ? a : b));
-      const th = target.townhall();
-      if (th) {
-        f.attackWave = army.slice(0, Math.floor(army.length * 0.7));
-        for (const u of f.attackWave) u.orderAttack(th);
-      }
-    }
-    if (f.attackWave) {
-      f.attackWave = f.attackWave.filter(u => u.alive);
-      if (f.attackWave.length === 0) f.attackWave = null;
-    }
+    aiWarTick(f, enemies);
+  } else if (f.ai.wave) {
+    aiDisbandWave(f);
   } else {
     // peacetime: rally army near townhall
     const th = f.townhall();
@@ -257,16 +252,24 @@ function maxThreatAgainst(f) {
   return worst;
 }
 
-// Find a valid spot for a building near the townhall (spiral search).
-function findBuildSpot(f, typeKey) {
+// Find a valid spot for a building near an anchor (spiral search). Resource and
+// storage buildings prefer the faction's expansion site when one is set, so new
+// clusters actually grow; everything else stays near the townhall.
+const EXPANSION_BUILDS = ['lumber', 'quarry', 'mine', 'storehouse', 'farm'];
+function findBuildSpot(f, typeKey, site = null) {
   const th = f.townhall();
   if (!th) return null;
-  const cx = Math.floor(th.cx), cy = Math.floor(th.cy);
-  for (let r = 2; r <= 14; r++) {
-    for (let attempt = 0; attempt < 14; attempt++) {
-      const a = Math.random() * Math.PI * 2;
-      const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
-      if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
+  const home = [Math.floor(th.cx), Math.floor(th.cy)];
+  const anchors = site
+    ? (EXPANSION_BUILDS.includes(typeKey) ? [[site.x, site.y], home] : [home, [site.x, site.y]])
+    : [home];
+  for (const [cx, cy] of anchors) {
+    for (let r = 2; r <= 14; r++) {
+      for (let attempt = 0; attempt < 14; attempt++) {
+        const a = Math.random() * Math.PI * 2;
+        const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
+        if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
+      }
     }
   }
   return null;

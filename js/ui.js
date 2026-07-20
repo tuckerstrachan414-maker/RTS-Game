@@ -682,9 +682,8 @@ class UI {
           const n = game.factions[0].nation;
           if (n.pop < 50) return game.log('The Grand Castle needs a great nation: 50 population required.', 'bad');
           if (n.happiness < 70) return game.log('Your people must be content (70% happiness) to raise the Grand Castle.', 'bad');
-          const cost = { gold: 300, wood: 200, stone: 200 };
-          if (!n.canAfford(cost)) return game.log('The Grand Castle costs 300 gold, 200 wood, 200 stone.', 'bad');
-          n.pay(cost);
+          if (!n.canAfford(GRAND_CASTLE_COST)) return game.log('The Grand Castle costs 300 gold, 200 wood, 200 stone.', 'bad');
+          n.pay(GRAND_CASTLE_COST);
           b.grandProgress = 0.01;
           game.log('Construction of the Grand Castle has begun!', 'good');
         };
