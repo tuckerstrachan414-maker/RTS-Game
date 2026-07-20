@@ -22,9 +22,15 @@ replay a specific map.
 
 ## How to play
 
-**Feed, house, and please your people.** Citizens eat food constantly. Population
-grows only when there is surplus food, free housing, and happiness above 50%.
-Starving citizens die, and starving armies fight poorly.
+**Feed, house, and please your people.** Citizens eat food constantly. Every
+dawn, if there is surplus food, free housing, and happiness above 50%,
+population grows by 30% of your housing cap — so more Houses means faster
+growth. Starving citizens die, and starving armies fight poorly.
+
+**Day and night.** A full day/night cycle takes 5 minutes — 2.5 minutes of
+daylight, 2.5 of night — with the light gradually shifting between them
+rather than snapping. The top bar shows the day count and whether it's day
+☀ or night 🌙; at night, your Houses' windows glow.
 
 **Every resource comes from a real tile:**
 

@@ -4,8 +4,8 @@
 // This is what makes robbery and raiding meaningful: lose a store, lose its goods.
 
 const EAT_RATE = 0.05;       // food per citizen per second
-const GROWTH_INTERVAL = 9;   // seconds between growth checks
 const STARVE_INTERVAL = 12;  // seconds between starvation losses
+const DAY_GROWTH_FRACTION = 0.3; // fraction of housing cap added each new day
 const RES_KEYS = ['food', 'wood', 'stone', 'gold'];
 
 class Nation {
@@ -14,7 +14,6 @@ class Nation {
     this.pop = 10;
     this.happiness = 60;
     this.tax = 0.1;            // 0..0.4 — gold per citizen, costs happiness
-    this.growthTimer = 0;
     this.starveTimer = 0;
     this.warWeariness = 0;     // rises during war, decays in peace
     this.starving = false;
@@ -137,14 +136,6 @@ class Nation {
     this.happiness += (target - this.happiness) * Math.min(1, dt * 0.15);
     this.happiness = Math.max(0, Math.min(100, this.happiness));
 
-    // growth
-    this.growthTimer += dt;
-    if (this.growthTimer >= GROWTH_INTERVAL) {
-      this.growthTimer = 0;
-      if (!this.starving && this.total('food') > this.pop * 2 && this.pop < this.housingCap() && this.happiness > 50) {
-        this.pop++;
-      }
-    }
     // starvation deaths
     if (this.starving) {
       this.starveTimer += dt;
@@ -159,6 +150,18 @@ class Nation {
     // war weariness
     const atWar = game.diplomacy.atWarAny(this.factionId);
     this.warWeariness = Math.max(0, Math.min(25, this.warWeariness + (atWar ? dt * 0.25 : -dt * 0.5)));
+  }
+
+  // Called once at dawn each day (see Game.tick). Population grows by DAY_GROWTH_FRACTION
+  // of the housing cap, same conditions the old per-tick growth used, rounded to a whole
+  // citizen and capped at the housing cap. Returns the number of citizens gained.
+  growForNewDay() {
+    const cap = this.housingCap();
+    if (this.starving || this.pop >= cap || this.happiness <= 50) return 0;
+    if (this.total('food') <= this.pop * 2) return 0;
+    const before = this.pop;
+    this.pop = Math.min(cap, this.pop + Math.round(cap * DAY_GROWTH_FRACTION));
+    return this.pop - before;
   }
 
   auraScore() {

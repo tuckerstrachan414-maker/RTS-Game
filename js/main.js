@@ -3,6 +3,11 @@
 
 const SIM_DT = 0.1;   // seconds per sim tick
 
+// day/night cycle: bright day and dark night, each 2.5 minutes, for a 5-minute full day.
+const DAY_LENGTH = 150;
+const NIGHT_LENGTH = 150;
+const DAY_NIGHT_CYCLE = DAY_LENGTH + NIGHT_LENGTH;
+
 let game = null;
 
 class Game {
@@ -12,6 +17,8 @@ class Game {
     this.projectiles = [];
     this.loot = [];       // dropped plunder piles awaiting pickup
     this.time = 0;
+    this.dayCount = 1;
+    this.isDay = true;
     this.over = false;
     this.tradeGold = 0;   // lifetime gold earned from trade (stats)
     this.msgs = [];
@@ -48,9 +55,29 @@ class Game {
     setTimeout(() => { div.classList.add('fade'); setTimeout(() => div.remove(), 1200); }, 9000);
   }
 
+  // 1 at midday (brightest), 0 at midnight (darkest). A single cosine over the whole
+  // day+night cycle so the light never jumps — dawn/dusk fall at the 0.5 crossing.
+  lightLevel() {
+    const t = this.time % DAY_NIGHT_CYCLE;
+    return 0.5 + 0.5 * Math.cos(2 * Math.PI * (t - DAY_LENGTH / 2) / DAY_NIGHT_CYCLE);
+  }
+
   tick(dt) {
     if (this.over) return;
     this.time += dt;
+    const isDayNow = (this.time % DAY_NIGHT_CYCLE) < DAY_LENGTH;
+    if (isDayNow && !this.isDay) {
+      this.dayCount++;
+      let grown = 0;
+      for (const f of this.factions) {
+        if (f.eliminated) continue;
+        const before = f.nation.pop;
+        f.nation.growForNewDay();
+        if (f.id === 0) grown = f.nation.pop - before;
+      }
+      if (grown > 0) this.log(`Dawn breaks — ${grown} new citizen${grown > 1 ? 's' : ''} joined your nation.`, 'good');
+    }
+    this.isDay = isDayNow;
     for (const f of this.factions) {
       if (f.eliminated) continue;
       f.nation.tick(dt);
