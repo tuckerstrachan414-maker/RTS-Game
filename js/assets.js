@@ -69,6 +69,9 @@ const Assets = {
   factionTilesets: [],   // per-faction recolored tileset (roofs)
   unitSheets: [],        // [factionIdx][unitKey] -> {canvas, rows, frames[row]}
   projectiles: null,
+  wallSprite: null,      // cleaned + full-bleed AT.WALL (straight segments)
+  towerSprite: null,     // cleaned AT.WALL_TOWER (corners / junctions / ends)
+  bridgeVmid: null,      // seamless vertical bridge (caps replaced by the plank middle)
   loaded: false,
 
   async load() {
@@ -88,9 +91,53 @@ const Assets = {
       }
     }
     this.tileset = tileset;
+    this.wallSprite = bakeTile(tileset, AT.WALL, { stripGreen: true, fullBleed: true });
+    this.towerSprite = bakeTile(tileset, AT.WALL_TOWER, { stripGreen: true });
+    this.bridgeVmid = bakeTile(tileset, AT.BRIDGE_V, { replicateMid: [1, 13] });
     this.loaded = true;
   },
 };
+
+// Extract one 16x16 atlas tile into its own canvas, cleaned up so structures tile without seams.
+//  stripGreen  — knock out the grass baked into a sprite's corners (turns opaque grass transparent)
+//  fullBleed   — edge-replicate the body into the empty right/bottom margins so straight runs join
+//  replicateMid[a,b] — rebuild every row from the clamped [a..b] band, erasing top/bottom end-caps
+function bakeTile(tileset, at, opts = {}) {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingEnabled = false;
+  g.drawImage(tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, 0, 0, TILE, TILE);
+  const d = g.getImageData(0, 0, TILE, TILE), p = d.data;
+  const A = i => p[i + 3];
+  if (opts.stripGreen) {
+    for (let i = 0; i < p.length; i += 4) {
+      if (A(i) > 30 && p[i + 1] > p[i] + 18 && p[i + 1] > p[i + 2] + 18) p[i + 3] = 0;
+    }
+  }
+  if (opts.replicateMid) {
+    const [a, b] = opts.replicateMid, src = p.slice();
+    for (let y = 0; y < TILE; y++) {
+      const sy = Math.min(b, Math.max(a, y));
+      for (let x = 0; x < TILE; x++) {
+        const di = (y * TILE + x) * 4, si = (sy * TILE + x) * 4;
+        p[di] = src[si]; p[di + 1] = src[si + 1]; p[di + 2] = src[si + 2]; p[di + 3] = src[si + 3];
+      }
+    }
+  }
+  if (opts.fullBleed) {
+    for (let y = 0; y < TILE; y++) for (let x = 1; x < TILE; x++) {
+      const i = (y * TILE + x) * 4;
+      if (A(i) < 30) { const j = (y * TILE + (x - 1)) * 4; p[i] = p[j]; p[i + 1] = p[j + 1]; p[i + 2] = p[j + 2]; p[i + 3] = p[j + 3]; }
+    }
+    for (let x = 0; x < TILE; x++) for (let y = TILE / 2; y < TILE; y++) {
+      const i = (y * TILE + x) * 4;
+      if (A(i) < 30) { const j = ((y - 1) * TILE + x) * 4; p[i] = p[j]; p[i + 1] = p[j + 1]; p[i + 2] = p[j + 2]; p[i + 3] = p[j + 3]; }
+    }
+  }
+  g.putImageData(d, 0, 0);
+  return c;
+}
 
 function loadImage(src) {
   return new Promise((res, rej) => {
