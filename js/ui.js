@@ -955,6 +955,9 @@ class UI {
       }
     }
 
+    // territory borders: dashed lines where tile ownership changes hands
+    this.drawBorders(x0, y0, x1, y1);
+
     // buildings (skip bridges: drawn as terrain; skip walls: drawn as a connected structure)
     for (const f of game.factions) {
       for (const b of f.buildings) {
@@ -1004,6 +1007,35 @@ class UI {
     this.minimapT -= 1;
     if (this.minimapT <= 0) { this.minimapT = 20; this.renderMinimap(); }
     this.blitMinimap();
+  }
+
+  // Subtle dashed frontier lines wherever territory ownership changes between
+  // neighboring tiles, drawn in each claimant's color.
+  drawBorders(x0, y0, x1, y1) {
+    const t = game.territory;
+    if (!t) return;
+    const ctx = this.ctx;
+    const s = TILE * this.cam.zoom;
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = Math.max(1, this.cam.zoom);
+    ctx.setLineDash([s * 0.25, s * 0.25]);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const own = t.owner[y * MAP_W + x];
+        if (own < 0) continue;
+        const sx = (x - this.cam.x) * s, sy = (y - this.cam.y) * s;
+        if (x < MAP_W - 1 && t.owner[y * MAP_W + x + 1] !== own) {
+          ctx.strokeStyle = game.factions[own].color.css;
+          ctx.beginPath(); ctx.moveTo(sx + s, sy); ctx.lineTo(sx + s, sy + s); ctx.stroke();
+        }
+        if (y < MAP_H - 1 && t.owner[(y + 1) * MAP_W + x] !== own) {
+          ctx.strokeStyle = game.factions[own].color.css;
+          ctx.beginPath(); ctx.moveTo(sx, sy + s); ctx.lineTo(sx + s, sy + s); ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
   }
 
   // Darkens the whole canvas toward a deep blue as night falls, brightens back at dawn.
@@ -1241,9 +1273,20 @@ class UI {
       [T_GRASS]: [116, 196, 80], [T_WATER]: [64, 120, 200],
       [T_TREE]: [40, 120, 50], [T_ROCK]: [130, 130, 130], [T_CAVE]: [80, 70, 70],
     };
+    // territory tint: claimed tiles blend toward their owner's color
+    const ownerCols = game.factions.map(f => [
+      parseInt(f.color.css.slice(1, 3), 16),
+      parseInt(f.color.css.slice(3, 5), 16),
+      parseInt(f.color.css.slice(5, 7), 16),
+    ]);
     for (let i = 0; i < MAP_W * MAP_H; i++) {
       let c = colors[map.terrain[i]];
       if (map.road[i]) c = [200, 180, 120];
+      const own = game.territory ? game.territory.owner[i] : -1;
+      if (own >= 0) {
+        const oc = ownerCols[own], a = 0.28;
+        c = [c[0] * (1 - a) + oc[0] * a, c[1] * (1 - a) + oc[1] * a, c[2] * (1 - a) + oc[2] * a];
+      }
       img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
     }
     mctx.putImageData(img, 0, 0);

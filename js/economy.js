@@ -113,6 +113,7 @@ class Nation {
     for (const b of f.buildings) {
       if (!b.done) {
         b.progress = Math.min(1, b.progress + dt / b.type.buildTime);
+        if (b.done) onBuildingCompleted(b);   // may spark a border dispute (js/territory.js)
         continue;
       }
       const out = buildingProduction(game.map, b, dt);

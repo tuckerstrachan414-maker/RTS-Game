@@ -66,6 +66,8 @@ function initFactionAI(f) {
     wave: null,                           // {units, state, stagePos, stageUntil, targetFid}
     consolidationUntil: 0,                // no new offensive wars while game.time < this
     expansionSite: null,                  // {x, y} anchor for a second build cluster
+    expansionPickedAt: -999,
+    wallBox: null,                        // frozen wall-ring bounds (turtle doctrine)
     diploAt: game.time + 8 + Math.random() * 8,
     eventCooldownUntil: 0,                // min spacing between event cards to the player
     warAt: null,                          // pending war vs the player after an ultimatum
@@ -185,6 +187,8 @@ function aiStrategy(f) {
   ai.provocation = Math.max(0, ai.provocation - 0.02);
   if (game.time >= ai.reevalAt) reevaluateDoctrine(f);
   aiBuildBridges(f);
+  aiPlanExpansion(f);
+  aiPlanWalls(f);
   if (game.time >= ai.diploAt) {
     ai.diploAt = game.time + 8 + Math.random() * 7;
     aiDiplomacy(f);
@@ -456,6 +460,128 @@ function aiDisbandWave(f) {
 function aiLootValue(o) {
   const n = o.nation;
   return n.total('gold') * 2 + n.total('food') + n.total('wood') + n.total('stone');
+}
+
+// ---------- expansion ----------
+// Ambitious nations found second clusters at resource-rich ground away from
+// home. Expansionist doctrines bias toward other nations' frontiers — which is
+// what makes claims collide and border disputes happen organically.
+
+function aiPlanExpansion(f) {
+  const ai = f.ai, prof = DOCTRINES[ai.doctrine];
+  if (prof.expansionAppetite <= 0.2) return;                 // homebodies stay home
+  if (ai.expansionSite && game.time < ai.expansionPickedAt + 150) return;
+  if (f.nation.pop < 16) return;                             // grow roots first
+  const th = f.townhall();
+  if (!th) return;
+  const t = game.territory;
+  let best = null, bestScore = 2;
+  for (let tries = 0; tries < 50; tries++) {
+    const x = 2 + Math.floor(Math.random() * (MAP_W - 4));
+    const y = 2 + Math.floor(Math.random() * (MAP_H - 4));
+    if (game.map.terrain[game.map.idx(x, y)] !== T_GRASS) continue;
+    const owner = t ? t.ownerAt(x, y) : -1;
+    if (owner === f.id) continue;                            // already ours
+    if (owner >= 0 && game.diplomacy.allied(f.id, owner)) continue;   // don't crowd allies
+    let rich = 0, foreignNear = owner >= 0 ? 1 : 0;
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const tt = game.map.t(x + dx, y + dy);
+        if (tt === T_CAVE) rich += 4;
+        else if (tt === T_ROCK) rich += 1;
+        else if (tt === T_TREE) rich += 1;
+      }
+    }
+    const dist = Math.hypot(x - th.cx, y - th.cy);
+    if (dist < 12 || dist > 45) continue;
+    let score = rich - Math.abs(dist - 20) * 0.15;
+    // conquerors and raiders covet contested ground; the cautious avoid it
+    if (foreignNear) score += prof.expansionAppetite > 0.5 ? 3 : -4;
+    if (score > bestScore) { bestScore = score; best = { x, y }; }
+  }
+  if (best) {
+    ai.expansionSite = best;
+    ai.expansionPickedAt = game.time;
+  }
+}
+
+// ---------- turtle wall rings ----------
+// Isolationists wall their settlement in, one affordable segment per tick,
+// leaving a gate toward the map's heart and one near their market.
+
+function aiPlanWalls(f) {
+  const prof = DOCTRINES[f.ai.doctrine];
+  if (!prof.wallRing) return;
+  const n = f.nation;
+  if (!n.canAfford(BUILDING_TYPES.gate.cost)) return;   // afford the priciest piece
+  // core bounding box; freeze the ring so it stays coherent, expanding only
+  // when the town outgrows it
+  let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, core = 0;
+  for (const b of f.buildings) {
+    if (!b.done || ['wall', 'gate', 'bridge'].includes(b.type.key)) continue;
+    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+    x1 = Math.max(x1, b.x + b.type.size - 1); y1 = Math.max(y1, b.y + b.type.size - 1);
+    core++;
+  }
+  if (core < 5) return;                                 // wall up once there's a town
+  const want = { x0: Math.max(1, x0 - 2), y0: Math.max(1, y0 - 2),
+    x1: Math.min(MAP_W - 2, x1 + 2), y1: Math.min(MAP_H - 2, y1 + 2) };
+  if (!f.ai.wallBox || want.x0 < f.ai.wallBox.x0 || want.y0 < f.ai.wallBox.y0
+      || want.x1 > f.ai.wallBox.x1 || want.y1 > f.ai.wallBox.y1) {
+    f.ai.wallBox = want;
+    f.ai.wallSkip = new Set();   // re-test reachability against the new ring
+  }
+  const { x0: bx0, y0: by0, x1: bx1, y1: by1 } = f.ai.wallBox;
+  const per = [];
+  for (let x = bx0; x <= bx1; x++) { per.push([x, by0]); per.push([x, by1]); }
+  for (let y = by0 + 1; y < by1; y++) { per.push([bx0, y]); per.push([bx1, y]); }
+  const onRing = b => b.x === bx0 || b.x === bx1 ? (b.y >= by0 && b.y <= by1)
+    : (b.y === by0 || b.y === by1) && b.x >= bx0 && b.x <= bx1;
+  // GATES FIRST — a ring is never sealed without a way out: one gate toward
+  // the map's heart, one by the market for caravans
+  const market = f.buildings.find(b => b.type.key === 'market' && b.done);
+  const targets = [[MAP_W / 2, MAP_H / 2]];
+  if (market) targets.push([market.cx, market.cy]);
+  const gatesOnRing = f.buildings.filter(b => b.type.key === 'gate' && onRing(b)).length;
+  if (gatesOnRing < targets.length) {
+    const cand = per.filter(([x, y]) => canPlace(game.map, 'gate', x, y, f.id));
+    if (!cand.length) return;                           // can't take a gate: no walls either
+    const [tx, ty] = targets[gatesOnRing];
+    cand.sort((p, q) => Math.hypot(p[0] - tx, p[1] - ty) - Math.hypot(q[0] - tx, q[1] - ty));
+    const spot = cand.find(([x, y]) => aiRingTileConnected(f, x, y));
+    if (!spot) return;
+    n.pay(BUILDING_TYPES.gate.cost);
+    placeBuilding(game, 'gate', spot[0], spot[1], f.id);
+    return;
+  }
+  for (const [x, y] of per) {
+    if (!canPlace(game.map, 'wall', x, y, f.id)) continue;   // occupied or natural barrier
+    if (!aiRingTileConnected(f, x, y)) continue;             // e.g. across a channel
+    n.pay(BUILDING_TYPES.wall.cost);
+    placeBuilding(game, 'wall', x, y, f.id);
+    return;                                             // one segment per tick
+  }
+}
+
+// A ring tile only counts if it's path-connected to the town — water can put
+// perimeter tiles on a different shore entirely, and walls there are wasted
+// stone (or worse, someone else's shore). Failed tiles are cached per ring.
+function aiRingTileConnected(f, x, y) {
+  const key = x + ',' + y;
+  if (f.ai.wallSkip && f.ai.wallSkip.has(key)) return false;
+  const th = f.townhall();
+  if (!th) return false;
+  const [sx, sy] = f.spawnPointNear(th);
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const ax = x + dx, ay = y + dy;
+    if (!game.map.inBounds(ax, ay) || !game.map.passable(ax, ay, f.id)) continue;
+    const p = findPath(game.map, sx, sy, ax, ay, f.id, 3000);
+    const end = p.length ? p[p.length - 1] : null;
+    if (end && end[0] === ax && end[1] === ay) return true;
+  }
+  if (!f.ai.wallSkip) f.ai.wallSkip = new Set();
+  f.ai.wallSkip.add(key);
+  return false;
 }
 
 // ---------- military engineering ----------

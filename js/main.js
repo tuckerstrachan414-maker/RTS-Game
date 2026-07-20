@@ -51,6 +51,7 @@ class Game {
       this.factions.push(new Faction(i, i === 0, AI_PERSONALITIES[i] || { aggression: 0, mercantile: 0.5, label: 'you' }));
     }
     this.diplomacy = new Diplomacy(4);
+    this.territory = new Territory(4);
     // found each nation at its start zone
     this.map.startZones.forEach((z, i) => {
       const th = placeBuilding(this, 'townhall', z.x - 1, z.y - 1, i);
@@ -116,6 +117,7 @@ class Game {
     this.market.tick(dt);
     this.tickLoot(dt);
     this.diplomacy.tick(dt);
+    this.territory.tick(dt);
     tickEvents();
     this.checkVictory();
   }
