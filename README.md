@@ -38,7 +38,11 @@ Starving citizens die, and starving armies fight poorly.
 Click a finished building and use **+/−** to assign idle citizens to its worker
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
 happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, and
-the Town Hall is your nation's heart — lose it and you lose the game.
+the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
+building? **Demolish** it from its panel and reclaim 75% of its cost.
+
+**Taxes** are a slider in the top bar (0–40%): more gold per citizen, at a
+happiness cost that scales with the rate.
 
 **Tap any resource in the top bar** to open a live tooltip explaining what it is,
 which tiles and buildings it comes from, and your income vs. consumption per second.
@@ -86,7 +90,7 @@ them — and AI nations climb the same tiers.
 facing the direction of travel — melee up front, ranged and mages behind — and
 units physically push apart so they never stand inside each other.
 
-**Diplomacy (🕊️ button):** relations run −100…+100 per nation.
+**Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.
 - 🐎 **Trade pacts** need a Market on both sides and a **Prince** envoy (trained at
   the Castle) who physically rides to their Town Hall with the offer. Accepted pacts
@@ -102,18 +106,25 @@ units physically push apart so they never stand inside each other.
 - 🤝 **Diplomatic** — every surviving nation allied with you.
 - ⚔️ **Conquest** — every rival Town Hall destroyed.
 
-**Controls (desktop):** WASD/arrows pan · wheel zooms · left-click/drag selects ·
-right-click moves/attacks — or, with bandits selected, sends them to rob an enemy
-storehouse; sets rally with a Castle selected · Shift+click places multiple
-buildings · Esc cancels.
+**The Menu button** (top right) opens the pause menu — the simulation freezes
+while it's up. From there: Diplomacy, Select Army (grabs your whole standing
+army), game **Speed** (1x/2x/3x), Hide UI, and New Game.
+
+**Controls (desktop):** WASD/arrows pan (Shift = faster) · wheel zooms ·
+left-click/drag selects · right-click moves/attacks — or, with bandits selected,
+sends them to rob an enemy storehouse; sets rally with a Castle selected ·
+Shift+click places multiple buildings · R rotates a bridge while placing ·
+Esc cancels placement / clears selection / closes menus.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
 anyway" to dismiss the rotate hint). One-finger drag pans · pinch zooms · tap selects
 or places · hold-and-drag box-selects an army · **double-tap** (or two-finger tap)
 moves/attacks/robs or sets a rally.
 
-**🙈 Hide UI** (sidebar, or press H) clears every panel off the screen to watch the
-battle; tap the 👁 eye to bring the interface back.
+**Hide UI** (Menu → Hide UI, or press H) clears every panel off the screen to
+watch the battle; tap the 👁 eye to bring the interface back. Each HUD panel
+(top bar, minimap, build menu) also has its own **▾ collapse tab** if you just
+want one out of the way.
 
 ## Code layout
 
@@ -129,6 +140,15 @@ Plain `<script>` modules, no build step:
 - `js/factions.js` — faction state and the AI (economy, trading, military, raiding)
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
 - `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, game loop
+
+## More documentation
+
+- `docs/FEATURES.md` — every system in the game with a depth rating
+- `docs/BUGS.md` — known bugs (with file:line refs) and design quirks
+- `docs/formations-tiers-ui.md` — implementation notes for formations, castle
+  tiers, touch gestures, tooltips, and hide-UI
+- `CLAUDE.md` — contributor guide; includes the rule that **docs must be
+  updated after every code change**
 
 ## Credits
 
