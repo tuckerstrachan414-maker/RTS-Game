@@ -207,6 +207,20 @@ other picks the diagonal). Gates and bridges never go diagonal; bridge
 orientation still comes from whichever of horizontal/vertical the drag
 resolved to.
 
+## 2026-07 AI-overhaul touchpoints (formations & hide-UI)
+
+The enemy-AI overhaul reuses two systems documented here:
+
+- **`formationMove` is now also the AI's marching order.** Attack waves
+  (`aiWarTick`/`aiTickWave` in `js/ai.js`) stage by calling
+  `formationMove(waveUnits, sx, sy)` toward a border staging point, and
+  survivors formation-move home on disband. The melee-in-front sort must stay
+  stable — both the player and every AI wave depend on it.
+- **Hide-UI list gained `#eventcard`** (the AI choice-card element) in
+  `index.html`'s `body.ui-hidden` CSS list. The pre-game `#difficulty` overlay
+  is deliberately NOT `.hud` — it exists before the game does, styled like
+  `#gameover`, and is also hidden by the portrait-rotate prompt rules.
+
 ## Testing this feature set
 
 No test framework is wired into the repo (consistent with the rest of the

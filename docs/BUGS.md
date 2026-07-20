@@ -1,9 +1,9 @@
 # Known bugs & issues
 
-Found during the 2026-07 documentation audit by reading every module. None are
-fixed yet. **Plans are intentionally left blank (TBD) — to be filled in
-later.** When you fix one, move it to the Fixed section at the bottom with a
-one-line note on the fix.
+Found during the 2026-07 documentation audit by reading every module; several
+were fixed in the AI-overhaul batch (see Fixed). **Plans are intentionally
+left blank (TBD) — to be filled in later.** When you fix one, move it to the
+Fixed section at the bottom with a one-line note on the fix.
 
 Ordered roughly by player impact.
 
@@ -31,21 +31,6 @@ A misplaced bridge is permanent (though it still cost wood, sits in
 `faction.buildings`, and has 120 HP nothing can target).
 **Plan:** TBD
 
-### 4. Wars between AI nations never end
-No `aiTick` path calls `suePeace`, and ambient diplomacy (`js/diplomacy.js`
-`tick`) has no peace-seeking branch — war weariness caps at 25 and just sits
-there. Any AI–AI (or AI-declared) war continues until a Town Hall falls,
-unless the player is a belligerent and pays for peace.
-**Plan:** TBD
-
-### 5. AI signs trade pacts with the player without consent
-`js/diplomacy.js:251` — mercantile ambient diplomacy flips any neutral pair
-straight to `trade` (12% roll per 5s, both Markets required), including pairs
-involving the player — no envoy, no offer, no way to refuse. It benefits the
-player (caravan gold), but bypasses the entire consent/envoy system the
-player has to use, and an unwanted pact also can't be refused pre-emptively.
-**Plan:** TBD
-
 ### 6. Resource tooltip income ignores forest depletion
 `js/ui.js:1214` — `estimateIncome` mirrors `buildingProduction`'s math but not
 its tree check: a Lumber Camp whose forest is exhausted shows a positive
@@ -54,30 +39,11 @@ its tree check: a Lumber Camp whose forest is exhausted shows a positive
 exactly what the comment in `docs/formations-tiers-ui.md` warns about.
 **Plan:** TBD
 
-### 7. "Prioritize farms when food is low" AI logic is unimplemented
-`js/factions.js:118` — `const want = (b.type.key === 'farm' && foodRate < 0) ?
-b.type.slots : b.type.slots;` — both ternary branches are identical, so the
-commented intent (staff farms first during shortage) does nothing. Workers are
-assigned in whatever order buildings sit in the array.
-**Plan:** TBD
-
-### 8. Envoy death silently loses the proposal
-If a Prince dies mid-mission (he walks through war zones unarmed and can't be
-escorted — see bug 2), the proposal simply vanishes with no log message. The
-player only learns by noticing the pact never arrived.
-**Plan:** TBD
-
 ### 9. Menu button tooltip promises "Esc" opens it, but Esc never does
 `index.html:250` titles the button "Menu / Pause (Esc)", but the keydown
 handler (`js/ui.js:66`) only uses Escape to close the pause menu / cancel
 placement / clear selection. There is no keyboard shortcut that opens the
 pause menu.
-**Plan:** TBD
-
-### 10. Loot log spam from wars the player isn't in
-`js/main.js:169` — when any non-player storehouse is razed, the player gets a
-green "spills its stores — grab the loot!" message, even for an AI-vs-AI raid
-on the far side of the map that the player can't meaningfully act on.
 **Plan:** TBD
 
 ### 11. Trade roads persist after the route dies
@@ -106,6 +72,27 @@ just meaningless. Cosmetic cleanup only.
 - **Bandits look like horsemen** — `spriteKey: 'horseman'`; only behavior
   distinguishes them. Caravans at least get a yellow marker.
 
+### 13. Peace-offer / dispute cards can pile up against an idle player
+`js/events.js` `pushPlayerEvent` — the queue caps at 3 and per-faction
+politeness cooldowns apply, but three different factions can still each keep a
+card up more or less permanently if the player never answers. Mostly cosmetic;
+expiry consequences (relations drops) do apply.
+**Plan:** TBD
+
 ## Fixed
 
-*(nothing yet)*
+- **#4 Wars between AI nations never end** — `aiDiplomacy` (`js/ai.js`) now
+  sues for peace when weary and losing (or the war drags), and mutually
+  exhausted bloodless wars end in an automatic white peace.
+- **#5 AI signs trade pacts with the player without consent** — the
+  instant-flip block was removed from `Diplomacy.tick`; all AI pacts now
+  travel by Prince envoy, and AI→player proposals arrive as an
+  Accept/Decline/Rebuff event card (`resolveEnvoy`, `js/diplomacy.js`).
+- **#7 Farm-priority worker logic was a no-op** — `aiTick` now staffs farms
+  first when the food rate is negative and pulls a worker off a non-farm
+  building when starving with full employment (`js/factions.js`).
+- **#8 Envoy death silently loses the proposal** — `onUnitDeath`
+  (`js/main.js`) logs when a mission-carrying Prince is slain.
+- **#10 Loot log spam from wars the player isn't in** — `dropLoot`
+  (`js/main.js`) only logs when the player is a belligerent or has living
+  troops within 20 tiles of the spill.

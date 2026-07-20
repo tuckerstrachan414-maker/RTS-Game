@@ -39,10 +39,15 @@ the code; stale docs are treated as bugs.
 - `js/economy.js` — Nation sim; `res` is a Proxy over per-building `store`s
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
 - `js/units.js` — unit defs, combat, projectiles, rob/haul, formations, separation
-- `js/factions.js` — Faction state, training, the AI (`aiTick`)
+- `js/factions.js` — Faction state, training, the AI executor (`aiTick`)
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
-- `js/ui.js` — rendering, input (mouse + touch), HUD, panels, minimap
-- `js/main.js` — Game class, fixed-timestep loop (SIM_DT 0.1), victory, loot piles
+- `js/events.js` — event-card queue (AI-initiated player choices, expiry)
+- `js/territory.js` — per-tile influence/ownership, contested borders, disputes
+- `js/ai.js` — AI goal brain: doctrines (`f.ai`), re-evaluation, proactive
+  diplomacy, war waves, bridge/wall engineering, coalitions
+- `js/ui.js` — rendering, input (mouse + touch), HUD, panels, minimap, event card
+- `js/main.js` — Game class, fixed-timestep loop (SIM_DT 0.1), victory, loot
+  piles, `DIFFICULTIES` + pre-game difficulty overlay
 
 ## Gotchas worth knowing before editing
 
@@ -58,5 +63,14 @@ the code; stale docs are treated as bugs.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
 - New HUD elements need the `.hud` class to be hidden by Hide UI, and an
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.
+- The Game is NOT constructed until a difficulty is chosen — headless scripts
+  must pass `?difficulty=ramped|slanted|ruthless` in the URL or `game` stays
+  null behind the `#difficulty` overlay.
+- All AI *initiative* (wars, pacts, gifts, embargoes, peace) lives in
+  `js/ai.js`; `Diplomacy.tick` is ambient relations drift only. Don't add AI
+  decision-making back into diplomacy.js.
+- `aiTick` reads every knob from `f.ai` (doctrine) and `game.diff`
+  (difficulty). Personality (`AI_PERSONALITIES`) is static seed data — don't
+  mutate it; mutate the doctrine instead.
 - Verification pattern (headless Playwright driving `game.tick(0.1)` loops) is
   documented at the bottom of `docs/formations-tiers-ui.md`.

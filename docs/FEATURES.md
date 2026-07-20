@@ -72,8 +72,10 @@ Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals,
 tileset-baked sprite rendering — straight runs vs. corner/junction/end towers),
 Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
 Placement validation with per-type requirements, construction time, HP/damage,
-demolish with 75% refund (except Town Hall). Gaps: no building upgrades
-outside the Castle, no repair, bridges can't be removed once placed (see BUGS).
+demolish with 75% refund (except Town Hall). AI nations now build walls/gates
+(turtle doctrine rings) and bridges (war-route engineering) too. Gaps: no
+building upgrades outside the Castle, no repair, bridges can't be removed once
+placed (see BUGS).
 
 ## Market & commodity trading — Deep
 
@@ -124,46 +126,119 @@ stranded on impassable tiles. Full detail in `docs/formations-tiers-ui.md`.
 `js/buildings.js` (`CASTLE_UPGRADES`), `js/factions.js`. Two purchasable
 upgrades: Garrison (tier 2: Shieldman/Halberdier/Crossbowman/Horseman) and
 Royal Academy (tier 3: Mage/Archmage/Cavalier/King). Locked units render with
-a lock icon and unlock hint. The AI buys upgrades under threat/aggression/
-population triggers and filters its training pool by tier. Data-driven — a
-tier 4 needs only data entries. The separate Grand Castle upgrade (300g/200w/
-200s, 50 pop + 70% happiness gates) is the prosperity victory condition.
+a lock icon and unlock hint. The AI buys upgrades under threat/doctrine/
+population triggers (conquest and prosperity upgrade eagerly) and filters its
+training pool by tier. Data-driven — a tier 4 needs only data entries. The
+separate Grand Castle upgrade (`GRAND_CASTLE_COST` in `js/buildings.js`:
+300g/200w/200s, 50 pop + 70% happiness gates) is the prosperity victory
+condition — for the player and for prosperity-doctrine AI nations alike.
 
 ## Diplomacy — Deep
 
-`js/diplomacy.js`. Symmetric relations (−100…+100) and a status matrix
-(war/neutral/trade/alliance) per pair. Gifts buy relations. Trade pacts and
-alliances require a Prince envoy who physically rides to the target's Town
-Hall (acceptance depends on relations + personality; rejection costs −3).
-Pacts spawn caravan pairs on a real pathfound route, stamped as road tiles
-(speed bonus), paying both sides 8 gold per arrival; caravans are killable and
-routes die with their markets. War declaration drags in the defender's allies;
-peace costs 100 gold reparations and can be refused by a winning AI. Embargoes
-cascade to the embargoer's allies and worsen the target's market terms.
-Ambient drift: trade/alliance warm relations, warlike AIs covet weaker
-neighbors and declare war when strong enough, mercantile AIs open trade routes
-on their own. Gaps: AI never sues for peace, never embargoes, and never sends
-envoys (its pacts happen instantly — including with the player, see BUGS).
+`js/diplomacy.js` (mechanisms) + `js/ai.js` (`aiDiplomacy`, AI initiative).
+Symmetric relations (−100…+100) and a status matrix (war/neutral/trade/
+alliance) per pair, plus `warSince`/`lastBlood` matrices for peace-seeking.
+Gifts buy relations. Trade pacts and alliances require a Prince envoy who
+physically rides to the target's Town Hall — for the player AND for every AI
+nation (the old instant AI pact flips are gone). AI→player proposals arrive as
+an Accept/Decline/Rebuff event card. Pacts spawn caravan pairs on a real
+pathfound route, stamped as road tiles (speed bonus), paying both sides 8 gold
+per arrival; caravans are killable and routes die with their markets. War
+declaration drags in the defender's allies; peace costs 100 gold reparations
+and can be refused by a winning AI. Embargoes cascade to the embargoer's
+allies and worsen the target's market terms. AI factions proactively drive all
+of it per their current doctrine: envoy proposals to their best-relation
+neighbors, gifts to looming stronger powers, embargoes on hated rivals and
+runaway leaders, doctrine-gated war declarations, suing for peace when weary
+and losing, and automatic white peace for mutually exhausted bloodless wars.
+`Diplomacy.tick` itself keeps only ambient relations drift (pacts warm,
+covetous ambitions cool).
 
-## AI opponents — Moderate
+## AI opponents — Deep
 
-`js/factions.js` (`aiTick`, ~2s cadence). Three personalities (warlike Crimson
-0.8 aggression, mercantile Violeta 0.9 mercantile, cautious Aurelia). Keeps
-workers assigned, follows a priority build order (food → wood → storage →
-market/housing → military → comforts), trades on the market, maintains an army
-scaled to threat + aggression + population, buys castle upgrades, sends bandit
-raids, launches 70%-of-army attack waves at the weakest enemy's Town Hall, and
-rallies home in peacetime. Gaps: never builds walls/gates/bridges, no
-defensive reaction beyond unit auto-acquire, single attack-wave pattern, no
-peace-seeking.
+`js/factions.js` (`aiTick` executor, ~2s cadence) + `js/ai.js` (the goal
+brain). Each AI nation carries an evolving **doctrine** — its current
+ambition — seeded from its personality (warlike Crimson 0.8 aggression,
+mercantile Violeta 0.9 mercantile, cautious Aurelia) and re-scored against the
+world state every 60s and instantly on shocks (war declared, buildings lost,
+king slain, a nation eliminated), with hysteresis so ambitions don't flap:
+
+- **conquest** — huge army targets (up to 34), a second castle at 28 pop,
+  eager tier upgrades, expansion toward foreign frontiers, wars on a strength
+  edge, straight-for-the-townhall kill moves on broken enemies.
+- **prosperity** — token army, double markets, church/well comforts, trade
+  with everyone, embargoes instead of blades — and a race to its own Grand
+  Castle, which ends the game if it stands.
+- **turtle** — wall ring with gates (see below), stockpiles, stone economy;
+  only fights intruders and coalition wars.
+- **hegemon** — alliance webs, gifts, coalition-building against any runaway
+  power.
+- **raider** — bandit stables, short plunder wars against the richest
+  reachable target, peace once the loot is banked.
+
+The doctrine is never shown to the player — rumor log lines ("Travelers report
+soldiers drilling in X's fields…") and visible behavior are the tells. Economy:
+deficit-scored build planning that scales with population forever (farms from
+eat-rate math, housing growth headroom, storehouses at 70% capacity), market
+trading, farm-first staffing during shortages, expansion clusters at
+resource-rich ground 12–45 tiles out. War: two-stage attack waves that first
+**mass at a staging point** near the border (the visible telegraph, via
+`formationMove`), then assault doctrine-picked objectives (loot-rich
+storehouses → castle → townhall), with a deadline so stuck campaigns march
+home; AI factions survey water crossings and **build bridges** to reach war
+targets. Remaining gaps: no reactive defense beyond auto-acquire and walls, no
+naval anything.
+
+## Territory & borders — Moderate
+
+`js/territory.js`. A per-tile influence field radiating from completed
+buildings (townhall 20/r12, castle 14/r10, walls 6/r4, others 8/r6),
+recomputed every 5s; the strongest nation owns each tile, a runner-up within
+60% marks it contested. Rendered as dashed frontier lines on the main map and
+an ownership tint on the minimap. Sustained contested frontiers sour relations
+and spark **border disputes**; so does completing a building on another
+nation's claim. Player disputes arrive as event cards (Concede / Negotiate
+40g / Stand firm — ignoring one is worse); AI–AI disputes resolve from
+strength, ambition and relations, and can harden into wars or soften into
+trade pacts. Gaps: territory has no direct economic effect (no tile tribute),
+walls don't project claims far.
+
+## Event cards — Moderate
+
+`js/events.js` (queue + resolution) + `ui.refreshEventCard` (`js/ui.js`,
+`#eventcard` HUD element). AI-initiated interactions reach the player as
+non-pausing choice cards: envoy proposals, border disputes, ultimatums
+(tribute / counter-offer / refuse, with war 60s after refusal), peace offers
+with reparations, and coalition invites against runaway powers. One card
+shown at a time (queue capped at 3, "+N more" badge), a draining timer bar,
+per-faction politeness cooldowns (45s), and expiry consequences — silence is
+an answer. Hidden by Hide UI like every HUD element.
+
+## Difficulty modes — Moderate
+
+`js/main.js` (`DIFFICULTIES`, `#difficulty` overlay in `index.html`). Chosen
+on a pre-game screen before the Game is constructed (or via `?difficulty=`,
+which round-trips in the URL with `?seed=`): **Measured March** (ramped — wars
+telegraphed by ultimatums, 5-minute player grace, victors consolidate 180s
+after conquests, coalitions form against snowballing powers), **Quiet
+Frontier** (AI wars each other freely but only marches on the player after
+real provocation — declared wars, embargoes, robbery, killings, stand-firm
+disputes), and **Iron Age** (ruthless — attacks on advantage from the start,
+no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
+`ultimatums`, `consolidation`, `coalitions`, `armyMul`, `playerGrace`,
+`provokedOnly`.
 
 ## Victory & defeat — Moderate
 
 `js/main.js`. Three win paths — Prosperity (Grand Castle), Conquest (all rival
 Town Halls destroyed), Diplomatic (every survivor allied, after 60s) — and
-defeat on losing your Town Hall. Elimination removes a faction's units and
-buildings and cancels its routes. No score screen or stats beyond lifetime
-trade gold.
+defeat on losing your Town Hall **or when a rival completes its own Grand
+Castle** (prosperity doctrine AIs pursue it; construction start is announced).
+Elimination removes a faction's units and buildings, cancels its routes, and
+makes every survivor rethink its doctrine; on paced difficulties the victor
+rests (consolidation) before its next war, and the map can consolidate without
+the player — you might face one giant empire late. No score screen or stats
+beyond lifetime trade gold.
 
 ## Desktop UI/HUD — Deep
 
@@ -171,7 +246,9 @@ trade gold.
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
 health/construction bars, selection rings/outlines, placement ghost with
 validity tint, drag box-select, minimap (terrain + roads + buildings + units +
-viewport rectangle, click/tap to jump). Topbar with live stats, tax slider,
+territory ownership tint + viewport rectangle, click/tap to jump), dashed
+territory border lines on the main map, event cards (`#eventcard`, see Event
+cards above). Topbar with live stats, tax slider,
 and per-stat live tooltips (income vs consumption breakdowns; happiness
 itemized). Building panel: workers, storage contents, castle training/upgrades/
 rally/Grand Castle, market buy/sell/barter, demolish. Diplomacy panel with

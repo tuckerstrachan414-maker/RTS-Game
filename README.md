@@ -6,8 +6,11 @@ and the **Minifolks: Humans** unit pack (`assets/units/`).
 
 You lead the blue nation of **Azuria** on a procedurally generated continent shared
 with three AI nations — warlike **Crimson**, mercantile **Violeta**, and cautious
-**Aurelia**. You never *have* to fight: trade, gifts and alliances are a complete
-path to victory.
+**Aurelia**. Each rival pursues its own **evolving ambition** — one may drill a
+conquering army, another chase riches and its own Grand Castle, another wall
+itself in or weave alliances — and those ambitions shift as the world changes.
+You never *have* to fight: trade, gifts and alliances are a complete path to
+victory. But the world won't wait for you.
 
 ## Run it
 
@@ -18,7 +21,19 @@ python3 -m http.server 8000
 
 Any static file server works (assets are loaded with `fetch`-less `<img>`, but
 canvas pixel access requires HTTP, not `file://`). Add `?seed=123` to the URL to
-replay a specific map.
+replay a specific map; the chosen difficulty is added as `&difficulty=` so a
+copied URL reproduces the whole setup.
+
+**Before the game starts you choose how hard the rivals come at you:**
+
+- **Measured March** — wars are telegraphed: relations sour, armies visibly
+  mass at your border, and an ultimatum arrives before blades are drawn. You
+  get a 5-minute grace period, and the world gangs up on runaway powers.
+- **Quiet Frontier** — the AI nations wage real wars on *each other*, but only
+  march on you if provoked (declaring war, embargoes, robbing them, killing
+  their people, defying their border claims).
+- **Iron Age** — nations attack the moment they sense an advantage, you
+  included, from the very start. No warnings, no mercy, bigger armies.
 
 ## How to play
 
@@ -106,11 +121,32 @@ units physically push apart so they never stand inside each other.
   weak. Trade with them or gift them to stay off their list; peace is always drift,
   never luck.
 
+**The rivals come to you.** AI nations send their own envoys, gifts, embargoes
+and armies — at you and at each other. Their approaches arrive as **event
+cards** (top right): a proposal to accept or rebuff, a border dispute to
+concede, settle for gold, or defy, an ultimatum to pay or refuse, a peace offer,
+a plea to join a coalition. Cards expire on a timer, and **silence is an
+answer** — ignored envoys take offense.
+
+**Borders are real.** Your buildings project territory: dashed frontier lines
+on the map (and a color tint on the minimap) show who claims what. Building
+deep into a rival's claim — or letting their settlers creep into yours —
+sparks disputes that can be talked out or fought over. Watch for rumors in the
+event log ("soldiers drilling…", "masons quarrying…") and for armies massing
+at your border: ambitions are never announced outright, but they always show.
+
 **Winning:**
 - 👑 **Prosperity** — 50 population, 70% happiness, then build the Grand Castle
   upgrade (300🪙 200🪵 200🪨) at your Castle. The peaceful win.
 - 🤝 **Diplomatic** — every surviving nation allied with you.
 - ⚔️ **Conquest** — every rival Town Hall destroyed.
+
+**Losing:** your Town Hall falls — or a **rival finishes its own Grand
+Castle**. Prosperous AI nations race for it too (you'll be warned when
+construction starts), and conquerors can swallow the whole map if nobody
+stops them. AI nations fight, bridge rivers to reach each other, and eliminate
+one another — the continent you face in the late game may not be the one you
+started on.
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
 while it's up. From there: Diplomacy, Select Army (grabs your whole standing
@@ -143,9 +179,14 @@ Plain `<script>` modules, no build step:
 - `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
 - `js/market.js` — supply/demand commodity pricing, buy/sell, barter
 - `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
-- `js/factions.js` — faction state and the AI (economy, trading, military, raiding)
+- `js/factions.js` — faction state and the AI executor (economy, military, raiding)
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
-- `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, game loop
+- `js/ai.js` — the AI goal brain: evolving doctrines, proactive diplomacy, war
+  planning, bridge engineering, wall rings
+- `js/events.js` — the event-card queue (AI-initiated choices for the player)
+- `js/territory.js` — per-tile influence/ownership, borders, border disputes
+- `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, difficulty
+  select, game loop
 
 ## More documentation
 
