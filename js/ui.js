@@ -973,8 +973,10 @@ class UI {
     }
 
     // forest canopy: oversized, overlapping, drawn after all ground so a stand
-    // of trees closes over into a wood instead of a grid of separate tiles
-    this.drawForest(x0, y0, x1, y1);
+    // of trees closes over into a wood instead of a grid of separate tiles.
+    // Trees under the current placement footprint fade so the validity wash
+    // (drawGhost) reads clearly over ground that's about to be cleared.
+    this.drawForest(x0, y0, x1, y1, this.placing ? this.placementFootprint() : null);
 
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
@@ -1111,7 +1113,11 @@ class UI {
   // and a patch reads as a wood you push through rather than a row of shrubs.
   // Everything is derived from the tile coordinates, so a given map always draws
   // the same forest.
-  drawForest(x0, y0, x1, y1) {
+  // `fadeSet`, if given, is a Set of tile indices (map.idx) whose canopy should
+  // render translucent — used while placing a building on forest, so the
+  // ghost's validity wash (drawGhost) reads clearly over ground that's about
+  // to be cleared instead of competing with a solid green crown.
+  drawForest(x0, y0, x1, y1, fadeSet) {
     const map = game.map;
     // canopies are taller than their tile and spill upward and sideways, so
     // sweep a margin past the viewport or trees pop in at the edges
@@ -1121,12 +1127,13 @@ class UI {
     // rows drawn top-down so nearer canopies overlap the ones behind them
     for (let y = yStart; y <= yEnd; y++) {
       for (let x = xStart; x <= xEnd; x++) {
-        if (map.terrain[map.idx(x, y)] === T_TREE) this.drawTreeClump(x, y);
+        const i = map.idx(x, y);
+        if (map.terrain[i] === T_TREE) this.drawTreeClump(x, y, fadeSet && fadeSet.has(i) ? 0.32 : 1);
       }
     }
   }
 
-  drawTreeClump(x, y) {
+  drawTreeClump(x, y, alpha = 1) {
     const map = game.map;
     const variant = map.decor[map.idx(x, y)];
     const rnd = tileNoise(x, y);
@@ -1137,6 +1144,9 @@ class UI {
     // zoomed all the way out the whole map is on screen and the undergrowth is
     // sub-pixel detail nobody can see — don't pay for it
     if (this.cam.zoom < 2) extras = Math.min(extras, 1);
+    const ctx = this.ctx;
+    const baseAlpha = ctx.globalAlpha;
+    if (alpha < 1) ctx.globalAlpha = baseAlpha * alpha;
     // undergrowth first, then the crown, so the big tree sits in front of its bush
     for (let k = 0; k < extras; k++) {
       const a = rnd(k * 3) * Math.PI * 2;
@@ -1150,6 +1160,7 @@ class UI {
     this.spriteAt(AT.TREES[variant % 3],
       x + 0.5 + (rnd(9) - 0.5) * 0.36, y + 1.12 + (rnd(10) - 0.5) * 0.34,
       TREE_CANOPY * (0.84 + rnd(11) * 0.34));
+    if (alpha < 1) ctx.globalAlpha = baseAlpha;
   }
 
   drawBuilding(b) {
@@ -1350,6 +1361,23 @@ class UI {
     ctx.restore();
   }
 
+  // Tile indices (map.idx) covered by the current placement ghost, or null if
+  // not placing. Shared by drawForest (which fades canopy under it) so the two
+  // never disagree about which tiles are about to be built on.
+  placementFootprint() {
+    if (!this.placing) return null;
+    const type = BUILDING_TYPES[this.placing];
+    const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
+    const set = new Set();
+    for (let dy = 0; dy < type.size; dy++) {
+      for (let dx = 0; dx < type.size; dx++) {
+        const x = tx + dx, y = ty + dy;
+        if (game.map.inBounds(x, y)) set.add(game.map.idx(x, y));
+      }
+    }
+    return set;
+  }
+
   drawGhost() {
     const type = BUILDING_TYPES[this.placing];
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
@@ -1372,7 +1400,13 @@ class UI {
       this.ctx.drawImage(Assets.tileset, art[0] * TILE, art[1] * TILE, TILE, TILE, sx, sy, s * type.size, s * type.size);
     }
     this.ctx.globalAlpha = 1;
-    this.ctx.strokeStyle = ok ? '#6f6' : '#f66';
+    // Validity reads as a filled tile wash rather than an outline alone — white
+    // for a legal spot, red for a blocked one — so it stays legible over a
+    // forest canopy that's about to be cleared (faded in the same frame by
+    // drawForest, via placementFootprint).
+    this.ctx.fillStyle = ok ? 'rgba(255,255,255,0.3)' : 'rgba(220,40,40,0.42)';
+    this.ctx.fillRect(sx, sy, s * type.size, s * type.size);
+    this.ctx.strokeStyle = ok ? '#ffffff' : '#ff4d4d';
     this.ctx.lineWidth = 2;
     this.ctx.strokeRect(sx, sy, s * type.size, s * type.size);
   }

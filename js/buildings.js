@@ -146,7 +146,10 @@ function canPlace(map, typeKey, x, y, factionId) {
       if (map.buildingAt[i]) return false;
       const t = map.terrain[i];
       if (type.waterOnly) { if (t !== T_WATER || map.bridge[i]) return false; }
-      else if (t !== T_GRASS) return false;
+      // A footprint clears whatever rough ground it sits on (see placeBuilding) —
+      // forest and rock are buildable, same as they're now walkable (js/map.js).
+      // Caves stay off-limits; they're a resource mouth, not ground to build on.
+      else if (t !== T_GRASS && t !== T_TREE && t !== T_ROCK) return false;
     }
   }
   if (type.placeReq && !type.placeReq(map, x, y)) return false;
@@ -159,7 +162,17 @@ function placeBuilding(game, typeKey, x, y, factionId, orient = 1) {
   for (const [tx, ty] of b.footprint()) {
     const i = game.map.idx(tx, ty);
     if (b.type.key === 'bridge') game.map.bridge[i] = orient;
-    else game.map.buildingAt[i] = b;
+    else {
+      game.map.buildingAt[i] = b;
+      // A footprint claims the ground outright: any tree or rock under it is
+      // cleared, same as a track cut through rough terrain (GameMap.carveLine).
+      const t = game.map.terrain[i];
+      if (t === T_TREE || t === T_ROCK) {
+        game.map.terrain[i] = T_GRASS;
+        game.map.decor[i] = -1;
+        game.map.treeWood[i] = 0;
+      }
+    }
   }
   game.factions[factionId].buildings.push(b);
   if (b.type.key === 'bridge') b.progress = 1;  // bridges are walkable ground, not targets

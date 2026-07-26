@@ -25,11 +25,13 @@ ground, not walls**: troops push through both, at `TREE_MOVE_COST` 2.4× /
 `ROCK_MOVE_COST` 1.9× the time (`map.moveCost`, which divides unit speed in
 `followPath` and multiplies the A* step cost), so the pathfinder skirts a wood
 when the detour is short and cuts through when it isn't. Only water without a
-bridge, caves, walls and keeps still block outright. Consequences worth knowing:
-a wall ring no longer seals at forest tiles (buildings still require grass, so
-`canPlace` refuses walls there) — the gap is a slow chokepoint rather than a
-barrier; and unit muster/formation slots deliberately prefer `moveCost === 1`
-tiles so ranks don't form up inside a thicket. **Start zones are guaranteed
+bridge, caves, walls and keeps still block outright. **Buildings can be placed
+on forest and rock too** (`canPlace`, `js/buildings.js`) — the footprint clears
+whatever it lands on (terrain → grass, `treeWood` zeroed), the same way
+`carveLine` clears a track — so a wall ring can seal all the way around a
+wooded perimeter instead of stopping at the treeline; unit muster/formation
+slots still deliberately prefer `moveCost === 1` tiles so ranks don't form up
+inside a thicket. **Start zones are guaranteed
 traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
 stamped wherever the quadrant centre lands, which could leave a nation on a
 grass island in a lake or sealed behind planted forest, so the generator floods
@@ -97,7 +99,12 @@ Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
 rendered as one connected structure in both axes — see the renderer entry),
 Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
 Placement validation with per-type requirements, construction time, HP/damage,
-demolish with 75% refund (except Town Hall), and **capture**
+demolish with 75% refund (except Town Hall). **Any non-water building can be
+placed on forest or rock** — the footprint clears it, same as cutting a track
+(caves are still off-limits); the placement ghost fills the tile white when
+legal and red when blocked, and a tree inside the footprint fades so the wash
+doesn't have to fight a solid canopy (`drawGhost`/`drawForest`, `js/ui.js`).
+And **capture**
 (`captureBuilding`/`annexBuildings`): a conquered nation's completed civilian
 buildings and bridges change hands with their stored goods intact, at 40% HP,
 unstaffed and with queues cleared, while walls, gates and the fallen Town Hall
@@ -330,8 +337,13 @@ beyond lifetime trade gold.
 
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
-health/construction bars, selection rings/outlines, placement ghost with
-validity tint, drag box-select. **Ramparts** (`bakeRamparts` in `js/assets.js`,
+health/construction bars, selection rings/outlines, drag box-select.
+**Placement ghost** (`drawGhost`): the hovered footprint washes white when
+`canPlace` allows it and red when it doesn't — a filled tile, not just an
+outline, so it reads clearly at a glance. `placementFootprint()` turns the
+hovered tile + building size into the same tile-index set `drawForest` uses to
+fade any tree inside it, so a forest placement's canopy doesn't visually fight
+the wash. **Ramparts** (`bakeRamparts` in `js/assets.js`,
 `drawRampart`/`drawTileSlice` in `js/ui.js`): walls and gates are assembled per
 tile from five baked connector pieces rather than stamped as whole sprites, so
 runs join seamlessly **horizontally and vertically** and gates sit inside a run
@@ -350,7 +362,9 @@ neighbours and a patch of `T_TREE` closes into a wood instead of a grid of
 lollipops. Clump density follows `countAdjacent(T_TREE)` (dense interior, sparse
 fringe) and drops at zoom 1; placement comes from `tileNoise(x, y)`, a pure
 function of the tile, so the forest never shimmers as the camera moves. The art
-itself is untouched. Also: minimap (terrain + roads + buildings + units +
+itself is untouched. `drawForest` takes an optional fade set (tile indices to
+render translucent) so the placement ghost can preview a tree about to be
+cleared. Also: minimap (terrain + roads + buildings + units +
 territory ownership tint + viewport rectangle, click/tap to jump), dashed
 territory border lines on the main map, event cards (`#eventcard`, see Event
 cards above). Topbar with live stats, tax slider,

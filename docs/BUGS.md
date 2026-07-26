@@ -91,16 +91,6 @@ get out. Pre-existing — trees and rocks being walkable didn't cause it, and th
 same soak shows no unit stranded on any terrain tile.
 **Plan:** TBD
 
-### 18. AI wall rings leave permanent gaps at forest and rock tiles
-`js/ai.js:721`, `js/buildings.js:149` — `canPlace` still requires `T_GRASS`, so
-no wall can be built on a tree or rock tile. That was harmless while those tiles
-were impassable natural barriers; now that troops can cross them
-(`map.moveCost`), a ring drawn around a wooded town has real holes in it. They
-are slow chokepoints rather than open doors, but a defensive AI cannot close its
-perimeter and does not know it. Clearing terrain to build (or letting walls sit
-on rough ground) would fix it.
-**Plan:** TBD
-
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
 
 - **Training always leaves 1 citizen free** — `trainUnit` requires
@@ -123,6 +113,18 @@ expiry consequences (relations drops) do apply.
 
 ## Fixed
 
+- **#18 AI wall rings left permanent gaps at forest and rock tiles** —
+  `canPlace` (`js/buildings.js`) now accepts `T_TREE`/`T_ROCK` for any
+  non-water building (caves still refused: a resource mouth, not ground).
+  `placeBuilding` clears whatever rough terrain a footprint lands on
+  (terrain → grass, decor cleared, `treeWood` zeroed), the same way
+  `GameMap.carveLine` clears a track. Since AI wall placement
+  (`aiRingTileConnected`, `js/ai.js`) already calls `canPlace`, a defensive
+  ring now closes across a wooded or rocky perimeter with no code change
+  there. The placement ghost (`drawGhost`, `js/ui.js`) reflects the new rule:
+  a legal tile washes white, a blocked one washes red, and any tree inside the
+  footprint fades (`drawForest`'s new `fadeSet` param) so the wash reads
+  clearly instead of competing with a solid canopy.
 - **Walls and gates did not visually connect** — `drawWall` stamped one of two
   whole sprites per tile (`wallSprite` for straight runs, `towerSprite` for
   everything else), and the atlas art has grass baked into its margins with the

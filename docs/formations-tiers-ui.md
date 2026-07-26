@@ -263,6 +263,28 @@ hash of the tile coordinates — using `Math.random` here would make the forest
 crawl every frame. Draw order is terrain → canopy → borders → buildings →
 units, so units crossing a wood stay visible on top of it.
 
+**Building on rough terrain + the placement ghost (`canPlace`/`placeBuilding`
+in `js/buildings.js`, `drawGhost`/`placementFootprint`/`drawForest` in
+`js/ui.js`)** — BUGS #18. `canPlace` used to require `T_GRASS`, so a wall ring
+stopped dead at the treeline even after forest became walkable rough ground;
+`placeBuilding` now clears whatever `T_TREE`/`T_ROCK` a footprint lands on
+(terrain → grass, decor cleared, `treeWood` zeroed — the same treatment
+`GameMap.carveLine` gives a cut track), and since the AI's own wall placement
+(`aiRingTileConnected`) already calls `canPlace`, rings close on their own with
+no AI-side change. Caves are deliberately excluded — a resource mouth, not
+buildable ground.
+
+The ghost's feedback changed to match: `drawGhost` fills the hovered footprint
+white when `canPlace` (+ affordability) passes and red when it doesn't, instead
+of the old outline-only green/red, so validity reads at a glance even over
+terrain. `placementFootprint()` turns the hovered tile + `type.size` into a Set
+of `map.idx` values (bounds-checked — an out-of-bounds index would alias a real
+tile through the `y*w+x` formula, so unchecked reuse of it elsewhere would be a
+bug); `drawForest` accepts that same set as a fade list and renders any tree
+inside it at ~32% opacity, so a canopy about to be cleared doesn't visually
+fight the white/red wash. Both draws read the *same* footprint each frame, so
+they can't disagree about which tiles are in play.
+
 **Diagonal wall drag (`paintTo` in `js/ui.js`)** snaps a build-drag to
 whichever axis it's closest to — horizontal, vertical, or, for walls only, a
 45° diagonal (Clash-of-Clans style: `adx`/`ady` within a 2.5:1 ratio of each

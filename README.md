@@ -72,11 +72,16 @@ the wall rather than a gap in it.
 
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
-cross a forest tile and 1.9× a rocky one. Roads still speed you up. A wood is
-cover and a delay, not a border: armies can now flank straight through one, so
-a wall ring that stops at the treeline leaves a slow gap rather than a sealed
-edge. Only deep water without a bridge, cave mouths, walls and keeps stop a
-unit outright.
+cross a forest tile and 1.9× a rocky one. Roads still speed you up. Only deep
+water without a bridge, cave mouths, walls and keeps stop a unit outright.
+
+**You can build on forest and rock.** Place a Wall, House, or anything else
+(except a Bridge, which needs water) right on top of trees or boulders and
+the footprint clears them to make room — so a wall ring closes all the way
+around a wooded camp instead of stopping at the treeline. While placing, the
+ghost washes the tile **white** when the spot is legal and **red** when it
+isn't, and any tree under the footprint fades so you can see the tile beneath
+it.
 
 **Taxes** are a slider in the top bar (0–40%): more gold per citizen, at a
 happiness cost that scales with the rate.
