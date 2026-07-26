@@ -28,16 +28,22 @@ class Faction {
     return s;
   }
 
+  // Forest and rock are walkable now, so "passable" alone would happily muster a
+  // new recruit inside a thicket. Sweep for open ground first and only fall back
+  // to rough ground if the town is truly hemmed in.
   spawnPointNear(b) {
     const map = game.map;
+    let rough = null;
     for (let r = 1; r <= 5; r++) {
       for (let dy = -r; dy <= r; dy++)
         for (let dx = -r; dx <= r; dx++) {
           const x = b.x + dx, y = b.y + dy;
-          if (map.passable(x, y, this.id)) return [x, y];
+          if (!map.passable(x, y, this.id)) continue;
+          if (map.moveCost(x, y) === 1) return [x, y];
+          if (!rough) rough = [x, y];
         }
     }
-    return [b.x, b.y];
+    return rough || [b.x, b.y];
   }
 
   trainUnit(typeKey) {

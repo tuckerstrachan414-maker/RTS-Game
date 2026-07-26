@@ -6,6 +6,22 @@ const ZOOMS = [1, 2, 3, 4];
 // Pixel-art icon (assets/icons16x16.png via CSS sprite, see .icon-* rules) in place of an emoji glyph.
 const icon = key => `<span class="icon icon-${key}"></span>`;
 
+// Crown width of a full-grown tree, in tiles. Well over 1 on purpose: canopies
+// have to overlap their neighbours for a stand of T_TREE tiles to close up into
+// a wood. The sprites themselves are the tileset's originals (AT.TREES).
+const TREE_CANOPY = 2.0;
+
+// Deterministic per-tile noise: tileNoise(x, y)(k) is a stable 0..1 value for
+// slot k of that tile. Decoration placement has to be a pure function of the
+// tile, or the forest would reshuffle itself on every frame.
+function tileNoise(x, y) {
+  return k => {
+    let h = Math.imul(x + 0x9e37, 0x85ebca6b) ^ Math.imul(y + 0x79b9, 0xc2b2ae35) ^ Math.imul(k + 1, 0x27d4eb2f);
+    h = Math.imul(h ^ h >>> 15, 0x2545f491);
+    return ((h ^ h >>> 16) >>> 0) / 4294967296;
+  };
+}
+
 class UI {
   constructor(canvas) {
     this.canvas = canvas;
@@ -946,7 +962,8 @@ class UI {
           if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
           else if (map.bridge[i]) this.tile(AT.BRIDGE_H, x, y);
         } else if (t === T_TREE) {
-          this.tile(AT.TREES[map.decor[i] % 3], x, y);
+          // canopy is drawn in its own pass below so it can overlap neighbours
+          if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
         } else if (t === T_ROCK) {
           this.tile(AT.ROCKS[map.decor[i] % 5], x, y);
         } else if (t === T_CAVE) {
@@ -955,23 +972,29 @@ class UI {
       }
     }
 
+    // forest canopy: oversized, overlapping, drawn after all ground so a stand
+    // of trees closes over into a wood instead of a grid of separate tiles.
+    // Trees under the current placement footprint fade so the validity wash
+    // (drawGhost) reads clearly over ground that's about to be cleared.
+    this.drawForest(x0, y0, x1, y1, this.placing ? this.placementFootprint() : null);
+
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
 
-    // buildings (skip bridges: drawn as terrain; skip walls: drawn as a connected structure)
+    // buildings (skip bridges: drawn as terrain; skip walls and gates: drawn as a connected structure)
     for (const f of game.factions) {
       for (const b of f.buildings) {
-        if (b.type.key === 'bridge' || b.type.key === 'wall') continue;
+        if (b.type.key === 'bridge' || b.type.key === 'wall' || b.type.key === 'gate') continue;
         if (b.x + b.type.size < x0 || b.x > x1 || b.y + b.type.size < y0 || b.y > y1) continue;
         this.drawBuilding(b);
       }
     }
-    // walls: rendered with neighbour-aware joinery so runs read as one continuous barrier
+    // walls + gates: neighbour-aware joinery so a run reads as one continuous barrier
     for (const f of game.factions) {
       for (const b of f.buildings) {
-        if (b.type.key !== 'wall') continue;
+        if (b.type.key !== 'wall' && b.type.key !== 'gate') continue;
         if (b.x + 1 < x0 || b.x > x1 || b.y + 1 < y0 || b.y > y1) continue;
-        this.drawWall(b);
+        this.drawRampart(b);
       }
     }
 
@@ -1074,6 +1097,72 @@ class UI {
     this.ctx.drawImage(sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s * scale), Math.ceil(s * scale));
   }
 
+  // Draw one tileset sprite at an arbitrary world position, `scale` tiles across,
+  // anchored at its bottom centre so a tall sprite grows upward out of its tile.
+  spriteAt(at, wx, wy, scale) {
+    const s = TILE * this.cam.zoom;
+    const [sx, sy] = this.worldToScreen(wx, wy);
+    const d = Math.ceil(s * scale);
+    this.ctx.drawImage(Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE,
+      Math.round(sx - d / 2), Math.round(sy - d), d, d);
+  }
+
+  // ---------- forest ----------
+  // The tileset's three tree sprites, unchanged — just drawn much larger than one
+  // tile and several to a tile, so neighbouring T_TREE tiles grow into each other
+  // and a patch reads as a wood you push through rather than a row of shrubs.
+  // Everything is derived from the tile coordinates, so a given map always draws
+  // the same forest.
+  // `fadeSet`, if given, is a Set of tile indices (map.idx) whose canopy should
+  // render translucent — used while placing a building on forest, so the
+  // ghost's validity wash (drawGhost) reads clearly over ground that's about
+  // to be cleared instead of competing with a solid green crown.
+  drawForest(x0, y0, x1, y1, fadeSet) {
+    const map = game.map;
+    // canopies are taller than their tile and spill upward and sideways, so
+    // sweep a margin past the viewport or trees pop in at the edges
+    const m = Math.ceil(TREE_CANOPY);
+    const yEnd = Math.min(MAP_H - 1, y1 + m), xEnd = Math.min(MAP_W - 1, x1 + m);
+    const xStart = Math.max(0, x0 - m), yStart = Math.max(0, y0 - 1);
+    // rows drawn top-down so nearer canopies overlap the ones behind them
+    for (let y = yStart; y <= yEnd; y++) {
+      for (let x = xStart; x <= xEnd; x++) {
+        const i = map.idx(x, y);
+        if (map.terrain[i] === T_TREE) this.drawTreeClump(x, y, fadeSet && fadeSet.has(i) ? 0.32 : 1);
+      }
+    }
+  }
+
+  drawTreeClump(x, y, alpha = 1) {
+    const map = game.map;
+    const variant = map.decor[map.idx(x, y)];
+    const rnd = tileNoise(x, y);
+    // A tile hemmed in by more forest gets a fuller clump: the interior of a wood
+    // should look dense, the fringe should still show its individual trees.
+    const enclosed = map.countAdjacent(x, y, T_TREE);
+    let extras = enclosed >= 5 ? 3 : enclosed >= 2 ? 2 : 1;
+    // zoomed all the way out the whole map is on screen and the undergrowth is
+    // sub-pixel detail nobody can see — don't pay for it
+    if (this.cam.zoom < 2) extras = Math.min(extras, 1);
+    const ctx = this.ctx;
+    const baseAlpha = ctx.globalAlpha;
+    if (alpha < 1) ctx.globalAlpha = baseAlpha * alpha;
+    // undergrowth first, then the crown, so the big tree sits in front of its bush
+    for (let k = 0; k < extras; k++) {
+      const a = rnd(k * 3) * Math.PI * 2;
+      const r = 0.24 + rnd(k * 3 + 1) * 0.3;
+      this.spriteAt(AT.TREES[(variant + k + 1) % 3],
+        x + 0.5 + Math.cos(a) * r, y + 1.06 + Math.sin(a) * 0.22,
+        TREE_CANOPY * (0.5 + rnd(k * 3 + 2) * 0.22));
+    }
+    // the crown is jittered generously in both axes — without it every trunk
+    // lands on the same baseline and the wood reads as banded rows
+    this.spriteAt(AT.TREES[variant % 3],
+      x + 0.5 + (rnd(9) - 0.5) * 0.36, y + 1.12 + (rnd(10) - 0.5) * 0.34,
+      TREE_CANOPY * (0.84 + rnd(11) * 0.34));
+    if (alpha < 1) ctx.globalAlpha = baseAlpha;
+  }
+
   drawBuilding(b) {
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
@@ -1121,12 +1210,32 @@ class UI {
     this.ctx.drawImage(canvas, 0, 0, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s), Math.ceil(s));
   }
 
-  // Walls use the tileset's own art: the wall sprite for straight runs, and the tower sprite at
-  // corners, junctions, ends and lone posts — so a run reads as a continuous crenellated rampart.
-  drawWall(b) {
+  // Draw part of a baked 16x16 sprite onto the matching fraction of its tile on
+  // screen. Boundaries are derived from the tile's own rect (identical maths to
+  // drawTileCanvas at t=0 and t=1), so a slice lines up exactly with a full-tile
+  // draw of the same sprite.
+  drawTileSlice(canvas, x, y, px, py, pw, ph) {
+    const [wx, wy] = this.worldToScreen(x, y);
+    const ax = Math.floor(wx), ay = Math.floor(wy), d = Math.ceil(TILE * this.cam.zoom);
+    const dx0 = ax + Math.round(d * px / TILE), dx1 = ax + Math.round(d * (px + pw) / TILE);
+    const dy0 = ay + Math.round(d * py / TILE), dy1 = ay + Math.round(d * (py + ph) / TILE);
+    this.ctx.drawImage(canvas, px, py, pw, ph, dx0, dy0, Math.max(1, dx1 - dx0), Math.max(1, dy1 - dy0));
+  }
+
+  // Walls and gates are assembled per tile from the baked rampart set
+  // (`bakeRamparts`, js/assets.js) rather than stamped as one sprite each. A
+  // clean straight run draws the matching connector whole — `wallH`'s parapet
+  // and `wallV`'s column both reach their tile edges, so segment meets segment
+  // with no seam in either axis. Anything else (corner, T, cross, end, lone
+  // post) draws a HALF connector toward each neighbour it actually has, then a
+  // tower over the join — half, so a corner never sprouts a length of wall into
+  // empty ground. Gates take the same stubs and then cover the middle with the
+  // arch, picking the vertical arch when the run through them runs north-south.
+  drawRampart(b) {
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
     const map = game.map;
+    const art = Assets.rampart[b.faction];
     const [sx, sy] = this.worldToScreen(b.x, b.y);
     const joins = (x, y) => {
       if (!map.inBounds(x, y)) return false;
@@ -1135,9 +1244,26 @@ class UI {
     };
     const up = joins(b.x, b.y - 1), dn = joins(b.x, b.y + 1),
           lf = joins(b.x - 1, b.y), rt = joins(b.x + 1, b.y);
-    const straight = (lf && rt && !up && !dn) || (up && dn && !lf && !rt);
+    const h = (lf ? 1 : 0) + (rt ? 1 : 0), v = (up ? 1 : 0) + (dn ? 1 : 0);
+    const H = TILE / 2;
+    const stubs = () => {
+      if (lf) this.drawTileSlice(art.wallH, b.x, b.y, 0, 0, H, TILE);
+      if (rt) this.drawTileSlice(art.wallH, b.x, b.y, H, 0, H, TILE);
+      if (up) this.drawTileSlice(art.wallV, b.x, b.y, 0, 0, TILE, H);
+      if (dn) this.drawTileSlice(art.wallV, b.x, b.y, 0, H, TILE, H);
+    };
     ctx.globalAlpha = b.done ? 1 : 0.5;
-    this.drawTileCanvas(straight ? Assets.wallSprite : Assets.towerSprite, b.x, b.y);
+    if (b.type.key === 'gate') {
+      stubs();
+      this.drawTileCanvas(v > h ? art.gateV : art.gateH, b.x, b.y);
+    } else if (h === 2 && v === 0) {
+      this.drawTileCanvas(art.wallH, b.x, b.y);
+    } else if (v === 2 && h === 0) {
+      this.drawTileCanvas(art.wallV, b.x, b.y);
+    } else {
+      stubs();
+      this.drawTileCanvas(art.tower, b.x, b.y);
+    }
     ctx.globalAlpha = 1;
     if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
     else if (b.hp < b.type.hp) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
@@ -1145,8 +1271,11 @@ class UI {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
     }
+    // Owner marker sits high on the parapet, not at the tile centre: dead centre
+    // is exactly where a gate's archway is, and the dot was covering it.
     ctx.fillStyle = game.factions[b.faction].color.css;
-    ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.5), Math.max(2, Math.round(s * 0.12)), Math.max(2, Math.round(s * 0.12)));
+    const dot = Math.max(2, Math.round(s * 0.12));
+    ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.22), dot, dot);
   }
 
   drawUnit(u) {
@@ -1232,6 +1361,23 @@ class UI {
     ctx.restore();
   }
 
+  // Tile indices (map.idx) covered by the current placement ghost, or null if
+  // not placing. Shared by drawForest (which fades canopy under it) so the two
+  // never disagree about which tiles are about to be built on.
+  placementFootprint() {
+    if (!this.placing) return null;
+    const type = BUILDING_TYPES[this.placing];
+    const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
+    const set = new Set();
+    for (let dy = 0; dy < type.size; dy++) {
+      for (let dx = 0; dx < type.size; dx++) {
+        const x = tx + dx, y = ty + dy;
+        if (game.map.inBounds(x, y)) set.add(game.map.idx(x, y));
+      }
+    }
+    return set;
+  }
+
   drawGhost() {
     const type = BUILDING_TYPES[this.placing];
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
@@ -1244,7 +1390,9 @@ class UI {
     if (this.placing === 'farm') {
       for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) this.tile(AT.CROP_VARS[(dx + dy) % 2], tx + dx, ty + dy);
     } else if (this.placing === 'wall') {
-      this.drawTileCanvas(Assets.towerSprite, tx, ty);
+      this.drawTileCanvas(Assets.rampart[0].tower, tx, ty);
+    } else if (this.placing === 'gate') {
+      this.drawTileCanvas(Assets.rampart[0].gateH, tx, ty);
     } else if (this.placing === 'bridge') {
       if (this.placeVertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
       else this.tile(AT.BRIDGE_H, tx, ty);
@@ -1252,7 +1400,13 @@ class UI {
       this.ctx.drawImage(Assets.tileset, art[0] * TILE, art[1] * TILE, TILE, TILE, sx, sy, s * type.size, s * type.size);
     }
     this.ctx.globalAlpha = 1;
-    this.ctx.strokeStyle = ok ? '#6f6' : '#f66';
+    // Validity reads as a filled tile wash rather than an outline alone — white
+    // for a legal spot, red for a blocked one — so it stays legible over a
+    // forest canopy that's about to be cleared (faded in the same frame by
+    // drawForest, via placementFootprint).
+    this.ctx.fillStyle = ok ? 'rgba(255,255,255,0.3)' : 'rgba(220,40,40,0.42)';
+    this.ctx.fillRect(sx, sy, s * type.size, s * type.size);
+    this.ctx.strokeStyle = ok ? '#ffffff' : '#ff4d4d';
     this.ctx.lineWidth = 2;
     this.ctx.strokeRect(sx, sy, s * type.size, s * type.size);
   }

@@ -29,6 +29,14 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
    get the same destination tile. Falls back to the raw target tile if no
    spiral spot is free.
 
+   Since forest and rock became walkable rough ground (`map.moveCost`,
+   `js/map.js`), "passable" is no longer the same as "good standing room":
+   `freeSpotNear` now takes the nearest tile with `moveCost === 1` and keeps the
+   first rough tile it saw only as a fallback. Without that, a rank ordered to
+   the edge of a wood forms up *inside* it and straggles in at 40% speed.
+   `Faction.spawnPointNear` (`js/factions.js`) does the same two-pass search for
+   the same reason — new recruits should muster on open ground.
+
 Single-unit selections skip all of this and just call `orderMove` directly.
 
 **`separateUnits(dt)`**, called every tick from `Game.tick()` in `main.js`,
@@ -173,32 +181,109 @@ everything else; anything meant to stay visible while hidden (like the
 restore button) needs to be added to the exclusion list explicitly, not just
 left unclassed, since default CSS specificity won't save you.
 
+`#gameover` is the same kind of exception as `#difficulty`: not `.hud`, because
+it belongs to the frame around the game rather than the game's HUD. Its buttons
+now live in a `.go-btns` flex row — **Keep playing** (`#keep-playing`, styled as
+the primary action and shown only on a win) and Play again. `Game.end` toggles
+the button's visibility and binds its handler; `Game.resume` hides the overlay
+and unfreezes the sim. See "Victory & defeat" in `docs/FEATURES.md`.
+
 ## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
 
-Walls used to draw as procedural rectangles (a post + a beam toward each
-joined neighbor). They now render from the tileset's own art: straight runs
-draw the wall sprite, while corners, junctions, ends, lone posts and
-diagonals draw the tower sprite — so a run reads as one continuous
-crenellated rampart with turrets instead of isolated blocks (`drawWall` in
-`js/ui.js`, `straight` = exactly one opposing pair of neighbors joined).
+Walls used to draw as procedural rectangles, then as one of two whole sprites
+per tile (wall sprite for straight runs, tower sprite for everything else).
+Neither connected: the atlas art is a side elevation drawn as standalone tiles
+with grass baked into the margins and the parapet stopping short of the tile
+edge, so consecutive segments never met. There was no vertical art in use at
+all — a north–south run stacked the *horizontal* sprite — and gates went
+through `drawBuilding`, joining nothing.
+
+**The rampart set (`bakeRamparts` in `js/assets.js`)** is five pieces baked per
+faction at load time, each the same atlas sprite edited only enough that its
+tile edges match its neighbours':
+
+| Piece | Source | Edit |
+|---|---|---|
+| `wallH` | `AT.WALL` | grass margin (cols 12–15) refilled from the parapet band at col 1, so the band reaches both edges. Pillar untouched |
+| `wallV` | `AT.WALL_V` (`[1,3]`, previously the unused `AT.ROAD`) | flattened to one repeated row; the column is already uniform, this just drops stray pixels that repeated into studs |
+| `tower` | `AT.WALL_TOWER` | grass stripped only |
+| `gateH` | `AT.GATE` | grass stripped only — its parapet already spans the full width on the same rows as `wallH`'s band |
+| `gateV` | `wallV` + `AT.GATE`'s arch | a 6×6 block of the arch, exactly the column's width, composited into the middle. The vertical gate the tileset never had |
+
+The art cooperates more than it looks: `wallV`'s column is pixel-for-pixel the
+base `WALL_TOWER` already trails downward, and `GATE`'s parapet sits on exactly
+`WALL`'s band rows. All the seams are asserted in the verification script (see
+Testing below) by comparing edge rows/columns of the baked canvases.
+
+**`drawRampart` (`js/ui.js`)** assembles each tile. A clean straight run draws
+the matching connector whole; anything else — corner, T, cross, end, lone post,
+diagonal — draws a *half* connector toward each neighbour it actually has
+(`drawTileSlice`) and then a tower over the join. Half, because a full
+connector at a corner sprouts a length of wall into empty ground. Gates take
+the same stubs and cover the middle with the arch, choosing `gateV` when the
+run through them has more vertical neighbours than horizontal. The owner
+marker sits high on the parapet rather than at the tile centre, which is where
+a gate's archway is.
 
 **Sprite baking (`bakeTile` in `js/assets.js`)** extracts a single 16×16
-atlas tile into its own canvas at load time and cleans it up so structures
-tile without seams, via three independent options:
+atlas tile into its own canvas and cleans it up, via four independent options:
 - `stripGreen` — knocks out the grass baked into a sprite's corners (opaque
-  green pixels become transparent). Used for the wall and tower sprites.
-- `fullBleed` — edge-replicates the sprite body into empty right/bottom
-  margins so straight wall segments join without a seam.
+  green pixels become transparent). Used for every rampart piece.
 - `replicateMid: [a, b]` — rebuilds every row from the clamped `[a..b]` band,
-  erasing the sprite's top/bottom end-caps. Used for the vertical bridge
-  (`Assets.bridgeVmid`) so a north–south span reads as one continuous bridge
-  instead of broken segments at each tile boundary; the horizontal bridge
-  doesn't need this and still draws straight from the atlas.
+  erasing the sprite's top/bottom end-caps. Used for `wallV`/`gateV` and for
+  the vertical bridge (`Assets.bridgeVmid`) so a north–south span reads as one
+  continuous run instead of broken segments at each tile boundary; the
+  horizontal bridge doesn't need this and still draws straight from the atlas.
+- `fillCols: [x0, x1, src]` — overwrites columns `x0..x1` with a copy of column
+  `src`, extending a band that stopped short of the tile edge. Used for `wallH`.
+- `overlay: {at, sx, sy, w, h, dx, dy}` — composites a rect from another atlas
+  tile on top. Used to put `GATE`'s arch into `gateV`.
 
 `drawTileCanvas(canvas, x, y)` is the shared helper that blits one of these
-baked canvases at a tile position (walls, towers, the vertical bridge mid,
-and the wall/bridge placement ghosts all go through it instead of
+baked canvases at a tile position (every rampart piece, the vertical bridge
+mid, and the wall/gate/bridge placement ghosts all go through it instead of
 `tile()`, which draws straight from the shared atlas image).
+`drawTileSlice(canvas, x, y, px, py, pw, ph)` is its partial form — it maps a
+source rect to the same fraction of the tile's screen rect, using the same
+maths at the extremes, so a half-tile stub lines up exactly with a full-tile
+draw of the same sprite.
+
+**Forest canopy (`drawForest` / `drawTreeClump` / `spriteAt` in `js/ui.js`)**
+is the other place tiles stopped drawing one-to-one. `T_TREE` tiles draw only
+their grass (and a tuft) in the terrain loop; the trees themselves come in a
+second pass right after it, so a canopy can spill over the tiles around it
+instead of being clipped by the next row of grass. Each tree tile draws 2–4
+copies of the *same* `AT.TREES` sprites — no new art — at ~`TREE_CANOPY` (2)
+tiles across, bottom-centre anchored via `spriteAt` so they grow upward out of
+their tile, jittered in both axes and drawn undergrowth-first. Clump size
+follows `countAdjacent(x, y, T_TREE)` so the interior of a wood is dense and the
+fringe still shows individual trees, and drops to two sprites at zoom 1 where
+the detail is sub-pixel anyway. All offsets come from `tileNoise(x, y)`, a pure
+hash of the tile coordinates — using `Math.random` here would make the forest
+crawl every frame. Draw order is terrain → canopy → borders → buildings →
+units, so units crossing a wood stay visible on top of it.
+
+**Building on rough terrain + the placement ghost (`canPlace`/`placeBuilding`
+in `js/buildings.js`, `drawGhost`/`placementFootprint`/`drawForest` in
+`js/ui.js`)** — BUGS #18. `canPlace` used to require `T_GRASS`, so a wall ring
+stopped dead at the treeline even after forest became walkable rough ground;
+`placeBuilding` now clears whatever `T_TREE`/`T_ROCK` a footprint lands on
+(terrain → grass, decor cleared, `treeWood` zeroed — the same treatment
+`GameMap.carveLine` gives a cut track), and since the AI's own wall placement
+(`aiRingTileConnected`) already calls `canPlace`, rings close on their own with
+no AI-side change. Caves are deliberately excluded — a resource mouth, not
+buildable ground.
+
+The ghost's feedback changed to match: `drawGhost` fills the hovered footprint
+white when `canPlace` (+ affordability) passes and red when it doesn't, instead
+of the old outline-only green/red, so validity reads at a glance even over
+terrain. `placementFootprint()` turns the hovered tile + `type.size` into a Set
+of `map.idx` values (bounds-checked — an out-of-bounds index would alias a real
+tile through the `y*w+x` formula, so unchecked reuse of it elsewhere would be a
+bug); `drawForest` accepts that same set as a fade list and renders any tree
+inside it at ~32% opacity, so a canopy about to be cleared doesn't visually
+fight the white/red wash. Both draws read the *same* footprint each frame, so
+they can't disagree about which tiles are in play.
 
 **Diagonal wall drag (`paintTo` in `js/ui.js`)** snaps a build-drag to
 whichever axis it's closest to — horizontal, vertical, or, for walls only, a

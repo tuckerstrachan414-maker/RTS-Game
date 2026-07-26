@@ -18,9 +18,15 @@ const AT = {
   WELL: [7, 3],
   BRIDGE_H: [6, 4],
   BRIDGE_V: [7, 4],
-  ROAD: [1, 3],
   PATH_DOT: [7, 13],
+  // Rampart set. The art is a side elevation: WALL is a pillar (cols 4-11) with
+  // a parapet band running off its left edge (rows 3-11), WALL_V is that same
+  // wall seen end-on as a plain column (cols 5-10, full height — it is exactly
+  // the foot WALL_TOWER already trails downward), and GATE is a full-width
+  // parapet with an arch punched through it. All three share the same band rows,
+  // which is what lets `bakeRamparts` join them seamlessly.
   WALL: [6, 2],
+  WALL_V: [1, 3],
   WALL_TOWER: [7, 1],
   GATE: [0, 3],
   // water 9-slice + strips (shorelines baked in, drawn over grass)
@@ -69,8 +75,7 @@ const Assets = {
   factionTilesets: [],   // per-faction recolored tileset (roofs)
   unitSheets: [],        // [factionIdx][unitKey] -> {canvas, rows, frames[row]}
   projectiles: null,
-  wallSprite: null,      // cleaned + full-bleed AT.WALL (straight segments)
-  towerSprite: null,     // cleaned AT.WALL_TOWER (corners / junctions / ends)
+  rampart: [],           // [factionIdx] -> {wallH, wallV, tower, gateH, gateV}, see bakeRamparts
   bridgeVmid: null,      // seamless vertical bridge (caps replaced by the plank middle)
   loaded: false,
 
@@ -89,19 +94,52 @@ const Assets = {
         const canvas = hue === null ? toCanvas(img) : recolor(img, hue, 'cool');
         this.unitSheets[f][key] = describeSheet(canvas);
       }
+      this.rampart[f] = bakeRamparts(this.factionTilesets[f]);
     }
     this.tileset = tileset;
-    this.wallSprite = bakeTile(tileset, AT.WALL, { stripGreen: true, fullBleed: true });
-    this.towerSprite = bakeTile(tileset, AT.WALL_TOWER, { stripGreen: true });
     this.bridgeVmid = bakeTile(tileset, AT.BRIDGE_V, { replicateMid: [1, 13] });
     this.loaded = true;
   },
 };
 
+// The five pieces a wall run is assembled from (see `drawRampart` in js/ui.js).
+// The atlas art was drawn as standalone tiles with grass baked into the margins,
+// so a straight run left visible gaps between segments and a north-south run had
+// no art at all. Each piece below is the SAME sprite, edited only enough that its
+// tile edges match its neighbours' exactly:
+//
+//  wallH  AT.WALL with the grass margin (cols 12-15) refilled from the parapet
+//         band at col 1, so the band now runs edge to edge and consecutive tiles
+//         butt together. The pillar in the middle is untouched.
+//  wallV  AT.WALL_V flattened to a single repeated row. Its column (cols 5-10)
+//         is uniform on every row already; the only per-row variation is a
+//         couple of stray pixels either side of it, left over from a detail in
+//         the source tile, which repeat into studs down a long run. Flattening
+//         drops them and leaves a clean column — pixel-for-pixel the base
+//         WALL_TOWER already trails, so a tower continues a run exactly.
+//  tower  AT.WALL_TOWER, grass stripped. Drawn over the stubs at corners,
+//         junctions, ends and lone posts.
+//  gateH  AT.GATE, grass stripped. Its parapet already spans the full tile width
+//         on the same rows as wallH's band, so it drops into a run untouched.
+//  gateV  wallV with GATE's own arch (a 6x6 block, exactly the column's width)
+//         composited into the middle — the vertical gate the tileset never had.
+function bakeRamparts(sheet) {
+  return {
+    wallH: bakeTile(sheet, AT.WALL, { stripGreen: true, fillCols: [12, 15, 1] }),
+    wallV: bakeTile(sheet, AT.WALL_V, { stripGreen: true, replicateMid: [0, 0] }),
+    tower: bakeTile(sheet, AT.WALL_TOWER, { stripGreen: true }),
+    gateH: bakeTile(sheet, AT.GATE, { stripGreen: true }),
+    gateV: bakeTile(sheet, AT.WALL_V, { stripGreen: true, replicateMid: [0, 0],
+      overlay: { at: AT.GATE, sx: 5, sy: 6, w: 6, h: 6, dx: 5, dy: 5 } }),
+  };
+}
+
 // Extract one 16x16 atlas tile into its own canvas, cleaned up so structures tile without seams.
 //  stripGreen  — knock out the grass baked into a sprite's corners (turns opaque grass transparent)
-//  fullBleed   — edge-replicate the body into the empty right/bottom margins so straight runs join
 //  replicateMid[a,b] — rebuild every row from the clamped [a..b] band, erasing top/bottom end-caps
+//  fillCols[x0,x1,src] — overwrite columns x0..x1 with a copy of column `src`, so a band that
+//                        stopped short of the tile edge now reaches it (left/right end-caps)
+//  overlay{at,sx,sy,w,h,dx,dy} — composite a rect from another atlas tile on top
 function bakeTile(tileset, at, opts = {}) {
   const c = document.createElement('canvas');
   c.width = TILE; c.height = TILE;
@@ -125,17 +163,18 @@ function bakeTile(tileset, at, opts = {}) {
       }
     }
   }
-  if (opts.fullBleed) {
-    for (let y = 0; y < TILE; y++) for (let x = 1; x < TILE; x++) {
-      const i = (y * TILE + x) * 4;
-      if (A(i) < 30) { const j = (y * TILE + (x - 1)) * 4; p[i] = p[j]; p[i + 1] = p[j + 1]; p[i + 2] = p[j + 2]; p[i + 3] = p[j + 3]; }
-    }
-    for (let x = 0; x < TILE; x++) for (let y = TILE / 2; y < TILE; y++) {
-      const i = (y * TILE + x) * 4;
-      if (A(i) < 30) { const j = ((y - 1) * TILE + x) * 4; p[i] = p[j]; p[i + 1] = p[j + 1]; p[i + 2] = p[j + 2]; p[i + 3] = p[j + 3]; }
+  if (opts.fillCols) {
+    const [x0, x1, src] = opts.fillCols, from = p.slice();
+    for (let y = 0; y < TILE; y++) for (let x = x0; x <= x1; x++) {
+      const di = (y * TILE + x) * 4, si = (y * TILE + src) * 4;
+      p[di] = from[si]; p[di + 1] = from[si + 1]; p[di + 2] = from[si + 2]; p[di + 3] = from[si + 3];
     }
   }
   g.putImageData(d, 0, 0);
+  if (opts.overlay) {
+    const o = opts.overlay;
+    g.drawImage(tileset, o.at[0] * TILE + o.sx, o.at[1] * TILE + o.sy, o.w, o.h, o.dx, o.dy, o.w, o.h);
+  }
   return c;
 }
 

@@ -20,14 +20,27 @@ trees/rocks/a cave within reach. Water autotiling picks from a 9-slice + strip
 set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
 iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
 onto trade roads; per-faction passability (gates open for owner + allies,
-walls/keeps solid, other buildings walkable). **Start zones are guaranteed
+walls/keeps solid, other buildings walkable). **Forest and rock are rough
+ground, not walls**: troops push through both, at `TREE_MOVE_COST` 2.4× / 
+`ROCK_MOVE_COST` 1.9× the time (`map.moveCost`, which divides unit speed in
+`followPath` and multiplies the A* step cost), so the pathfinder skirts a wood
+when the detour is short and cuts through when it isn't. Only water without a
+bridge, caves, walls and keeps still block outright. **Buildings can be placed
+on forest and rock too** (`canPlace`, `js/buildings.js`) — the footprint clears
+whatever it lands on (terrain → grass, `treeWood` zeroed), the same way
+`carveLine` clears a track — so a wall ring can seal all the way around a
+wooded perimeter instead of stopping at the treeline; unit muster/formation
+slots still deliberately prefer `moveCost === 1` tiles so ranks don't form up
+inside a thicket. **Start zones are guaranteed
 traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
 stamped wherever the quadrant centre lands, which could leave a nation on a
 grass island in a lake or sealed behind planted forest, so the generator floods
 each zone, cuts a track to real country when the region is too small, and links
 every start zone into one landmass at the narrowest crossing it can find
 (Dijkstra weighting grass cheap, forest and rock a little, water heavily, caves
-never). `?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
+never — this still runs on grass-only connectivity, so the guarantee is stricter
+than movement now requires and seeds keep generating identical terrain).
+`?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
 entry is unused), map sizes, biomes.
 
 ## Economy & population — Deep
@@ -82,11 +95,16 @@ or spillable as loot. This underpins the entire raiding design.
 `js/buildings.js`. 13 types: Town Hall, Storehouse, House, Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles; idles when forest exhausted), Quarry, Gold Mine (needs a cave), Market,
-Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals,
-tileset-baked sprite rendering — straight runs vs. corner/junction/end towers),
+Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
+rendered as one connected structure in both axes — see the renderer entry),
 Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
 Placement validation with per-type requirements, construction time, HP/damage,
-demolish with 75% refund (except Town Hall), and **capture**
+demolish with 75% refund (except Town Hall). **Any non-water building can be
+placed on forest or rock** — the footprint clears it, same as cutting a track
+(caves are still off-limits); the placement ghost fills the tile white when
+legal and red when blocked, and a tree inside the footprint fades so the wash
+doesn't have to fight a solid canopy (`drawGhost`/`drawForest`, `js/ui.js`).
+And **capture**
 (`captureBuilding`/`annexBuildings`): a conquered nation's completed civilian
 buildings and bridges change hands with their stored goods intact, at 40% HP,
 unstaffed and with queues cleared, while walls, gates and the fallen Town Hall
@@ -298,6 +316,14 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 Town Halls destroyed), Diplomatic (every survivor allied, after 60s) — and
 defeat on losing your Town Hall **or when a rival completes its own Grand
 Castle** (prosperity doctrine AIs pursue it; construction start is announced).
+**A win can be played on**: the end screen offers *Keep playing* beside *Play
+again*, which unfreezes the sim exactly where it stopped (`Game.resume`) and
+sets `endless`. Each victory is banked in `Game.claimed` and fires only once, so
+the condition you just met can't re-trigger next tick while the *other* win
+paths stay live — conquer the map after a Prosperity win and Conquest Victory
+still fires. In an endless game a rival's Grand Castle is logged as news instead
+of ending the run (you already have your crown), but losing your own Town Hall
+still ends it; defeat never offers *Keep playing*.
 Elimination kills a faction's units and cancels its routes, but its buildings
 are **annexed** by whoever felled the Town Hall (`conqueredBy` →
 `annexBuildings`) rather than erased — so taking a rival's mining town is worth
@@ -311,8 +337,34 @@ beyond lifetime trade gold.
 
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
-health/construction bars, selection rings/outlines, placement ghost with
-validity tint, drag box-select, minimap (terrain + roads + buildings + units +
+health/construction bars, selection rings/outlines, drag box-select.
+**Placement ghost** (`drawGhost`): the hovered footprint washes white when
+`canPlace` allows it and red when it doesn't — a filled tile, not just an
+outline, so it reads clearly at a glance. `placementFootprint()` turns the
+hovered tile + building size into the same tile-index set `drawForest` uses to
+fade any tree inside it, so a forest placement's canopy doesn't visually fight
+the wash. **Ramparts** (`bakeRamparts` in `js/assets.js`,
+`drawRampart`/`drawTileSlice` in `js/ui.js`): walls and gates are assembled per
+tile from five baked connector pieces rather than stamped as whole sprites, so
+runs join seamlessly **horizontally and vertically** and gates sit inside a run
+instead of interrupting it. Straight runs draw the connector whole; corners,
+junctions, ends, lone posts and diagonals draw a half connector toward each
+neighbour they actually have and a tower over the join. Gates pick a vertical
+arch when the run through them is north–south. Each piece is the tileset's own
+art with the minimum edit needed to make its tile edges match (grass margins
+stripped, one band extended to the tile edge, one flattened column, and
+`GATE`'s arch composited into that column to make the vertical gate the
+tileset lacked). **Forest canopy pass** (`drawForest` /
+`drawTreeClump`): tree tiles are no longer drawn inside the terrain loop — the
+same three `AT.TREES` sprites are redrawn afterwards at `TREE_CANOPY` 2 tiles
+across, 2–4 to a tile, jittered and y-sorted so canopies overlap their
+neighbours and a patch of `T_TREE` closes into a wood instead of a grid of
+lollipops. Clump density follows `countAdjacent(T_TREE)` (dense interior, sparse
+fringe) and drops at zoom 1; placement comes from `tileNoise(x, y)`, a pure
+function of the tile, so the forest never shimmers as the camera moves. The art
+itself is untouched. `drawForest` takes an optional fade set (tile indices to
+render translucent) so the placement ghost can preview a tree about to be
+cleared. Also: minimap (terrain + roads + buildings + units +
 territory ownership tint + viewport rectangle, click/tap to jump), dashed
 territory border lines on the main map, event cards (`#eventcard`, see Event
 cards above). Topbar with live stats, tax slider,
