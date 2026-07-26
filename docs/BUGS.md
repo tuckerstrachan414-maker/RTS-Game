@@ -123,6 +123,15 @@ expiry consequences (relations drops) do apply.
 
 ## Fixed
 
+- **Walls and gates did not visually connect** — `drawWall` stamped one of two
+  whole sprites per tile (`wallSprite` for straight runs, `towerSprite` for
+  everything else), and the atlas art has grass baked into its margins with the
+  parapet stopping short of the tile edge, so consecutive segments never met.
+  There was no vertical art at all: a north–south run drew the *horizontal*
+  sprite stacked, and gates rendered through `drawBuilding` as loose tiles that
+  joined nothing. Replaced with the baked rampart set (`bakeRamparts`,
+  `js/assets.js`) plus `drawRampart` (`js/ui.js`), which assembles each tile
+  from connector pieces whose edges match pixel for pixel in both axes.
 - **#4 Wars between AI nations never end** — `aiDiplomacy` (`js/ai.js`) now
   sues for peace when weary and losing (or the war drags), and mutually
   exhausted bloodless wars end in an automatic white peace.

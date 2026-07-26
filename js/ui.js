@@ -979,20 +979,20 @@ class UI {
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
 
-    // buildings (skip bridges: drawn as terrain; skip walls: drawn as a connected structure)
+    // buildings (skip bridges: drawn as terrain; skip walls and gates: drawn as a connected structure)
     for (const f of game.factions) {
       for (const b of f.buildings) {
-        if (b.type.key === 'bridge' || b.type.key === 'wall') continue;
+        if (b.type.key === 'bridge' || b.type.key === 'wall' || b.type.key === 'gate') continue;
         if (b.x + b.type.size < x0 || b.x > x1 || b.y + b.type.size < y0 || b.y > y1) continue;
         this.drawBuilding(b);
       }
     }
-    // walls: rendered with neighbour-aware joinery so runs read as one continuous barrier
+    // walls + gates: neighbour-aware joinery so a run reads as one continuous barrier
     for (const f of game.factions) {
       for (const b of f.buildings) {
-        if (b.type.key !== 'wall') continue;
+        if (b.type.key !== 'wall' && b.type.key !== 'gate') continue;
         if (b.x + 1 < x0 || b.x > x1 || b.y + 1 < y0 || b.y > y1) continue;
-        this.drawWall(b);
+        this.drawRampart(b);
       }
     }
 
@@ -1199,12 +1199,32 @@ class UI {
     this.ctx.drawImage(canvas, 0, 0, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s), Math.ceil(s));
   }
 
-  // Walls use the tileset's own art: the wall sprite for straight runs, and the tower sprite at
-  // corners, junctions, ends and lone posts — so a run reads as a continuous crenellated rampart.
-  drawWall(b) {
+  // Draw part of a baked 16x16 sprite onto the matching fraction of its tile on
+  // screen. Boundaries are derived from the tile's own rect (identical maths to
+  // drawTileCanvas at t=0 and t=1), so a slice lines up exactly with a full-tile
+  // draw of the same sprite.
+  drawTileSlice(canvas, x, y, px, py, pw, ph) {
+    const [wx, wy] = this.worldToScreen(x, y);
+    const ax = Math.floor(wx), ay = Math.floor(wy), d = Math.ceil(TILE * this.cam.zoom);
+    const dx0 = ax + Math.round(d * px / TILE), dx1 = ax + Math.round(d * (px + pw) / TILE);
+    const dy0 = ay + Math.round(d * py / TILE), dy1 = ay + Math.round(d * (py + ph) / TILE);
+    this.ctx.drawImage(canvas, px, py, pw, ph, dx0, dy0, Math.max(1, dx1 - dx0), Math.max(1, dy1 - dy0));
+  }
+
+  // Walls and gates are assembled per tile from the baked rampart set
+  // (`bakeRamparts`, js/assets.js) rather than stamped as one sprite each. A
+  // clean straight run draws the matching connector whole — `wallH`'s parapet
+  // and `wallV`'s column both reach their tile edges, so segment meets segment
+  // with no seam in either axis. Anything else (corner, T, cross, end, lone
+  // post) draws a HALF connector toward each neighbour it actually has, then a
+  // tower over the join — half, so a corner never sprouts a length of wall into
+  // empty ground. Gates take the same stubs and then cover the middle with the
+  // arch, picking the vertical arch when the run through them runs north-south.
+  drawRampart(b) {
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
     const map = game.map;
+    const art = Assets.rampart[b.faction];
     const [sx, sy] = this.worldToScreen(b.x, b.y);
     const joins = (x, y) => {
       if (!map.inBounds(x, y)) return false;
@@ -1213,9 +1233,26 @@ class UI {
     };
     const up = joins(b.x, b.y - 1), dn = joins(b.x, b.y + 1),
           lf = joins(b.x - 1, b.y), rt = joins(b.x + 1, b.y);
-    const straight = (lf && rt && !up && !dn) || (up && dn && !lf && !rt);
+    const h = (lf ? 1 : 0) + (rt ? 1 : 0), v = (up ? 1 : 0) + (dn ? 1 : 0);
+    const H = TILE / 2;
+    const stubs = () => {
+      if (lf) this.drawTileSlice(art.wallH, b.x, b.y, 0, 0, H, TILE);
+      if (rt) this.drawTileSlice(art.wallH, b.x, b.y, H, 0, H, TILE);
+      if (up) this.drawTileSlice(art.wallV, b.x, b.y, 0, 0, TILE, H);
+      if (dn) this.drawTileSlice(art.wallV, b.x, b.y, 0, H, TILE, H);
+    };
     ctx.globalAlpha = b.done ? 1 : 0.5;
-    this.drawTileCanvas(straight ? Assets.wallSprite : Assets.towerSprite, b.x, b.y);
+    if (b.type.key === 'gate') {
+      stubs();
+      this.drawTileCanvas(v > h ? art.gateV : art.gateH, b.x, b.y);
+    } else if (h === 2 && v === 0) {
+      this.drawTileCanvas(art.wallH, b.x, b.y);
+    } else if (v === 2 && h === 0) {
+      this.drawTileCanvas(art.wallV, b.x, b.y);
+    } else {
+      stubs();
+      this.drawTileCanvas(art.tower, b.x, b.y);
+    }
     ctx.globalAlpha = 1;
     if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
     else if (b.hp < b.type.hp) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
@@ -1223,8 +1260,11 @@ class UI {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
     }
+    // Owner marker sits high on the parapet, not at the tile centre: dead centre
+    // is exactly where a gate's archway is, and the dot was covering it.
     ctx.fillStyle = game.factions[b.faction].color.css;
-    ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.5), Math.max(2, Math.round(s * 0.12)), Math.max(2, Math.round(s * 0.12)));
+    const dot = Math.max(2, Math.round(s * 0.12));
+    ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.22), dot, dot);
   }
 
   drawUnit(u) {
@@ -1322,7 +1362,9 @@ class UI {
     if (this.placing === 'farm') {
       for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) this.tile(AT.CROP_VARS[(dx + dy) % 2], tx + dx, ty + dy);
     } else if (this.placing === 'wall') {
-      this.drawTileCanvas(Assets.towerSprite, tx, ty);
+      this.drawTileCanvas(Assets.rampart[0].tower, tx, ty);
+    } else if (this.placing === 'gate') {
+      this.drawTileCanvas(Assets.rampart[0].gateH, tx, ty);
     } else if (this.placing === 'bridge') {
       if (this.placeVertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
       else this.tile(AT.BRIDGE_H, tx, ty);

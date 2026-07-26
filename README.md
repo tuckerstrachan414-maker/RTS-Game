@@ -64,6 +64,12 @@ happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, a
 the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
+**Walls and gates build into one structure.** Drag to lay a line (walls also
+snap to 45° diagonals) and the segments knit together — east–west and
+north–south alike — with towers rising at corners, junctions and ends. Drop a
+Gate anywhere in a run and it takes the run's direction, an archway set into
+the wall rather than a gap in it.
+
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
 cross a forest tile and 1.9× a rocky one. Roads still speed you up. A wood is

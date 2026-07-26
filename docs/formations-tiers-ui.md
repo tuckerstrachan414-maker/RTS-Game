@@ -190,30 +190,63 @@ and unfreezes the sim. See "Victory & defeat" in `docs/FEATURES.md`.
 
 ## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
 
-Walls used to draw as procedural rectangles (a post + a beam toward each
-joined neighbor). They now render from the tileset's own art: straight runs
-draw the wall sprite, while corners, junctions, ends, lone posts and
-diagonals draw the tower sprite — so a run reads as one continuous
-crenellated rampart with turrets instead of isolated blocks (`drawWall` in
-`js/ui.js`, `straight` = exactly one opposing pair of neighbors joined).
+Walls used to draw as procedural rectangles, then as one of two whole sprites
+per tile (wall sprite for straight runs, tower sprite for everything else).
+Neither connected: the atlas art is a side elevation drawn as standalone tiles
+with grass baked into the margins and the parapet stopping short of the tile
+edge, so consecutive segments never met. There was no vertical art in use at
+all — a north–south run stacked the *horizontal* sprite — and gates went
+through `drawBuilding`, joining nothing.
+
+**The rampart set (`bakeRamparts` in `js/assets.js`)** is five pieces baked per
+faction at load time, each the same atlas sprite edited only enough that its
+tile edges match its neighbours':
+
+| Piece | Source | Edit |
+|---|---|---|
+| `wallH` | `AT.WALL` | grass margin (cols 12–15) refilled from the parapet band at col 1, so the band reaches both edges. Pillar untouched |
+| `wallV` | `AT.WALL_V` (`[1,3]`, previously the unused `AT.ROAD`) | flattened to one repeated row; the column is already uniform, this just drops stray pixels that repeated into studs |
+| `tower` | `AT.WALL_TOWER` | grass stripped only |
+| `gateH` | `AT.GATE` | grass stripped only — its parapet already spans the full width on the same rows as `wallH`'s band |
+| `gateV` | `wallV` + `AT.GATE`'s arch | a 6×6 block of the arch, exactly the column's width, composited into the middle. The vertical gate the tileset never had |
+
+The art cooperates more than it looks: `wallV`'s column is pixel-for-pixel the
+base `WALL_TOWER` already trails downward, and `GATE`'s parapet sits on exactly
+`WALL`'s band rows. All the seams are asserted in the verification script (see
+Testing below) by comparing edge rows/columns of the baked canvases.
+
+**`drawRampart` (`js/ui.js`)** assembles each tile. A clean straight run draws
+the matching connector whole; anything else — corner, T, cross, end, lone post,
+diagonal — draws a *half* connector toward each neighbour it actually has
+(`drawTileSlice`) and then a tower over the join. Half, because a full
+connector at a corner sprouts a length of wall into empty ground. Gates take
+the same stubs and cover the middle with the arch, choosing `gateV` when the
+run through them has more vertical neighbours than horizontal. The owner
+marker sits high on the parapet rather than at the tile centre, which is where
+a gate's archway is.
 
 **Sprite baking (`bakeTile` in `js/assets.js`)** extracts a single 16×16
-atlas tile into its own canvas at load time and cleans it up so structures
-tile without seams, via three independent options:
+atlas tile into its own canvas and cleans it up, via four independent options:
 - `stripGreen` — knocks out the grass baked into a sprite's corners (opaque
-  green pixels become transparent). Used for the wall and tower sprites.
-- `fullBleed` — edge-replicates the sprite body into empty right/bottom
-  margins so straight wall segments join without a seam.
+  green pixels become transparent). Used for every rampart piece.
 - `replicateMid: [a, b]` — rebuilds every row from the clamped `[a..b]` band,
-  erasing the sprite's top/bottom end-caps. Used for the vertical bridge
-  (`Assets.bridgeVmid`) so a north–south span reads as one continuous bridge
-  instead of broken segments at each tile boundary; the horizontal bridge
-  doesn't need this and still draws straight from the atlas.
+  erasing the sprite's top/bottom end-caps. Used for `wallV`/`gateV` and for
+  the vertical bridge (`Assets.bridgeVmid`) so a north–south span reads as one
+  continuous run instead of broken segments at each tile boundary; the
+  horizontal bridge doesn't need this and still draws straight from the atlas.
+- `fillCols: [x0, x1, src]` — overwrites columns `x0..x1` with a copy of column
+  `src`, extending a band that stopped short of the tile edge. Used for `wallH`.
+- `overlay: {at, sx, sy, w, h, dx, dy}` — composites a rect from another atlas
+  tile on top. Used to put `GATE`'s arch into `gateV`.
 
 `drawTileCanvas(canvas, x, y)` is the shared helper that blits one of these
-baked canvases at a tile position (walls, towers, the vertical bridge mid,
-and the wall/bridge placement ghosts all go through it instead of
+baked canvases at a tile position (every rampart piece, the vertical bridge
+mid, and the wall/gate/bridge placement ghosts all go through it instead of
 `tile()`, which draws straight from the shared atlas image).
+`drawTileSlice(canvas, x, y, px, py, pw, ph)` is its partial form — it maps a
+source rect to the same fraction of the tile's screen rect, using the same
+maths at the extremes, so a half-tile stub lines up exactly with a full-tile
+draw of the same sprite.
 
 **Forest canopy (`drawForest` / `drawTreeClump` / `spriteAt` in `js/ui.js`)**
 is the other place tiles stopped drawing one-to-one. `T_TREE` tiles draw only

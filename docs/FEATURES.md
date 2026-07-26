@@ -93,8 +93,8 @@ or spillable as loot. This underpins the entire raiding design.
 `js/buildings.js`. 13 types: Town Hall, Storehouse, House, Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles; idles when forest exhausted), Quarry, Gold Mine (needs a cave), Market,
-Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals,
-tileset-baked sprite rendering — straight runs vs. corner/junction/end towers),
+Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
+rendered as one connected structure in both axes — see the renderer entry),
 Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
 Placement validation with per-type requirements, construction time, HP/damage,
 demolish with 75% refund (except Town Hall), and **capture**
@@ -331,7 +331,18 @@ beyond lifetime trade gold.
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
 health/construction bars, selection rings/outlines, placement ghost with
-validity tint, drag box-select. **Forest canopy pass** (`drawForest` /
+validity tint, drag box-select. **Ramparts** (`bakeRamparts` in `js/assets.js`,
+`drawRampart`/`drawTileSlice` in `js/ui.js`): walls and gates are assembled per
+tile from five baked connector pieces rather than stamped as whole sprites, so
+runs join seamlessly **horizontally and vertically** and gates sit inside a run
+instead of interrupting it. Straight runs draw the connector whole; corners,
+junctions, ends, lone posts and diagonals draw a half connector toward each
+neighbour they actually have and a tower over the join. Gates pick a vertical
+arch when the run through them is north–south. Each piece is the tileset's own
+art with the minimum edit needed to make its tile edges match (grass margins
+stripped, one band extended to the tile edge, one flattened column, and
+`GATE`'s arch composited into that column to make the vertical gate the
+tileset lacked). **Forest canopy pass** (`drawForest` /
 `drawTreeClump`): tree tiles are no longer drawn inside the terrain loop — the
 same three `AT.TREES` sprites are redrawn afterwards at `TREE_CANOPY` 2 tiles
 across, 2–4 to a tile, jittered and y-sorted so canopies overlap their
