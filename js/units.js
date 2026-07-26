@@ -212,7 +212,9 @@ class Unit {
     const gx = nx + 0.5, gy = ny + 0.5;
     const dx = gx - this.x, dy = gy - this.y;
     const d = Math.hypot(dx, dy);
-    let speed = this.type.speed;
+    // Terrain under the unit sets the pace: roads speed it up, forest and rocky
+    // ground drag it down (js/map.js moveCost) without ever blocking it.
+    let speed = this.type.speed / game.map.moveCost(this.tileX, this.tileY);
     if (game.map.road[game.map.idx(this.tileX, this.tileY)]) speed *= 1.3;
     const step = speed * dt;
     if (Math.abs(dx) > 0.05) this.facing = dx > 0 ? 1 : -1;
@@ -425,17 +427,23 @@ function formationMove(units, tx, ty) {
   });
 }
 
+// A formation slot wants open ground: rough tiles are legal standing room, but a
+// rank that forms up inside a wood arrives late and straggles. Take the nearest
+// clear tile, keeping the first rough one as a fallback for forest fighting.
 function freeSpotNear(x, y, fid, taken) {
+  let rough = null;
   for (let r = 0; r <= 2; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const nx = x + dx, ny = y + dy;
-        if (!taken.has(nx + ny * 4096) && game.map.passable(nx, ny, fid)) return [nx, ny];
+        if (taken.has(nx + ny * 4096) || !game.map.passable(nx, ny, fid)) continue;
+        if (game.map.moveCost(nx, ny) === 1) return [nx, ny];
+        if (!rough) rough = [nx, ny];
       }
     }
   }
-  return null;
+  return rough;
 }
 
 function findEnemyNear(unit, radius) {

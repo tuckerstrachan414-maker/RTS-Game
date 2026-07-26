@@ -3,6 +3,14 @@
 
 const T_GRASS = 0, T_WATER = 1, T_TREE = 2, T_ROCK = 3, T_CAVE = 4;
 const MAP_W = 96, MAP_H = 96;
+// Rough ground. Forest and boulder fields are crossable — troops push through
+// the undergrowth and scramble over the stones — but it costs them. These are
+// multipliers on how long a tile takes to cross: they divide unit speed
+// (js/units.js followPath) and multiply the A* step cost (findPath below), so
+// the pathfinder routes around a wood when open ground is only a little longer
+// and cuts straight through when it isn't.
+const TREE_MOVE_COST = 2.4;
+const ROCK_MOVE_COST = 1.9;
 // Walkable tiles a nation must be able to reach from its start, or the map
 // generator cuts it a track out (see connectStartZones).
 const MIN_START_REGION = 500;
@@ -276,7 +284,21 @@ class GameMap {
     }
     const t = this.terrain[i];
     if (t === T_WATER) return this.bridge[i] !== 0;
-    return t === T_GRASS;
+    // Caves are mouths in the rock face, not ground. Everything else — grass,
+    // forest, boulder field — can be walked; rough ground just slows the walker
+    // down (see moveCost).
+    return t !== T_CAVE;
+  }
+
+  // How slow is this tile to cross? 1 is open ground; forest and rock are
+  // higher. Roads, bridges and building tiles are cleared ground by definition,
+  // so they always cross at full speed.
+  moveCost(x, y) {
+    if (!this.inBounds(x, y)) return 1;
+    const i = this.idx(x, y);
+    if (this.buildingAt[i] || this.bridge[i] || this.road[i]) return 1;
+    const t = this.terrain[i];
+    return t === T_TREE ? TREE_MOVE_COST : t === T_ROCK ? ROCK_MOVE_COST : 1;
   }
 
   // Pick the right water tile from the 9-slice/strip set based on neighbors.
@@ -341,7 +363,9 @@ function findPath(map, sx, sy, tx, ty, faction, maxIter = 6000) {
         continue;
       }
       const nk = key(nx, ny);
-      const ng = gScore.get(k) + (map.road[nk] ? 0.7 : 1);
+      // Rough ground is a real cost, not a wall: a wood is worth going around
+      // when the detour is short and worth cutting through when it isn't.
+      const ng = gScore.get(k) + (map.road[nk] ? 0.7 : map.moveCost(nx, ny));
       if (!gScore.has(nk) || ng < gScore.get(nk)) {
         came.set(nk, k); gScore.set(nk, ng);
         open.push(ng + h(nx, ny), [nx, ny]);

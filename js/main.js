@@ -43,6 +43,13 @@ class Game {
     this.dayCount = 1;
     this.isDay = true;
     this.over = false;
+    // Victory bookkeeping. A won game can be continued (see resume): `claimed`
+    // remembers which victories have already been awarded so they don't re-fire
+    // on the very next tick, and `endless` marks a game that is being played on
+    // past a win.
+    this.claimed = new Set();
+    this.endless = false;
+    this.wonText = null;  // set by end() on a win; gates the Keep playing button
     this.tradeGold = 0;   // lifetime gold earned from trade (stats)
     this.msgs = [];
     this.events = [];     // pending player choice-cards (js/events.js)
@@ -168,15 +175,27 @@ class Game {
   }
 
   checkVictory() {
-    // prosperity victory — and prosperity DEFEAT: a rival's Grand Castle ends the game too
+    // Each victory fires once. After a win the player may choose to play on, and
+    // the condition that was just met is still true on the next tick — `claimed`
+    // is what stops it from re-triggering forever.
     const player = this.factions[0];
-    if (player.buildings.some(b => b.grand)) {
-      return this.end(true, 'Prosperity Victory! Your Grand Castle stands as proof that a nation can flourish through trade, diplomacy and good governance.');
+    // prosperity victory — and prosperity DEFEAT: a rival's Grand Castle ends the game too
+    if (player.buildings.some(b => b.grand) && !this.claimed.has('prosperity')) {
+      return this.end(true, 'Prosperity Victory! Your Grand Castle stands as proof that a nation can flourish through trade, diplomacy and good governance.', 'prosperity');
     }
     for (const f of this.factions) {
-      if (!f.isPlayer && !f.eliminated && f.buildings.some(b => b.grand)) {
-        return this.end(false, `${f.name} has completed its Grand Castle. The continent flocks to their banner, and your nation fades into their shadow.`);
+      if (f.isPlayer || f.eliminated || !f.buildings.some(b => b.grand)) continue;
+      // Once you have already won, a rival finishing its own Grand Castle is
+      // news, not a defeat — your place in the chronicle is settled.
+      if (this.endless) {
+        const key = 'rival-grand:' + f.id;
+        if (!this.claimed.has(key)) {
+          this.claimed.add(key);
+          this.log(`${f.name} completes a Grand Castle of their own — a rival for the ages.`, 'bad');
+        }
+        continue;
       }
+      return this.end(false, `${f.name} has completed its Grand Castle. The continent flocks to their banner, and your nation fades into their shadow.`);
     }
     // conquest / elimination
     let rivalsAlive = 0;
@@ -202,21 +221,43 @@ class Game {
     }
     for (const f of this.factions) if (!f.eliminated && !f.isPlayer) rivalsAlive++;
     if (this.factions[0].eliminated) return this.end(false, 'Your Town Hall lies in ruins. The nation is lost.');
-    if (rivalsAlive === 0) return this.end(true, 'Conquest Victory! All rival nations have fallen — the continent is yours.');
+    if (rivalsAlive === 0 && !this.claimed.has('conquest')) {
+      return this.end(true, 'Conquest Victory! All rival nations have fallen — the continent is yours.', 'conquest');
+    }
     // allied victory: everyone left alive is allied with you
     const allAllied = this.factions.every(f => f.eliminated || f.isPlayer || this.diplomacy.status(0, f.id) === 'alliance');
-    if (allAllied && rivalsAlive > 0 && this.time > 60) {
-      return this.end(true, 'Diplomatic Victory! Every surviving nation stands in alliance with you. Peace reigns.');
+    if (allAllied && rivalsAlive > 0 && this.time > 60 && !this.claimed.has('diplomatic')) {
+      return this.end(true, 'Diplomatic Victory! Every surviving nation stands in alliance with you. Peace reigns.', 'diplomatic');
     }
   }
 
-  end(won, text) {
+  // Freeze the sim and show the end screen. A win offers "Keep playing", which
+  // hands the map back with the victory banked (see resume); a defeat does not —
+  // there is nothing left to play.
+  end(won, text, key) {
     if (this.over) return;
     this.over = true;
+    if (key) this.claimed.add(key);
+    this.wonText = won ? text : null;
     const el = document.getElementById('gameover');
     el.style.display = 'flex';
     el.querySelector('h1').innerHTML = won ? '<span class="icon icon-trophy"></span> Victory' : '<span class="icon icon-skull"></span> Defeat';
     el.querySelector('p').textContent = text;
+    const keep = el.querySelector('#keep-playing');
+    if (keep) {
+      keep.style.display = won ? '' : 'none';
+      keep.onclick = () => this.resume();
+    }
+  }
+
+  // Play on after a victory: the sim restarts exactly where it stopped, the
+  // claimed victory never fires again, and the remaining ones still can.
+  resume() {
+    if (!this.over || !this.wonText) return;
+    this.over = false;
+    this.endless = true;
+    document.getElementById('gameover').style.display = 'none';
+    this.log('The crown is yours — and the map plays on. Rule as long as you can.', 'good');
   }
 }
 

@@ -6,6 +6,22 @@ const ZOOMS = [1, 2, 3, 4];
 // Pixel-art icon (assets/icons16x16.png via CSS sprite, see .icon-* rules) in place of an emoji glyph.
 const icon = key => `<span class="icon icon-${key}"></span>`;
 
+// Crown width of a full-grown tree, in tiles. Well over 1 on purpose: canopies
+// have to overlap their neighbours for a stand of T_TREE tiles to close up into
+// a wood. The sprites themselves are the tileset's originals (AT.TREES).
+const TREE_CANOPY = 2.0;
+
+// Deterministic per-tile noise: tileNoise(x, y)(k) is a stable 0..1 value for
+// slot k of that tile. Decoration placement has to be a pure function of the
+// tile, or the forest would reshuffle itself on every frame.
+function tileNoise(x, y) {
+  return k => {
+    let h = Math.imul(x + 0x9e37, 0x85ebca6b) ^ Math.imul(y + 0x79b9, 0xc2b2ae35) ^ Math.imul(k + 1, 0x27d4eb2f);
+    h = Math.imul(h ^ h >>> 15, 0x2545f491);
+    return ((h ^ h >>> 16) >>> 0) / 4294967296;
+  };
+}
+
 class UI {
   constructor(canvas) {
     this.canvas = canvas;
@@ -946,7 +962,8 @@ class UI {
           if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
           else if (map.bridge[i]) this.tile(AT.BRIDGE_H, x, y);
         } else if (t === T_TREE) {
-          this.tile(AT.TREES[map.decor[i] % 3], x, y);
+          // canopy is drawn in its own pass below so it can overlap neighbours
+          if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
         } else if (t === T_ROCK) {
           this.tile(AT.ROCKS[map.decor[i] % 5], x, y);
         } else if (t === T_CAVE) {
@@ -954,6 +971,10 @@ class UI {
         }
       }
     }
+
+    // forest canopy: oversized, overlapping, drawn after all ground so a stand
+    // of trees closes over into a wood instead of a grid of separate tiles
+    this.drawForest(x0, y0, x1, y1);
 
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
@@ -1072,6 +1093,63 @@ class UI {
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(x, y);
     this.ctx.drawImage(sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s * scale), Math.ceil(s * scale));
+  }
+
+  // Draw one tileset sprite at an arbitrary world position, `scale` tiles across,
+  // anchored at its bottom centre so a tall sprite grows upward out of its tile.
+  spriteAt(at, wx, wy, scale) {
+    const s = TILE * this.cam.zoom;
+    const [sx, sy] = this.worldToScreen(wx, wy);
+    const d = Math.ceil(s * scale);
+    this.ctx.drawImage(Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE,
+      Math.round(sx - d / 2), Math.round(sy - d), d, d);
+  }
+
+  // ---------- forest ----------
+  // The tileset's three tree sprites, unchanged — just drawn much larger than one
+  // tile and several to a tile, so neighbouring T_TREE tiles grow into each other
+  // and a patch reads as a wood you push through rather than a row of shrubs.
+  // Everything is derived from the tile coordinates, so a given map always draws
+  // the same forest.
+  drawForest(x0, y0, x1, y1) {
+    const map = game.map;
+    // canopies are taller than their tile and spill upward and sideways, so
+    // sweep a margin past the viewport or trees pop in at the edges
+    const m = Math.ceil(TREE_CANOPY);
+    const yEnd = Math.min(MAP_H - 1, y1 + m), xEnd = Math.min(MAP_W - 1, x1 + m);
+    const xStart = Math.max(0, x0 - m), yStart = Math.max(0, y0 - 1);
+    // rows drawn top-down so nearer canopies overlap the ones behind them
+    for (let y = yStart; y <= yEnd; y++) {
+      for (let x = xStart; x <= xEnd; x++) {
+        if (map.terrain[map.idx(x, y)] === T_TREE) this.drawTreeClump(x, y);
+      }
+    }
+  }
+
+  drawTreeClump(x, y) {
+    const map = game.map;
+    const variant = map.decor[map.idx(x, y)];
+    const rnd = tileNoise(x, y);
+    // A tile hemmed in by more forest gets a fuller clump: the interior of a wood
+    // should look dense, the fringe should still show its individual trees.
+    const enclosed = map.countAdjacent(x, y, T_TREE);
+    let extras = enclosed >= 5 ? 3 : enclosed >= 2 ? 2 : 1;
+    // zoomed all the way out the whole map is on screen and the undergrowth is
+    // sub-pixel detail nobody can see — don't pay for it
+    if (this.cam.zoom < 2) extras = Math.min(extras, 1);
+    // undergrowth first, then the crown, so the big tree sits in front of its bush
+    for (let k = 0; k < extras; k++) {
+      const a = rnd(k * 3) * Math.PI * 2;
+      const r = 0.24 + rnd(k * 3 + 1) * 0.3;
+      this.spriteAt(AT.TREES[(variant + k + 1) % 3],
+        x + 0.5 + Math.cos(a) * r, y + 1.06 + Math.sin(a) * 0.22,
+        TREE_CANOPY * (0.5 + rnd(k * 3 + 2) * 0.22));
+    }
+    // the crown is jittered generously in both axes — without it every trunk
+    // lands on the same baseline and the wood reads as banded rows
+    this.spriteAt(AT.TREES[variant % 3],
+      x + 0.5 + (rnd(9) - 0.5) * 0.36, y + 1.12 + (rnd(10) - 0.5) * 0.34,
+      TREE_CANOPY * (0.84 + rnd(11) * 0.34));
   }
 
   drawBuilding(b) {

@@ -20,14 +20,25 @@ trees/rocks/a cave within reach. Water autotiling picks from a 9-slice + strip
 set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
 iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
 onto trade roads; per-faction passability (gates open for owner + allies,
-walls/keeps solid, other buildings walkable). **Start zones are guaranteed
+walls/keeps solid, other buildings walkable). **Forest and rock are rough
+ground, not walls**: troops push through both, at `TREE_MOVE_COST` 2.4× / 
+`ROCK_MOVE_COST` 1.9× the time (`map.moveCost`, which divides unit speed in
+`followPath` and multiplies the A* step cost), so the pathfinder skirts a wood
+when the detour is short and cuts through when it isn't. Only water without a
+bridge, caves, walls and keeps still block outright. Consequences worth knowing:
+a wall ring no longer seals at forest tiles (buildings still require grass, so
+`canPlace` refuses walls there) — the gap is a slow chokepoint rather than a
+barrier; and unit muster/formation slots deliberately prefer `moveCost === 1`
+tiles so ranks don't form up inside a thicket. **Start zones are guaranteed
 traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
 stamped wherever the quadrant centre lands, which could leave a nation on a
 grass island in a lake or sealed behind planted forest, so the generator floods
 each zone, cuts a track to real country when the region is too small, and links
 every start zone into one landmass at the narrowest crossing it can find
 (Dijkstra weighting grass cheap, forest and rock a little, water heavily, caves
-never). `?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
+never — this still runs on grass-only connectivity, so the guarantee is stricter
+than movement now requires and seeds keep generating identical terrain).
+`?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
 entry is unused), map sizes, biomes.
 
 ## Economy & population — Deep
@@ -298,6 +309,14 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 Town Halls destroyed), Diplomatic (every survivor allied, after 60s) — and
 defeat on losing your Town Hall **or when a rival completes its own Grand
 Castle** (prosperity doctrine AIs pursue it; construction start is announced).
+**A win can be played on**: the end screen offers *Keep playing* beside *Play
+again*, which unfreezes the sim exactly where it stopped (`Game.resume`) and
+sets `endless`. Each victory is banked in `Game.claimed` and fires only once, so
+the condition you just met can't re-trigger next tick while the *other* win
+paths stay live — conquer the map after a Prosperity win and Conquest Victory
+still fires. In an endless game a rival's Grand Castle is logged as news instead
+of ending the run (you already have your crown), but losing your own Town Hall
+still ends it; defeat never offers *Keep playing*.
 Elimination kills a faction's units and cancels its routes, but its buildings
 are **annexed** by whoever felled the Town Hall (`conqueredBy` →
 `annexBuildings`) rather than erased — so taking a rival's mining town is worth
@@ -312,7 +331,15 @@ beyond lifetime trade gold.
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
 health/construction bars, selection rings/outlines, placement ghost with
-validity tint, drag box-select, minimap (terrain + roads + buildings + units +
+validity tint, drag box-select. **Forest canopy pass** (`drawForest` /
+`drawTreeClump`): tree tiles are no longer drawn inside the terrain loop — the
+same three `AT.TREES` sprites are redrawn afterwards at `TREE_CANOPY` 2 tiles
+across, 2–4 to a tile, jittered and y-sorted so canopies overlap their
+neighbours and a patch of `T_TREE` closes into a wood instead of a grid of
+lollipops. Clump density follows `countAdjacent(T_TREE)` (dense interior, sparse
+fringe) and drops at zoom 1; placement comes from `tileNoise(x, y)`, a pure
+function of the tile, so the forest never shimmers as the camera moves. The art
+itself is untouched. Also: minimap (terrain + roads + buildings + units +
 territory ownership tint + viewport rectangle, click/tap to jump), dashed
 territory border lines on the main map, event cards (`#eventcard`, see Event
 cards above). Topbar with live stats, tax slider,

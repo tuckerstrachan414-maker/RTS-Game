@@ -64,6 +64,14 @@ happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, a
 the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
+**The ground fights you too.** Forests and boulder fields are not walls —
+troops push through both — but the going is slow: roughly 2.4× as long to
+cross a forest tile and 1.9× a rocky one. Roads still speed you up. A wood is
+cover and a delay, not a border: armies can now flank straight through one, so
+a wall ring that stops at the treeline leaves a slow gap rather than a sealed
+edge. Only deep water without a bridge, cave mouths, walls and keeps stop a
+unit outright.
+
 **Taxes** are a slider in the top bar (0–40%): more gold per citizen, at a
 happiness cost that scales with the rate.
 
@@ -159,6 +167,13 @@ at your border: ambitions are never announced outright, but they always show.
   upgrade (300🪙 200🪵 200🪨) at your Castle. The peaceful win.
 - 🤝 **Diplomatic** — every surviving nation allied with you.
 - ⚔️ **Conquest** — every rival Town Hall destroyed.
+
+**You don't have to stop.** The victory screen offers **Keep playing** next to
+Play again. Take it and the game picks up exactly where it paused, with the win
+already banked — it won't pop up again, but the *other* win conditions still
+can, so you can take the Grand Castle and then go conquer the continent as well.
+Playing on, a rival finishing its own Grand Castle is just news in the log
+rather than a defeat; losing your Town Hall still ends the run.
 
 **Conquest means annexation.** Destroy a nation's Town Hall and its surviving
 farms, mines, markets and storehouses — goods and all — become **yours**, at

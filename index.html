@@ -215,6 +215,10 @@
   #gameover p { max-width: 520px; font-size: 17px; color: #bcd; line-height: 1.5; }
   #gameover button { background: #2c3442; color: #cde; border: 1px solid #46536a; border-radius: 6px;
     padding: 10px 22px; cursor: pointer; font-size: 16px; touch-action: manipulation; }
+  #gameover .go-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  /* Keep playing is the headline offer on a win, so it reads as the primary action */
+  #gameover #keep-playing { background: #3c5c8c; border-color: #6f92c8; color: #eef4ff; }
+  #gameover #keep-playing:hover { background: #476fa8; }
 
   #rotate-prompt { display: none; position: fixed; inset: 0; z-index: 999; background: #1c2026;
     flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 24px; }
@@ -300,7 +304,10 @@
 <div id="gameover">
   <h1></h1>
   <p></p>
-  <button onclick="location.reload()">Play again</button>
+  <div class="go-btns">
+    <button id="keep-playing">Keep playing</button>
+    <button onclick="location.reload()">Play again</button>
+  </div>
 </div>
 
 <div id="difficulty">

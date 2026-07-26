@@ -29,6 +29,14 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
    get the same destination tile. Falls back to the raw target tile if no
    spiral spot is free.
 
+   Since forest and rock became walkable rough ground (`map.moveCost`,
+   `js/map.js`), "passable" is no longer the same as "good standing room":
+   `freeSpotNear` now takes the nearest tile with `moveCost === 1` and keeps the
+   first rough tile it saw only as a fallback. Without that, a rank ordered to
+   the edge of a wood forms up *inside* it and straggles in at 40% speed.
+   `Faction.spawnPointNear` (`js/factions.js`) does the same two-pass search for
+   the same reason — new recruits should muster on open ground.
+
 Single-unit selections skip all of this and just call `orderMove` directly.
 
 **`separateUnits(dt)`**, called every tick from `Game.tick()` in `main.js`,
@@ -173,6 +181,13 @@ everything else; anything meant to stay visible while hidden (like the
 restore button) needs to be added to the exclusion list explicitly, not just
 left unclassed, since default CSS specificity won't save you.
 
+`#gameover` is the same kind of exception as `#difficulty`: not `.hud`, because
+it belongs to the frame around the game rather than the game's HUD. Its buttons
+now live in a `.go-btns` flex row — **Keep playing** (`#keep-playing`, styled as
+the primary action and shown only on a win) and Play again. `Game.end` toggles
+the button's visibility and binds its handler; `Game.resume` hides the overlay
+and unfreezes the sim. See "Victory & defeat" in `docs/FEATURES.md`.
+
 ## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
 
 Walls used to draw as procedural rectangles (a post + a beam toward each
@@ -199,6 +214,21 @@ tile without seams, via three independent options:
 baked canvases at a tile position (walls, towers, the vertical bridge mid,
 and the wall/bridge placement ghosts all go through it instead of
 `tile()`, which draws straight from the shared atlas image).
+
+**Forest canopy (`drawForest` / `drawTreeClump` / `spriteAt` in `js/ui.js`)**
+is the other place tiles stopped drawing one-to-one. `T_TREE` tiles draw only
+their grass (and a tuft) in the terrain loop; the trees themselves come in a
+second pass right after it, so a canopy can spill over the tiles around it
+instead of being clipped by the next row of grass. Each tree tile draws 2–4
+copies of the *same* `AT.TREES` sprites — no new art — at ~`TREE_CANOPY` (2)
+tiles across, bottom-centre anchored via `spriteAt` so they grow upward out of
+their tile, jittered in both axes and drawn undergrowth-first. Clump size
+follows `countAdjacent(x, y, T_TREE)` so the interior of a wood is dense and the
+fringe still shows individual trees, and drops to two sprites at zoom 1 where
+the detail is sub-pixel anyway. All offsets come from `tileNoise(x, y)`, a pure
+hash of the tile coordinates — using `Math.random` here would make the forest
+crawl every frame. Draw order is terrain → canopy → borders → buildings →
+units, so units crossing a wood stay visible on top of it.
 
 **Diagonal wall drag (`paintTo` in `js/ui.js`)** snaps a build-drag to
 whichever axis it's closest to — horizontal, vertical, or, for walls only, a

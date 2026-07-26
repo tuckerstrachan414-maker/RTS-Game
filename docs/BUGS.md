@@ -81,6 +81,26 @@ replay. Combat, projectiles and unit spawn jitter still call global
 match.
 **Plan:** TBD
 
+### 17. Units end up standing inside their own solid Town Hall
+`js/factions.js:33` `spawnPointNear` / `js/units.js:397` `nudgeUnit` — after a
+600s soak on `?seed=42&difficulty=ruthless`, six units were sitting on tiles
+their own faction cannot path through: the Town Hall footprint (a `solid`
+building, so `map.passable` is false there). They are drawn on top of the
+building sprite and rely on `nudgeUnit`'s "escape if already stuck" clause to
+get out. Pre-existing — trees and rocks being walkable didn't cause it, and the
+same soak shows no unit stranded on any terrain tile.
+**Plan:** TBD
+
+### 18. AI wall rings leave permanent gaps at forest and rock tiles
+`js/ai.js:721`, `js/buildings.js:149` — `canPlace` still requires `T_GRASS`, so
+no wall can be built on a tree or rock tile. That was harmless while those tiles
+were impassable natural barriers; now that troops can cross them
+(`map.moveCost`), a ring drawn around a wooded town has real holes in it. They
+are slow chokepoints rather than open doors, but a defensive AI cannot close its
+perimeter and does not know it. Clearing terrain to build (or letting walls sit
+on rough ground) would fix it.
+**Plan:** TBD
+
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
 
 - **Training always leaves 1 citizen free** — `trainUnit` requires
