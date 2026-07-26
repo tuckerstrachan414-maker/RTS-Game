@@ -147,20 +147,23 @@ function triggerDispute(a, b) {
 
 function resolveAIDispute(a, b) {
   const fa = game.factions[a], fb = game.factions[b], dip = game.diplomacy;
-  const expA = fa.ai ? DOCTRINES[fa.ai.doctrine].expansionAppetite : 0.5;
-  const expB = fb.ai ? DOCTRINES[fb.ai.doctrine].expansionAppetite : 0.5;
+  const expA = fa.ai ? aiArchetype(fa).expansionAppetite : 0.5;
+  const expB = fb.ai ? aiArchetype(fb).expansionAppetite : 0.5;
+  // each side sizes the other up through its own eyes, not the true numbers
+  const seesA = fb.brain ? fb.brain.perception.estimatedStrength(a).value : fa.strength();
+  const seesB = fa.brain ? fa.brain.perception.estimatedStrength(b).value : fb.strength();
   if (expA > 0.5 && expB > 0.5 && dip.relation(a, b) < 0) {
     // two expansionists with bad blood: the frontier hardens toward war
     dip.addRel(a, b, -15);
     aiAddGrudge(a, b, 10);
     aiAddGrudge(b, a, 10);
     game.log(`${fa.name} and ${fb.name} troops face off along their frontier.`);
-  } else if (fa.strength() < fb.strength() * 0.7) {
+  } else if (fa.strength() < seesB * 0.7) {
     dip.addRel(a, b, -5);
     aiAddGrudge(a, b, 10);
     if (fa.ai) fa.ai.expansionSite = null;   // the weaker side backs down
     game.log(`${fa.name}'s settlers withdraw from the disputed valley.`);
-  } else if (fb.strength() < fa.strength() * 0.7) {
+  } else if (fb.strength() < seesA * 0.7) {
     dip.addRel(a, b, -5);
     aiAddGrudge(b, a, 10);
     if (fb.ai) fb.ai.expansionSite = null;

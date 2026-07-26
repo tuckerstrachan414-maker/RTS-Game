@@ -7,6 +7,12 @@ const EAT_RATE = 0.05;       // food per citizen per second
 const STARVE_INTERVAL = 12;  // seconds between starvation losses
 const DAY_GROWTH_FRACTION = 0.3; // fraction of housing cap added each new day
 const RES_KEYS = ['food', 'wood', 'stone', 'gold'];
+// Tax knobs, shared by the slider, the happiness model and the AI's tax
+// controller (js/ai-utility.js) — the controller INVERTS the happiness formula
+// below to solve for a safe rate, so these must never be duplicated as literals.
+const TAX_MAX = 0.4;
+const TAX_HAPPINESS_COST = 55;
+const HAPPY_GROWTH_GATE = 50;   // growForNewDay needs happiness strictly above this
 
 class Nation {
   constructor(factionId) {
@@ -125,15 +131,10 @@ class Nation {
     this.withdraw('food', this.pop * EAT_RATE * dt);
     this.starving = this.total('food') <= 0.0001;
 
-    // happiness
-    const housed = this.pop <= this.housingCap();
-    let target = 50;
-    target += this.starving ? -35 : 12;
-    target += housed ? 8 : -18;
-    target += Math.min(20, this.auraScore());
-    target -= this.warWeariness;
-    target -= this.tax * 55;
-    if (f.kingAlive === false) target -= 12;
+    // happiness — the tax-free part is factored out (happinessTargetWithoutTax)
+    // so the AI's tax controller can invert this exact formula rather than
+    // copying it; a drift between the two would silently mistune every AI.
+    const target = this.happinessTargetWithoutTax() - this.tax * TAX_HAPPINESS_COST;
     this.happiness += (target - this.happiness) * Math.min(1, dt * 0.15);
     this.happiness = Math.max(0, Math.min(100, this.happiness));
 
@@ -158,11 +159,24 @@ class Nation {
   // citizen and capped at the housing cap. Returns the number of citizens gained.
   growForNewDay() {
     const cap = this.housingCap();
-    if (this.starving || this.pop >= cap || this.happiness <= 50) return 0;
+    if (this.starving || this.pop >= cap || this.happiness <= HAPPY_GROWTH_GATE) return 0;
     if (this.total('food') <= this.pop * 2) return 0;
     const before = this.pop;
     this.pop = Math.min(cap, this.pop + Math.round(cap * DAY_GROWTH_FRACTION));
     return this.pop - before;
+  }
+
+  // Happiness this nation would drift toward at zero tax. Solving
+  // (this - Hmin) / TAX_HAPPINESS_COST gives the highest tax rate that still
+  // holds happiness at Hmin — which is how the AI decides what it can charge.
+  happinessTargetWithoutTax() {
+    let target = 50;
+    target += this.starving ? -35 : 12;
+    target += this.pop <= this.housingCap() ? 8 : -18;
+    target += Math.min(20, this.auraScore());
+    target -= this.warWeariness;
+    if (this.faction.kingAlive === false) target -= 12;
+    return target;
   }
 
   auraScore() {
@@ -180,4 +194,41 @@ class Nation {
       if (excess <= 0) break;
     }
   }
+}
+
+// Side-effect-free estimate of a faction's production rate for one resource.
+// It mirrors buildingProduction's math because the real function consumes tree
+// tiles as it runs — but it mirrors the WHOLE of it, exhausted forests
+// included. That matters beyond the resource tooltip it was written for: the AI
+// decides "my wood is structurally gone, so I must trade or take it" from this
+// number, and a Lumber Camp reporting phantom income would hide the shortage
+// forever. (Was js/ui.js:1317, which drifted from buildingProduction — BUGS #6.)
+function estimateIncome(f, res) {
+  let rate = 0;
+  for (const b of f.buildings) {
+    if (!b.done || b.type.produces !== res || !b.workers) continue;
+    if (b.type.key === 'lumber' && !lumberHasForest(game.map, b)) continue;
+    let r = b.type.rate * b.workers;
+    if (b.type.key === 'farm') {
+      let bonus = 1;
+      if (game.map.countAdjacent(b.x, b.y, T_WATER, 2) > 0) bonus += 0.5;
+      for (const [tx, ty] of b.footprint()) {
+        if (nearBuilding(game.map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
+      }
+      r *= bonus;
+    }
+    rate += r;
+  }
+  return rate;
+}
+
+// Read-only twin of the tree search in buildingProduction (js/buildings.js).
+function lumberHasForest(map, b) {
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const tx = b.x + dx, ty = b.y + dy;
+      if (map.t(tx, ty) === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) return true;
+    }
+  }
+  return false;
 }

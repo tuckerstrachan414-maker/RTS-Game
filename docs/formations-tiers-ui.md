@@ -216,6 +216,18 @@ The enemy-AI overhaul reuses two systems documented here:
   `formationMove(waveUnits, sx, sy)` toward a border staging point, and
   survivors formation-move home on disband. The melee-in-front sort must stay
   stable — both the player and every AI wave depend on it.
+- **Scouts deliberately bypass `formationMove`.** A scout carries
+  `mission = {kind: 'scout'}`, and `formationMove` filters mission units out
+  (`js/units.js:405`), so `AICombatManager` issues `u.orderMove` directly. The
+  mission also excludes the rider from `armyUnits()` and from the auto-acquire
+  branch in `Unit.tick`, which is exactly what a scout wants: it rides, it
+  looks, it does not stop to fight. Two consequences worth remembering before
+  touching this: an unknown `mission.kind` falls through both the `rob`/`haul`
+  branches in `Unit.tick` and the `caravan`/`envoy` branches in
+  `Diplomacy.tick`, which is why a new mission kind was safe to add; and
+  `orderMove` sets `dest` even when `findPath` finds no route, so anything
+  driving units by "has it arrived?" must clear `dest` itself and retry
+  (`AICombatManager.orderScoutTo`; see BUGS #15).
 - **Hide-UI list gained `#eventcard`** (the AI choice-card element) in
   `index.html`'s `body.ui-hidden` CSS list. The pre-game `#difficulty` overlay
   is deliberately NOT `.hud` — it exists before the game does, styled like
@@ -242,7 +254,18 @@ const result = await page.evaluate(() => { /* poke game/ui, run game.tick(0.1) i
 
 Note `game`/`ui` are `let`-scoped in `main.js`, not attached to `window` —
 `waitForFunction` must check `typeof game !== 'undefined'`, not
-`window.game`. Things worth re-checking after any change in this area:
+`window.game`. A verification suite for the AI rework lives in that same pattern — it boots
+`?seed=N&difficulty=…`, drives `game.tick(0.1)` loops, and asserts: no war
+inside the opening ~150s across four seeds; the archetype line-up differs by
+seed; war does not fire on the first tick of an advantage but does once fresh
+intel and a held edge exist; marginal utility spikes when a quarry is removed
+and `evaluateWarVersusTrade` splits by archetype; memory is empty before contact
+and confidence decays (while the *threat* estimate rises) after it; taxes dip
+before dawn and happiness clears the growth gate; conquest annexes buildings
+with stores intact; and 10 sim-minutes on each difficulty run crash-free with a
+nation climbing past castle tier 1.
+
+Things worth re-checking after any change in this area:
 - Stack several units on one tile, tick a few seconds, assert pairwise
   distances exceed `SEP_RADIUS`.
 - Send a mixed-composition group on a formation move, assert every unit gets

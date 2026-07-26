@@ -20,8 +20,15 @@ trees/rocks/a cave within reach. Water autotiling picks from a 9-slice + strip
 set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
 iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
 onto trade roads; per-faction passability (gates open for owner + allies,
-walls/keeps solid, other buildings walkable). `?seed=N` URL replay. Notably
-absent: tree regrowth (the `SAPLING` atlas entry is unused), map sizes, biomes.
+walls/keeps solid, other buildings walkable). **Start zones are guaranteed
+traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
+stamped wherever the quadrant centre lands, which could leave a nation on a
+grass island in a lake or sealed behind planted forest, so the generator floods
+each zone, cuts a track to real country when the region is too small, and links
+every start zone into one landmass at the narrowest crossing it can find
+(Dijkstra weighting grass cheap, forest and rock a little, water heavily, caves
+never). `?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
+entry is unused), map sizes, biomes.
 
 ## Economy & population — Deep
 
@@ -32,9 +39,14 @@ starvation kills a citizen every 12s (floor of 2) and weakens the army (−30%
 damage). Happiness is a drift toward a computed target: base 50, fed/starving,
 housed/overcrowded, building auras (church/well/market, diminishing with pop),
 war weariness (0–25), taxes (slider, 0–40%), −12 while the nation's King is
-dead. Tax slider converts happiness into gold income. Worker assignment is
-manual per building (+/−) with idle-worker accounting; over-assignment after
-deaths is auto-unassigned.
+dead. Tax slider converts happiness into gold income; `TAX_MAX` and
+`TAX_HAPPINESS_COST` are shared constants, and `happinessTargetWithoutTax()`
+factors out the tax term so the AI's tax controller inverts the real formula
+instead of duplicating it. Worker assignment is manual per building (+/−) with
+idle-worker accounting; over-assignment after deaths is auto-unassigned.
+`estimateIncome(f, res)` lives here too (moved from `js/ui.js`) and now respects
+forest depletion, so an exhausted Lumber Camp reports zero — the signal the AI
+uses to decide a shortage is structural.
 
 ## Day/night cycle — Basic
 
@@ -50,9 +62,11 @@ deep-blue overlay across the whole canvas (`drawDayNightOverlay`) plus a warm
 radial-gradient glow over each house's door/window area at night
 (`drawHouseGlow`, faded in with darkness — there's no distinct window sprite
 in the tileset, so this lights the same spot on every house sprite). Topbar
-shows `Day N` with a sun/moon glyph. Notably absent: no gameplay effects tied
-to night beyond the population trigger (no vision/stealth changes, no AI
-behavior changes), no seasons.
+shows `Day N` with a sun/moon glyph. **AI nations now play to the clock**: their
+tax controller (`solveTaxPolicy`, `js/ai-utility.js`) raises taxes through the
+night and eases them before dawn so happiness clears the growth gate, making the
+cycle a visible economic rhythm you can disrupt by dragging them into a war.
+Notably absent: no vision or stealth changes at night, no seasons.
 
 ## Physical resource storage — Deep
 
@@ -72,7 +86,11 @@ Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals,
 tileset-baked sprite rendering — straight runs vs. corner/junction/end towers),
 Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
 Placement validation with per-type requirements, construction time, HP/damage,
-demolish with 75% refund (except Town Hall). AI nations now build walls/gates
+demolish with 75% refund (except Town Hall), and **capture**
+(`captureBuilding`/`annexBuildings`): a conquered nation's completed civilian
+buildings and bridges change hands with their stored goods intact, at 40% HP,
+unstaffed and with queues cleared, while walls, gates and the fallen Town Hall
+come down. AI nations now build walls/gates
 (turtle doctrine rings) and bridges (war-route engineering) too. Gaps: no
 building upgrades outside the Castle, no repair, bridges can't be removed once
 placed (see BUGS).
@@ -85,8 +103,11 @@ buy/sell spread. Player selling floods the stock (price falls); buying drains
 it (price rises); stock mean-reverts 2%/s; nations running short of a good pull
 stock down so shortages spike prices. Direct barter at market-implied rates.
 Embargoes impose up to a 60% access penalty on the target's trade terms
-(20% per embargoing nation). AI factions with a Market actively sell gluts and
-buy shortfalls, so prices genuinely move. Exploit note: the stock floor of 5
+(20% per embargoing nation). AI factions with a Market trade against **marginal
+utility** rather than fixed stock thresholds — they sell a good when the gold it
+fetches is worth more to them than the good is, and buy when it is worth less —
+so a nation with full granaries and no stone converts one into the other on its
+own, and prices genuinely move. Exploit note: the stock floor of 5
 means a capped-price market never truly runs out of goods.
 
 ## Raiding & plunder — Deep
@@ -147,47 +168,90 @@ per arrival; caravans are killable and routes die with their markets. War
 declaration drags in the defender's allies; peace costs 100 gold reparations
 and can be refused by a winning AI. Embargoes cascade to the embargoer's
 allies and worsen the target's market terms. AI factions proactively drive all
-of it per their current doctrine: envoy proposals to their best-relation
-neighbors, gifts to looming stronger powers, embargoes on hated rivals and
-runaway leaders, doctrine-gated war declarations, suing for peace when weary
-and losing, and automatic white peace for mutually exhausted bloodless wars.
+of it per their current ambition — but now on what they have actually seen: a
+pact proposal needs a rival Market the nation has laid eyes on, gifts go to
+neighbours it *believes* are stronger, and peace offers weigh a remembered
+enemy, not a true one. Envoy proposals, gifts to looming powers, embargoes on
+hated rivals and runaway leaders, war declarations gated on a sustained observed
+advantage, suing for peace when weary and losing, and automatic white peace for
+mutually exhausted bloodless wars.
 `Diplomacy.tick` itself keeps only ambient relations drift (pacts warm,
 covetous ambitions cool).
 
 ## AI opponents — Deep
 
-`js/factions.js` (`aiTick` executor, ~2s cadence) + `js/ai.js` (the goal
-brain). Each AI nation carries an evolving **doctrine** — its current
-ambition — seeded from its personality (warlike Crimson 0.8 aggression,
-mercantile Violeta 0.9 mercantile, cautious Aurelia) and re-scored against the
-world state every 60s and instantly on shocks (war declared, buildings lost,
-king slain, a nation eliminated), with hysteresis so ambitions don't flap:
+A utility-based decision engine on a staggered 2-second tick, split across four
+files: `js/ai-perception.js` (what a nation knows), `js/ai-utility.js` (scoring,
+archetypes, marginal utility, tax policy), `js/ai-trade.js` (market orders and
+the war-versus-trade call), `js/ai-combat.js` (scouting, army, war gating).
+`js/ai.js` keeps the ambition model and the executors those managers drive —
+war waves, bridge and wall engineering, coalitions, event cards. `aiTick`
+(`js/factions.js`) is now a thin dispatcher; ticks are phase-staggered by
+faction id rather than randomly, so nations never tick together and a seed
+replays identically.
 
-- **conquest** — huge army targets (up to 34), a second castle at 28 pop,
-  eager tier upgrades, expansion toward foreign frontiers, wars on a strength
-  edge, straight-for-the-townhall kill moves on broken enemies.
-- **prosperity** — token army, double markets, church/well comforts, trade
-  with everyone, embargoes instead of blades — and a race to its own Grand
-  Castle, which ends the game if it stands.
-- **turtle** — wall ring with gates (see below), stockpiles, stone economy;
-  only fights intruders and coalition wars.
-- **hegemon** — alliance webs, gifts, coalition-building against any runaway
-  power.
-- **raider** — bandit stables, short plunder wars against the richest
-  reachable target, peace once the loot is banked.
+**Nothing is read from global state.** Each nation keeps a `ScoutMemoryMap`:
+rival positions, rough army sizes and storehouse contents, written only by real
+line of sight (7 tiles per soldier, 9 per building, 12 for a town hall or
+castle), combat contact, or diplomacy. Memories decay, and — the important part
+— **low confidence inflates a threat rather than shrinking it**, so a nation
+that has lost track of a neighbour treats it as dangerous and sends a rider
+instead of guessing. Scouts are real units carrying a `scout` mission: they ride
+outward in chained legs, do not stop to fight, and can be killed, which costs
+the nation its intelligence. Public knowledge stays public: war declarations,
+the diplomacy matrices, market prices and drawn territory borders.
 
-The doctrine is never shown to the player — rumor log lines ("Travelers report
-soldiers drilling in X's fields…") and visible behavior are the tells. Economy:
-deficit-scored build planning that scales with population forever (farms from
-eat-rate math, housing growth headroom, storehouses at 70% capacity), market
-trading, farm-first staffing during shortages, expansion clusters at
-resource-rich ground 12–45 tiles out. War: two-stage attack waves that first
-**mass at a staging point** near the border (the visible telegraph, via
-`formationMove`), then assault doctrine-picked objectives (loot-rich
-storehouses → castle → townhall), with a deadline so stuck campaigns march
-home; AI factions survey water crossings and **build bridges** to reach war
-targets. Remaining gaps: no reactive defense beyond auto-acquire and walls, no
-naval anything.
+**Ambitions (archetypes)** are the parameter sets in `AI_ARCHETYPES`. The three
+primary ones are **Aggressor** (army targets to 34, eager tier upgrades, wars on
+a sustained edge), **Merchant** (token army, double markets, buys what it lacks,
+races the Grand Castle) and **Defensive Turtle** (wall rings, stockpiles, stone
+economy, fights only intruders); **Raider** (bandit stables, short plunder wars)
+and **Hegemon** (alliance webs, coalitions against runaway powers) round out the
+set. Each carries utility weights per action family, per-resource bias and
+reserves, a scarcity curve, happiness floor and tax appetite, war-versus-trade
+thresholds, risk tolerance and scouting budget. Nations re-score their ambition
+against the world *as they understand it* every 60s (and instantly on shocks),
+with triple-gated hysteresis.
+
+**Personalities are rolled per match** from the map seed (`AI_TEMPERAMENTS`,
+`rollPersonalities` in `js/factions.js`): five traits — aggression, mercantile,
+greed, caution, loyalty — drawn without replacement from six temperaments and
+jittered. The warlord next door in one game is a walled-up trader in the next.
+`?seed=N` still reproduces the whole setup.
+
+**Investment is arbitrated, not scripted.** Each tick the engine scores
+building, castle upgrade, expansion and Grand Castle against each other and runs
+the best affordable one, with a small stickiness bonus so it does not dither.
+Building scores fold in the marginal utility of whatever the building produces,
+storage pressure and blocked population growth.
+
+**War has to be earned.** A declaration needs a real army of its own (6 units
+and 110 strength — floors that make a 30-vs-0 comparison impossible), an
+advantage measured against remembered intel with unknowns treated as dangerous,
+a motive (grudge, bad blood, a resource the market cannot supply, or a runaway
+power), a route the army can actually walk, and odds that have **held for 30
+seconds** rather than flickered once. Nothing opens hostilities inside the first
+~150 seconds (scaled by difficulty). Defence is reactive: a wave is recalled
+when enemy soldiers are visible near the capital.
+
+**Economy.** Deficit-scored build planning; farms staffed first when food is
+negative; a lumber camp on a worked-out forest is unstaffed so the shortage
+surfaces; recruits are held back from the workforce when the army is under
+strength (capped at a third of the population). Marginal utility per resource is
+demand-derived — a nation wants stone because the quarry it is trying to build
+costs stone — and drives market orders, trade pacts, expansion and, at the
+extreme, war. The AI keeps back the price of a Market in timber so it can never
+be locked out of building (see BUGS, fixed).
+
+**Tax policy follows the day/night cycle.** The controller inverts the real
+happiness formula (`Nation.happinessTargetWithoutTax`) to solve for the highest
+rate that still holds a target happiness, then scales it by how much the nation
+actually needs gold. When dawn growth is available it raises the floor above the
+50% gate about 35-60 seconds ahead of dawn — so nations tax hard through the
+night and ease off before dawn to let their people multiply.
+
+Gaps: no naval anything; scouts do not deliberately probe defences before an
+assault; the memory map is not visualised for the player.
 
 ## Territory & borders — Moderate
 
@@ -234,8 +298,11 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 Town Halls destroyed), Diplomatic (every survivor allied, after 60s) — and
 defeat on losing your Town Hall **or when a rival completes its own Grand
 Castle** (prosperity doctrine AIs pursue it; construction start is announced).
-Elimination removes a faction's units and buildings, cancels its routes, and
-makes every survivor rethink its doctrine; on paced difficulties the victor
+Elimination kills a faction's units and cancels its routes, but its buildings
+are **annexed** by whoever felled the Town Hall (`conqueredBy` →
+`annexBuildings`) rather than erased — so taking a rival's mining town is worth
+more than burning it, and the map consolidates into real empires. Every survivor
+rethinks its ambition; on paced difficulties the victor
 rests (consolidation) before its next war, and the map can consolidate without
 the player — you might face one giant empire late. No score screen or stats
 beyond lifetime trade gold.

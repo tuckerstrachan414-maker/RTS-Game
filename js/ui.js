@@ -780,7 +780,7 @@ class UI {
         [housed ? 'Housed' : 'Overcrowded', housed ? 8 : -18],
         ['Comforts (church/well/market)', Math.round(Math.min(20, n.auraScore()))],
         ['War weariness', -Math.round(n.warWeariness)],
-        [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * 55)],
+        [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * TAX_HAPPINESS_COST)],
       ];
       if (f.kingAlive === false) rows.push(['The King is dead', -12]);
       return head(icon('heart'), 'Happiness')
@@ -1312,25 +1312,9 @@ class UI {
   }
 }
 
-// Side-effect-free estimate of a faction's production rate for one resource
-// (mirrors buildingProduction's math without consuming trees).
-function estimateIncome(f, res) {
-  let rate = 0;
-  for (const b of f.buildings) {
-    if (!b.done || b.type.produces !== res || !b.workers) continue;
-    let r = b.type.rate * b.workers;
-    if (b.type.key === 'farm') {
-      let bonus = 1;
-      if (game.map.countAdjacent(b.x, b.y, T_WATER, 2) > 0) bonus += 0.5;
-      for (const [tx, ty] of b.footprint()) {
-        if (nearBuilding(game.map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
-      }
-      r *= bonus;
-    }
-    rate += r;
-  }
-  return rate;
-}
+// estimateIncome moved to js/economy.js — production math belongs beside
+// buildingProduction, and the AI reads it too (it used to live here, which made
+// the AI brain depend on the render layer).
 
 function costText(cost) {
   const icons = { food: icon('food'), wood: icon('wood'), stone: icon('stone'), gold: icon('gold') };
