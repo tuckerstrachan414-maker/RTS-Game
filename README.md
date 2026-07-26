@@ -5,10 +5,12 @@ asset packs in this repo: the 16×16 top-down tileset (`assets/tileset16x16_1.pn
 and the **Minifolks: Humans** unit pack (`assets/units/`).
 
 You lead the blue nation of **Azuria** on a procedurally generated continent shared
-with three AI nations — warlike **Crimson**, mercantile **Violeta**, and cautious
-**Aurelia**. Each rival pursues its own **evolving ambition** — one may drill a
-conquering army, another chase riches and its own Grand Castle, another wall
-itself in or weave alliances — and those ambitions shift as the world changes.
+with three AI nations — **Crimson**, **Violeta** and **Aurelia**. Who they *are*
+is rolled fresh every match: the warlord on your border in one game is a
+walled-up trader in the next. Each pursues its own **evolving ambition** — one
+may drill a conquering army, another chase riches and its own Grand Castle,
+another wall itself in or weave alliances — and those ambitions shift as the
+world changes.
 You never *have* to fight: trade, gifts and alliances are a complete path to
 victory. But the world won't wait for you.
 
@@ -128,6 +130,23 @@ concede, settle for gold, or defy, an ultimatum to pay or refuse, a peace offer,
 a plea to join a coalition. Cards expire on a timer, and **silence is an
 answer** — ignored envoys take offense.
 
+**They have to find you first.** Rival nations don't read the map — they only
+know what they have actually seen. They send out **riders to scout**, and what
+they learn goes stale: a nation that has lost track of you assumes the worst and
+goes looking rather than gambling. Kill their scouts and they are guessing.
+Nobody declares war in the opening minutes, and nobody attacks on a whim — a
+rival needs a real army, a reason, a route, and an advantage that *holds*, so
+armies massing on your border are a genuine warning rather than a formality.
+
+**They will go looking for land.** When a nation works out its forests or runs
+short of stone, it sends settlers to found a new town on ground that has what it
+needs — and competing claims are what border disputes are made of.
+
+**Taxes rise at night.** Population only grows at dawn, and only above 50%
+happiness, so rival nations squeeze their people through the night and ease off
+before dawn. Drag one into a long war and the war weariness costs them their
+next generation.
+
 **Borders are real.** Your buildings project territory: dashed frontier lines
 on the map (and a color tint on the minimap) show who claims what. Building
 deep into a rival's claim — or letting their settlers creep into yours —
@@ -140,6 +159,12 @@ at your border: ambitions are never announced outright, but they always show.
   upgrade (300🪙 200🪵 200🪨) at your Castle. The peaceful win.
 - 🤝 **Diplomatic** — every surviving nation allied with you.
 - ⚔️ **Conquest** — every rival Town Hall destroyed.
+
+**Conquest means annexation.** Destroy a nation's Town Hall and its surviving
+farms, mines, markets and storehouses — goods and all — become **yours**, at
+reduced health and unstaffed until you assign workers. Walls and the ruined Town
+Hall come down. This cuts both ways: a rival that overruns you inherits your
+whole economy, and the continent consolidates into real empires.
 
 **Losing:** your Town Hall falls — or a **rival finishes its own Grand
 Castle**. Prosperous AI nations race for it too (you'll be warned when
@@ -179,10 +204,14 @@ Plain `<script>` modules, no build step:
 - `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
 - `js/market.js` — supply/demand commodity pricing, buy/sell, barter
 - `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
-- `js/factions.js` — faction state and the AI executor (economy, military, raiding)
+- `js/factions.js` — faction state, rolled personalities, the AI tick dispatcher
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
-- `js/ai.js` — the AI goal brain: evolving doctrines, proactive diplomacy, war
-  planning, bridge engineering, wall rings
+- `js/ai.js` — ambitions, proactive diplomacy, war waves, expansion, bridge and
+  wall engineering
+- `js/ai-perception.js` — what each AI nation actually knows (scouting, memory)
+- `js/ai-utility.js` — the utility engine: archetypes, marginal utility, taxes
+- `js/ai-trade.js` — AI market orders, trade pacts, the war-versus-trade call
+- `js/ai-combat.js` — AI scouting, army sizing, defence, war declarations
 - `js/events.js` — the event-card queue (AI-initiated choices for the player)
 - `js/territory.js` — per-tile influence/ownership, borders, border disputes
 - `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, difficulty

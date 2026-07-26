@@ -31,14 +31,6 @@ A misplaced bridge is permanent (though it still cost wood, sits in
 `faction.buildings`, and has 120 HP nothing can target).
 **Plan:** TBD
 
-### 6. Resource tooltip income ignores forest depletion
-`js/ui.js:1214` — `estimateIncome` mirrors `buildingProduction`'s math but not
-its tree check: a Lumber Camp whose forest is exhausted shows a positive
-+X/s in the wood tooltip while actually producing nothing
-(`js/buildings.js:211` returns null). The two functions have already drifted —
-exactly what the comment in `docs/formations-tiers-ui.md` warns about.
-**Plan:** TBD
-
 ### 9. Menu button tooltip promises "Esc" opens it, but Esc never does
 `index.html:250` titles the button "Menu / Pause (Esc)", but the keydown
 handler (`js/ui.js:66`) only uses Escape to close the pause menu / cancel
@@ -57,6 +49,36 @@ everyone). Arguably charming, but unintended.
 `js/ui.js:1085` — `u.facing < 0 ? drawX : drawX` — both branches identical.
 Behavior is actually correct (the transform math works out), the expression is
 just meaningless. Cosmetic cleanup only.
+**Plan:** TBD
+
+### 14. Every building costs wood, so a nation can be locked out of building
+`js/buildings.js:6-92` — every buildable type takes wood, **including the
+Market** (30 wood), which is the only way to buy wood. A nation whose forest is
+worked out before it raises a Market can never build anything again, however
+much stone, food and gold it holds: no Market to trade with, no Lumber Camp
+(20 wood) to restart production. The AI now sidesteps this by reserving the
+price of a Market in timber (`AIUtilityEngine.respectsWoodFloor`,
+`js/ai-utility.js`), but **the player has no such guard** and can still strand
+themselves. A Town Hall barter option, or a wood-free Market recipe, would fix
+it properly.
+**Plan:** TBD
+
+### 15. `Unit.orderMove` sets `dest` even when no path exists
+`js/units.js:59-63` — `orderMove` assigns `this.dest` unconditionally, but
+`dest` is only cleared in `followPath` when the path runs out
+(`js/units.js:223`). Order a unit somewhere unreachable and `findPath` returns
+`[]`, so `followPath` returns immediately and the unit keeps a `dest` it will
+never reach — it looks busy forever to any caller testing `!u.dest`. This
+silently froze AI scouts until `AICombatManager.orderScoutTo` was written to
+clear `dest` and retry; anything else issuing move orders is still exposed.
+**Plan:** TBD
+
+### 16. AI decisions no longer use `Math.random`, but the sim still is not seeded
+`js/ai.js`, `js/ai-*.js` and `js/factions.js` now draw from `game.rng`
+(mulberry32 from the map seed), so personalities, ambitions and build choices
+replay. Combat, projectiles and unit spawn jitter still call global
+`Math.random()`, so `?seed=N` reproduces the map and the opening but not a whole
+match.
 **Plan:** TBD
 
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
@@ -96,3 +118,32 @@ expiry consequences (relations drops) do apply.
 - **#10 Loot log spam from wars the player isn't in** — `dropLoot`
   (`js/main.js`) only logs when the player is a belligerent or has living
   troops within 20 tiles of the spill.
+- **#6 Resource income ignored forest depletion** — `estimateIncome` moved from
+  `js/ui.js` to `js/economy.js` (beside the production math it mirrors) and now
+  runs the same read-only tree check as `buildingProduction`, so an exhausted
+  Lumber Camp reports 0. This also removed the layering inversion where the AI
+  brain depended on the render layer.
+- **Every AI declared war seconds into the match** — `aiConsiderWar` gated on
+  `f.strength() <= o.strength() * ratio`, and `strength()` is 0 for everyone at
+  game start, so the first nation to finish a single swordsman "found an
+  advantage" over three empty armies. The relation gate was dead too (relations
+  start at 0, conquest's threshold was 10, so `0 > 10` never blocked). Replaced
+  by `AICombatManager.considerWar` (`js/ai-combat.js`): absolute army floors, an
+  estimate drawn from observed intel with unknowns treated as dangerous, a
+  required motive, and an advantage that must hold 30 seconds — plus a ~150s
+  opening peace for everyone, not just the player.
+- **Every match played out identically** — `AI_PERSONALITIES` was a fixed array
+  and the doctrine was derived straight from it, so Crimson was always the
+  warlord and Violeta always the trader. Personalities are now rolled per match
+  from the map seed (`rollPersonalities`, `js/factions.js`).
+- **Start zones could be completely sealed** — the generator stamps a 7×7
+  clearing at each quadrant centre and then plants trees and rocks in the ring
+  outside it, which on wooded ground closed the ring, and on water left a grass
+  island. Affected nations had ~46 walkable tiles and could never scout, expand,
+  trade overland, attack or be attacked for the entire match (2 of 4 nations on
+  seed 42). `connectStartZones`/`linkStartZones` (`js/map.js`) now cut a track
+  out and link every start into one landmass.
+- **Conquest erased the map** — `checkVictory` called `removeBuilding` on every
+  building a fallen nation owned. Survivors' farms, mines, markets and
+  storehouses are now annexed by the conqueror with their goods intact
+  (`annexBuildings`, `js/buildings.js`).

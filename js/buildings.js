@@ -177,6 +177,47 @@ function removeBuilding(game, b) {
   if (at >= 0) arr.splice(at, 1);
 }
 
+// Fraction of max HP a building is left with when it changes hands.
+const CAPTURE_HP_FRACTION = 0.4;
+// Fortifications are never inherited — a conqueror throws down the walls.
+const CAPTURE_RAZE = ['wall', 'gate', 'townhall'];
+
+// Hand a building to a new owner instead of razing it. Whatever is physically
+// stored inside comes with it (taking an enemy's full granary is the prize),
+// but the prize arrives battered and idle: no workers, no training queue, no
+// half-bought upgrade, and a fraction of its HP. map.buildingAt already points
+// at this object, and territory influence is recomputed from each faction's
+// building list, so the captured ground flips owner on the next pass.
+function captureBuilding(game, b, newFid) {
+  const from = game.factions[b.faction];
+  if (from) {
+    const at = from.buildings.indexOf(b);
+    if (at >= 0) from.buildings.splice(at, 1);
+  }
+  b.faction = newFid;
+  b.workers = 0;
+  b.trainQueue = [];
+  b.upgrading = null;
+  b.rally = null;
+  b.hp = Math.max(1, Math.min(b.hp, Math.round(b.type.hp * CAPTURE_HP_FRACTION)));
+  game.factions[newFid].buildings.push(b);
+  return b;
+}
+
+// Everything a fallen nation leaves behind. Completed civilian buildings and
+// bridges change hands; fortifications, the ruined seat of government and
+// anything still under construction come down.
+function annexBuildings(game, fallen, victorFid) {
+  let taken = 0;
+  for (const b of [...fallen.buildings]) {
+    const raze = !b.done || CAPTURE_RAZE.includes(b.type.key)
+      || victorFid == null || game.factions[victorFid].eliminated;
+    if (raze) removeBuilding(game, b);
+    else { captureBuilding(game, b, victorFid); taken++; }
+  }
+  return taken;
+}
+
 // Tear down a building, reclaiming 75% of its build cost (rounded up).
 function demolishBuilding(game, b) {
   const refund = {};

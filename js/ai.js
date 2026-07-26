@@ -1,64 +1,39 @@
 'use strict';
-// The AI "goal brain": evolving doctrines (ambitions), world-state re-evaluation,
-// proactive diplomacy and war planning. Mechanisms live in diplomacy.js /
-// factions.js / units.js — this file decides WHEN and WHY to use them.
-// aiTick in factions.js is the executor; it reads its knobs from f.ai here.
+// The AI goal brain: ambition re-evaluation, proactive diplomacy, war waves,
+// expansion, and the bridge/wall engineering the new managers drive.
+//
+// The DECISION layer now lives in js/ai-utility.js (scoring), js/ai-trade.js
+// (trade vs war) and js/ai-combat.js (scouting, war gating). This file keeps
+// the executors those managers call, plus the ambition model that selects a
+// nation's archetype. Mechanisms themselves stay in diplomacy.js / factions.js
+// / units.js — nothing here reaches past f.brain.perception for rival facts.
 
-// ---------- doctrines ----------
-// A doctrine is a nation's current ambition. Doctrines are re-scored against
-// the world state (see reevaluateDoctrine): a rich nation turns mercantile, a
-// threatened one turtles, a dominant one smells conquest. The player never
-// sees the doctrine name — only rumors and visible behavior hint at it.
-const DOCTRINES = {
-  conquest: {   // build a huge army and take the continent
-    armyBase: 4, armyPerPop: 0.45, armyMax: 34, waveFraction: 0.8,
-    buildWeights: { castle: 2, mine: 1.5, farm: 1.2, house: 1.2 },
-    desire: { mine: 2, quarry: 2 }, secondCastlePop: 28,
-    expansionAppetite: 0.9, warRatio: 1.3, peaceWeariness: 20,
-    trainsPrince: false, upgradesEagerly: true,
-    rumor: n => `Travelers report soldiers drilling day and night in ${n}'s fields.`,
-  },
-  prosperity: { // a thriving economy, trade with everyone, race to the Grand Castle
-    armyBase: 2, armyPerPop: 0.15, armyMax: 10, waveFraction: 0,
-    buildWeights: { market: 2, church: 1.5, well: 1.5, house: 1.3, farm: 1.2 },
-    desire: { market: 2, mine: 2 }, pursuesGrand: true,
-    expansionAppetite: 0.5, warRatio: Infinity, peaceWeariness: 10,
-    trainsPrince: true, upgradesEagerly: true,
-    rumor: n => `${n}'s markets are said to overflow with goods.`,
-  },
-  turtle: {     // wall up, stockpile, punish intruders
-    armyBase: 3, armyPerPop: 0.3, armyMax: 16, waveFraction: 0.3,
-    buildWeights: { storehouse: 1.5, quarry: 1.5, house: 1.1 },
-    desire: { quarry: 2, storehouse: 2 }, wallRing: true,
-    expansionAppetite: 0.1, warRatio: Infinity, peaceWeariness: 14,
-    trainsPrince: false, upgradesEagerly: false,
-    rumor: n => `${n}'s masons are quarrying stone at a furious pace.`,
-  },
-  hegemon: {    // webs of alliances; leads coalitions against any runaway power
-    armyBase: 3, armyPerPop: 0.2, armyMax: 14, waveFraction: 0.5,
-    buildWeights: { market: 1.6, church: 1.4, house: 1.3 },
-    desire: {},
-    expansionAppetite: 0.4, warRatio: Infinity, peaceWeariness: 12,
-    trainsPrince: true, upgradesEagerly: false,
-    rumor: n => `${n}'s envoys ride to every court on the continent.`,
-  },
-  raider: {     // short plunder wars: declare, rob, sue for peace with the loot
-    armyBase: 3, armyPerPop: 0.25, armyMax: 18, waveFraction: 0.4,
-    buildWeights: { storehouse: 1.5, mine: 0.5 },
-    desire: { storehouse: 2 }, bandits: 4, plunderGoal: 150,
-    expansionAppetite: 0.6, warRatio: 1.1, peaceWeariness: 12,
-    trainsPrince: false, upgradesEagerly: false,
-    rumor: n => `Riders from ${n} have been seen scouting the roads at dusk.`,
-  },
-};
+// Archetype parameter sets live in js/ai-utility.js as AI_ARCHETYPES; a
+// nation's f.ai.doctrine is the key into that table. The player never sees the
+// name — only rumors and visible behavior hint at it.
+
+// Which ambition a freshly rolled personality leans toward. Because the
+// personality itself is drawn per match (js/factions.js rollPersonalities), the
+// opening line-up of ambitions differs from game to game.
+function seedDoctrine(p) {
+  const score = {
+    aggressor: p.aggression * 2 + p.greed * 0.4 - p.caution,
+    merchant: p.mercantile * 2 + p.greed * 0.3 - p.aggression,
+    turtle: p.caution * 2 - p.aggression * 0.8,
+    raider: p.greed * 1.8 + p.aggression * 0.8 - p.loyalty,
+    hegemon: p.loyalty * 1.8 + p.mercantile * 0.6 - p.aggression * 0.5,
+  };
+  let best = 'turtle';
+  for (const k in score) if (score[k] > score[best]) best = k;
+  return best;
+}
 
 function initFactionAI(f) {
   f.ai = {
-    doctrine: f.personality.aggression > 0.6 ? 'conquest'
-      : f.personality.mercantile > 0.7 ? 'prosperity' : 'turtle',
+    doctrine: seedDoctrine(f.personality),
     doctrineSince: game.time,   // seeded ambitions get the full hysteresis window
 
-    reevalAt: game.time + 15 + Math.random() * 10,
+    reevalAt: game.time + 15 + game.rng() * 10,
     grudge: game.factions.map(() => 0),   // per-rival grievance, decays slowly
     provocation: 0,                       // player-directed; gates wars on 'slanted'
     hurtT: -999,                          // last time we lost a building / the king
@@ -68,12 +43,20 @@ function initFactionAI(f) {
     expansionSite: null,                  // {x, y} anchor for a second build cluster
     expansionPickedAt: -999,
     wallBox: null,                        // frozen wall-ring bounds (turtle doctrine)
-    diploAt: game.time + 8 + Math.random() * 8,
+    diploAt: game.time + 8 + game.rng() * 8,
     eventCooldownUntil: 0,                // min spacing between event cards to the player
     warAt: null,                          // pending war vs the player after an ultimatum
     bridgePlan: null,                     // surveyed water crossing being built
+    expansionBuilt: 0,                    // buildings raised at the current satellite
   };
-  if (f.ai.doctrine === 'turtle') reevaluateDoctrine(f, true);  // cautious seeds re-score
+  // The decision layer. Perception must exist before anything asks a question
+  // about a rival, so it is built first.
+  f.brain = {
+    perception: new AIPerception(f),
+    utility: new AIUtilityEngine(f),
+    trade: new AITradeManager(f),
+    combat: new AICombatManager(f),
+  };
 }
 
 // Nudge a faction to rethink its ambition right now (war, losses, eliminations).
@@ -94,33 +77,47 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ---------- doctrine re-evaluation ----------
 
+// Rescore ambitions against the world AS THIS NATION UNDERSTANDS IT. Every
+// rival term below comes from perception, so a nation that has scouted nobody
+// scores against the neutral prior rather than against the truth.
 function reevaluateDoctrine(f, silent = false) {
-  const ai = f.ai, p = f.personality;
+  const ai = f.ai, p = f.personality, per = f.brain.perception;
   ai.reevalAt = game.time + 60;
   const rivals = game.factions.filter(o => o.id !== f.id && !o.eliminated);
   if (rivals.length === 0) return;
   const myStr = f.strength();
-  const avgStr = rivals.reduce((s, o) => s + o.strength(), 0) / rivals.length;
-  const leader = rivals.reduce((a, b) => (a.strength() > b.strength() ? a : b));
-  const threatNorm = clamp(maxThreatAgainst(f) / Math.max(20, myStr), 0, 1.5);
-  const goldNorm = clamp(estimateIncome(f, 'gold') / 0.6, 0, 1);
+  const believed = rivals.map(o => per.estimatedStrength(o.id).value);
+  const avgStr = believed.reduce((s, v) => s + v, 0) / believed.length;
+  const leaderStr = Math.max(...believed);
+  const threatNorm = clamp(aiMaxThreat(f) / Math.max(20, myStr), 0, 1.5);
+  // How much of that threat do we actually KNOW about? Unknown rivals are
+  // treated as dangerous when picking fights — that is what stops blind
+  // aggression — but a nation should not reorganise its whole ambition around
+  // a neighbour it has never laid eyes on, or every nation turtles forever.
+  const avgConf = rivals.reduce((s, o) => s + per.confidence(o.id), 0) / rivals.length;
+  const goldNorm = clamp((estimateIncome(f, 'gold') + f.nation.pop * f.nation.tax * 0.06) / 0.6, 0, 1);
   const atPeace = !game.diplomacy.atWarAny(f.id);
   const allyCount = game.factions.filter(o => o.id !== f.id && !o.eliminated
-    && game.diplomacy.status(f.id, o.id) === 'alliance').length;
+    && game.diplomacy.status(f.id, o.id) === STATUS.ALLIANCE).length;
   const maxGrudge = Math.max(...ai.grudge);
   const recentlyHurt = game.time - ai.hurtT < 90;
-  const richLootNorm = clamp(Math.max(...rivals.map(o =>
-    o.nation.total('gold') + o.nation.total('food') * 0.3)) / 400, 0, 1);
+  // only loot we have actually laid eyes on tempts a nation into raiding
+  const richLootNorm = clamp(Math.max(0, ...rivals.map(o => per.estimatedLoot(o.id))) / 400, 0, 1);
+  // a shortage we cannot fix at home pushes toward trade or toward taking it
+  const shortage = aiWorstShortage(f);
+  const starvedOfLand = shortage && !shortage.local ? clamp(shortage.utility / 3, 0, 1) : 0;
 
-  const snow = aiSnowballLeader();
+  const snow = aiSnowballLeader(f);
   const score = {
-    conquest: p.aggression * 2 + clamp(myStr / Math.max(1, avgStr) - 1, -1, 1.5)
-      + maxGrudge * 0.02 + (game.diff.warAppetite - 1),
-    prosperity: p.mercantile * 2 + goldNorm + (atPeace ? 0.5 : -0.5) - threatNorm,
-    turtle: threatNorm * 1.8 + (recentlyHurt ? 1.5 : 0) + (1 - p.aggression) * 0.5,
-    hegemon: p.mercantile + allyCount * 0.5 + (leader.strength() > myStr * 1.5 ? 1.4 : 0)
+    aggressor: p.aggression * 2 + clamp(myStr / Math.max(1, avgStr) - 1, -1, 1.5)
+      + maxGrudge * 0.02 + (game.diff.warAppetite - 1) + starvedOfLand * 0.8,
+    merchant: p.mercantile * 2 + goldNorm + (atPeace ? 0.5 : -0.5) - threatNorm
+      + starvedOfLand * 0.5,
+    turtle: threatNorm * (0.5 + 1.5 * avgConf) + (recentlyHurt ? 1.5 : 0)
+      + p.caution * 1.6 - p.aggression * 0.8,
+    hegemon: p.mercantile + p.loyalty + allyCount * 0.5 + (leaderStr > myStr * 1.5 ? 1.4 : 0)
       + (snow >= 0 && snow !== f.id ? 1.2 : 0),   // a runaway power calls for coalitions
-    raider: p.aggression + (goldNorm < 0.3 ? 1 : 0) + richLootNorm,
+    raider: p.aggression + p.greed + (goldNorm < 0.3 ? 1 : 0) + richLootNorm,
   };
   let best = ai.doctrine;
   for (const k in score) if (score[k] > score[best]) best = k;
@@ -130,15 +127,23 @@ function reevaluateDoctrine(f, silent = false) {
   if (game.time - ai.doctrineSince < 90 && !silent) return;
   ai.doctrine = best;
   ai.doctrineSince = game.time;
-  if (!silent) game.log(DOCTRINES[best].rumor(f.name));
+  if (!silent) game.log(AI_ARCHETYPES[best].rumor(f.name));
 }
 
 // ---------- build planning ----------
 // Deficit scoring replaces the old fixed build ladder: targets scale with
 // population and ambition forever, so AI nations never stop growing.
 
+// Keys only, for callers that just want the shortlist.
 function aiBuildWishes(f, counts) {
-  const n = f.nation, prof = DOCTRINES[f.ai.doctrine], pop = n.pop;
+  return aiBuildWishesScored(f, counts).map(x => x[1]);
+}
+
+// [score, key] pairs, highest first. The scores matter: bootstrap bonuses below
+// are how a nation knows a first Castle outranks a fourth storehouse, and a
+// caller that re-ranks by position alone throws that information away.
+function aiBuildWishesScored(f, counts) {
+  const n = f.nation, prof = aiArchetype(f), pop = n.pop;
   const have = k => counts[k] || 0;
   const desired = {
     farm: Math.max(1, Math.ceil((pop * EAT_RATE * 1.3) / (BUILDING_TYPES.farm.rate * BUILDING_TYPES.farm.slots))),
@@ -163,10 +168,20 @@ function aiBuildWishes(f, counts) {
     if (k === 'quarry' && have(k) === 0 && have('lumber') > 0) s += 5;
     if (k === 'house' && n.pop >= n.housingCap() - 2) s += 6;   // growth is blocked right now
     if (k === 'castle' && have('quarry') === 0) s -= 5;         // no stone income yet
+    // without a castle there is no army, no envoy and no tier climb at all
+    if (k === 'castle' && have(k) === 0 && pop >= 14) s += 8;
+    // A resource the land has stopped giving can only come from the market or
+    // from new ground. Both need wanting BEFORE the shortage strands the nation
+    // — a worked-out forest otherwise leaves it unable to afford anything.
+    const dry = aiStructuralShortage(f);
+    if (dry) {
+      if (k === 'market' && have(k) === 0 && n.total('gold') > 120) s += 9;
+      if (k === EXTRACTOR_FOR[dry]) s += 4;
+    }
     scored.push([s, k]);
   }
   scored.sort((a, b) => b[0] - a[0]);
-  return scored.slice(0, 3).map(x => x[1]);
+  return scored.slice(0, 3);
 }
 
 // Prosperity nations race for the Grand Castle — and win the game if it stands.
@@ -188,11 +203,10 @@ function aiStrategy(f) {
   for (let i = 0; i < ai.grudge.length; i++) ai.grudge[i] = Math.max(0, ai.grudge[i] - 0.12);
   ai.provocation = Math.max(0, ai.provocation - 0.02);
   if (game.time >= ai.reevalAt) reevaluateDoctrine(f);
-  aiBuildBridges(f);
-  aiPlanExpansion(f);
-  aiPlanWalls(f);
+  // Bridges, walls and expansion are scheduled by the utility engine now — they
+  // run A* and no longer belong on every single tick (js/ai-utility.js slots).
   if (game.time >= ai.diploAt) {
-    ai.diploAt = game.time + 8 + Math.random() * 7;
+    ai.diploAt = game.time + 8 + game.rng() * 7;
     aiDiplomacy(f);
   }
   // a refused/ignored ultimatum turns into a declared war after the telegraph
@@ -210,7 +224,7 @@ function aiStrategy(f) {
 // each other. (Diplomacy.tick keeps only ambient relations drift.)
 
 function aiDiplomacy(f) {
-  const ai = f.ai, prof = DOCTRINES[ai.doctrine], dip = game.diplomacy, n = f.nation;
+  const ai = f.ai, prof = aiArchetype(f), dip = game.diplomacy, n = f.nation;
   const rivals = game.factions.filter(o => o.id !== f.id && !o.eliminated);
   if (!rivals.length) return;
 
@@ -220,8 +234,9 @@ function aiDiplomacy(f) {
     if (dip.status(f.id, o.id) !== STATUS.WAR) continue;
     const dur = game.time - dip.warSince[f.id][o.id];
     const durLimit = prof.plunderGoal ? 90 : 240;   // raid wars are short by design
-    const losing = f.strength() < o.strength() * 0.8;
-    const winning = f.strength() > o.strength() * 1.5;
+    const theirStr = f.brain.perception.estimatedStrength(o.id).value;
+    const losing = f.strength() < theirStr * 0.8;
+    const winning = f.strength() > theirStr * 1.5;
     if (n.warWeariness > prof.peaceWeariness && (losing || dur > durLimit)
         && (!winning || prof.plunderGoal)) {        // raiders quit while ahead; conquerors don't
       if (o.isPlayer) aiOfferPeaceToPlayer(f);
@@ -242,7 +257,7 @@ function aiDiplomacy(f) {
       const cands = rivals.filter(o => dip.status(f.id, o.id) === STATUS.NEUTRAL
         && !dip.embargoed(f.id, o.id) && !dip.embargoed(o.id, f.id)
         && dip.relation(f.id, o.id) > -5
-        && dip.findMarket(f.id) && dip.findMarket(o.id));
+        && dip.findMarket(f.id) && f.brain.perception.hasMarket(o.id));
       if (cands.length) {
         const best = cands.reduce((a, b) => (dip.relation(f.id, a.id) > dip.relation(f.id, b.id) ? a : b));
         dip.propose(f.id, best.id, 'trade');   // real envoy; silently skipped if none idle
@@ -253,13 +268,13 @@ function aiDiplomacy(f) {
     }
     // gift a looming stronger neighbor to stay off their list
     if (n.res.gold > 200) {
-      const threat = rivals.find(o => o.strength() > f.strength() * 1.3
+      const threat = rivals.find(o => f.brain.perception.threatStrength(o.id) > f.strength() * 1.3
         && dip.status(f.id, o.id) === STATUS.NEUTRAL && dip.relation(f.id, o.id) < 20);
       if (threat) dip.sendGift(f.id, threat.id, 60);
     }
     // merchants and diplomats punish hated rivals — and runaway powers — economically
-    if ((ai.doctrine === 'hegemon' || ai.doctrine === 'prosperity') && Math.random() < 0.4) {
-      const snow = aiSnowballLeader();
+    if ((ai.doctrine === 'hegemon' || ai.doctrine === 'merchant') && game.rng() < 0.4) {
+      const snow = aiSnowballLeader(f);
       const target = rivals.find(o => dip.status(f.id, o.id) !== STATUS.ALLIANCE
         && !dip.embargoed(f.id, o.id)
         && (dip.relation(f.id, o.id) < -35 || o.id === snow));
@@ -268,29 +283,37 @@ function aiDiplomacy(f) {
   }
 
   // 3. rally the player against a runaway power we're already fighting
-  const snowNow = aiSnowballLeader();
+  const snowNow = aiSnowballLeader(f);
   if (snowNow >= 0 && snowNow !== f.id && snowNow !== 0
       && dip.status(f.id, snowNow) === STATUS.WAR && dip.status(0, snowNow) !== STATUS.WAR
       && !game.factions[0].eliminated) {
     aiInviteCoalition(f, snowNow);
   }
 
-  // 4. new wars, per doctrine and difficulty
-  aiConsiderWar(f, rivals);
+  // 4. new wars — gated on a sustained, observed advantage (js/ai-combat.js)
+  f.brain.combat.considerWar(rivals);
 }
 
 // The strongest nation becomes a "snowball leader" once it towers over the
 // runner-up in strength AND holds nearly half the claimed land. Coalitions
 // (paced difficulties only) then form against it.
-function aiSnowballLeader() {
+//
+// Land claims are public — the borders are drawn on everyone's map — but army
+// size is not, so an observing nation judges strength through its own
+// perception. Different nations can therefore disagree about who is running
+// away with the game, which is exactly right.
+function aiSnowballLeader(observer = null) {
   if (!game.diff.coalitions || !game.territory) return -1;
   const alive = game.factions.filter(o => !o.eliminated);
   if (alive.length < 3) return -1;
-  const sorted = [...alive].sort((a, b) => b.strength() - a.strength());
+  const per = observer && observer.brain ? observer.brain.perception : null;
+  const strengthOf = o => (per && o.id !== observer.id
+    ? per.estimatedStrength(o.id).value : o.strength());
+  const sorted = [...alive].sort((a, b) => strengthOf(b) - strengthOf(a));
   const top = sorted[0], second = sorted[1];
   const total = game.territory.claimCount.reduce(
     (s, c, fid) => (game.factions[fid].eliminated ? s : s + c), 0);
-  if (total > 0 && top.strength() > second.strength() * 1.7
+  if (total > 0 && strengthOf(top) > strengthOf(second) * 1.7
       && game.territory.claimCount[top.id] > total * 0.45) return top.id;
   return -1;
 }
@@ -323,44 +346,12 @@ function aiInviteCoalition(f, leaderFid) {
   if (pushed) game.log(`${f.name} pleads for allies against ${leader.name}.`, 'bad');
 }
 
-function aiConsiderWar(f, rivals) {
-  const ai = f.ai, prof = DOCTRINES[ai.doctrine], dip = game.diplomacy;
-  const snow = aiSnowballLeader();
-  // peaceful doctrines never initiate — except hegemons and turtles joining
-  // the coalition against a runaway power
-  const pacifist = prof.warRatio === Infinity;
-  if (pacifist && !(snow >= 0 && snow !== f.id
-      && (ai.doctrine === 'hegemon' || ai.doctrine === 'turtle'))) return;
-  if (game.time < ai.consolidationUntil) return;   // resting after a conquest
-  if (ai.warAt) return;                            // an ultimatum is already ticking
-  if (f.nation.warWeariness > 8 || dip.atWarAny(f.id)) return;   // one war at a time
-  const ratio = prof.warRatio / game.diff.warAppetite;
-  // raiders need loot, conquerors need only a strength edge; others need bad blood
-  const relGate = prof.plunderGoal ? 25 : ai.doctrine === 'conquest' ? 10 : -10;
-  let best = null, bestScore = 0;
-  for (const o of rivals) {
-    const st = dip.status(f.id, o.id);
-    if (st === STATUS.WAR || st === STATUS.ALLIANCE) continue;
-    if (o.isPlayer) {
-      if (game.time < game.diff.playerGrace) continue;
-      if (game.diff.provokedOnly && ai.provocation < 3) continue;
-    }
-    // a runaway power is casus belli for everyone, and worth longer odds
-    const dogpile = o.id === snow;
-    if (pacifist && !dogpile) continue;
-    if (!dogpile && dip.relation(f.id, o.id) > relGate && ai.grudge[o.id] < 5) continue;
-    if (f.strength() <= o.strength() * (dogpile ? Math.min(ratio, 1.4) * 0.6 : ratio)) continue;
-    const reach = aiReachInfo(f, o);
-    if (!reach.reachable && !reach.crossing) continue;   // no route and no way to build one
-    const score = f.strength() / Math.max(1, o.strength())
-      + ai.grudge[o.id] * 0.05 - dip.relation(f.id, o.id) * 0.01
-      + (prof.plunderGoal ? aiLootValue(o) * 0.001 : 0);
-    if (score > bestScore) { bestScore = score; best = o; }
-  }
-  if (!best) return;
-  if (best.isPlayer && game.diff.ultimatums) return aiSendUltimatum(f);
-  dip.declareWar(f.id, best.id);
-}
+// aiConsiderWar moved to AICombatManager.considerWar (js/ai-combat.js). The old
+// version compared f.strength() against a rival's LIVE strength, which is zero
+// for everyone at game start — so the first nation to finish one swordsman
+// found an "advantage" over three empty armies and declared war immediately,
+// every single match. The replacement needs a real army of its own, an estimate
+// drawn from what it has actually seen, and an edge that survives 30 seconds.
 
 // Wars against the player on telegraphed difficulties open with an ultimatum
 // card: pay up, haggle, or refuse and face a declared war 60 seconds later.
@@ -443,16 +434,25 @@ function aiOfferPeaceToPlayer(f) {
 // telegraph), holds, then assaults doctrine-picked objectives.
 
 function aiWarTick(f, enemies) {
-  const ai = f.ai, prof = DOCTRINES[ai.doctrine];
+  const ai = f.ai, prof = aiArchetype(f);
   if (ai.wave) return aiTickWave(f);
   if (prof.waveFraction <= 0) return;   // defensive doctrines hold their ground
   const army = f.armyUnits();
   if (army.length < 6) return;
-  // raiders go for the richest target, everyone else picks on the weakest
-  let target = enemies.reduce((a, b) => (a.strength() < b.strength() ? a : b));
-  if (prof.plunderGoal) target = enemies.reduce((a, b) => (aiLootValue(a) > aiLootValue(b) ? a : b));
-  if (f.strength() < target.strength() * 0.9) return;   // outmatched: defend, don't suicide
-  const th = target.townhall(), myTh = f.townhall();
+  const per = f.brain.perception;
+  // We can only march on somewhere we know about. Raiders go for the richest
+  // remembered hoard, everyone else for whoever we believe is weakest.
+  const reachable = enemies.filter(o => per.knownTownhall(o.id));
+  if (!reachable.length) return;                        // nothing scouted yet — go look
+  let target = reachable.reduce((a, b) =>
+    (per.threatStrength(a.id) < per.threatStrength(b.id) ? a : b));
+  if (prof.plunderGoal) {
+    target = reachable.reduce((a, b) =>
+      (per.estimatedLoot(a.id) > per.estimatedLoot(b.id) ? a : b));
+  }
+  // outmatched by what we believe is over there: defend, don't suicide
+  if (f.strength() < per.threatStrength(target.id) * 0.9) return;
+  const th = per.knownTownhall(target.id), myTh = f.townhall();
   if (!th || !myTh) return;
   // water in the way? engineer a bridge first, march later
   const reach = aiReachInfo(f, target);
@@ -461,10 +461,10 @@ function aiWarTick(f, enemies) {
     return;
   }
   const waveUnits = army.slice(0, Math.max(4, Math.floor(army.length * prof.waveFraction)));
-  const dx = myTh.cx - th.cx, dy = myTh.cy - th.cy;
+  const dx = myTh.cx - th.x, dy = myTh.cy - th.y;
   const d = Math.hypot(dx, dy) || 1;
-  const sx = clamp(Math.round(th.cx + dx / d * 10), 1, MAP_W - 2);
-  const sy = clamp(Math.round(th.cy + dy / d * 10), 1, MAP_H - 2);
+  const sx = clamp(Math.round(th.x + dx / d * 10), 1, MAP_W - 2);
+  const sy = clamp(Math.round(th.y + dy / d * 10), 1, MAP_H - 2);
   ai.wave = { units: waveUnits, size: waveUnits.length, state: 'staging',
     stagePos: [sx, sy], stageUntil: game.time + 20, targetFid: target.id,
     objective: null, deadline: game.time + 300 };
@@ -497,20 +497,34 @@ function aiTickWave(f) {
 // move on the townhall — which conquerors take straight away once the defender
 // is broken.
 function aiPickAssaultTarget(f, target) {
-  const prof = DOCTRINES[f.ai.doctrine];
-  if (prof.warRatio !== Infinity && target.strength() < f.strength() * 0.4) {
-    const th = target.townhall();
+  const prof = aiArchetype(f), per = f.brain.perception;
+  // resolve a remembered position to the building actually standing there;
+  // acting on stale intel means sometimes finding rubble
+  const live = mem => {
+    const b = game.map.buildingAt[game.map.idx(mem.x, mem.y)];
+    return b && b.faction === target.id && b.hp > 0 ? b : null;
+  };
+  if (prof.warRatio !== Infinity && per.threatStrength(target.id) < f.strength() * 0.4) {
+    const known = per.knownTownhall(target.id);
+    const th = known && live(known);
     if (th) return th;
   }
   let best = null, bv = 20;
-  for (const b of target.buildings) {
-    if (!b.done || b.hp <= 0 || !b.type.storage || b.type.key === 'townhall') continue;
-    const v = b.store.food + b.store.wood + b.store.stone + b.store.gold;
+  for (const mem of per.knownBuildings(target.id)) {
+    if (mem.key === 'townhall') continue;
+    const b = live(mem);
+    if (!b || !b.done || !b.type.storage) continue;
+    const s = per.rememberedStore(target.id, mem);
+    const v = s ? s.food + s.wood + s.stone + s.gold : 0;
     if (v > bv) { bv = v; best = b; }
   }
   if (best) return best;
-  const c = target.buildings.find(b => b.type.key === 'castle' && b.hp > 0);
-  return c || target.townhall();
+  for (const mem of per.knownBuildings(target.id, 'castle')) {
+    const b = live(mem);
+    if (b) return b;
+  }
+  const known = per.knownTownhall(target.id);
+  return (known && live(known)) || null;
 }
 
 function aiDisbandWave(f) {
@@ -523,52 +537,132 @@ function aiDisbandWave(f) {
   if (th && survivors.length) formationMove(survivors, Math.floor(th.cx), Math.floor(th.cy));
 }
 
-function aiLootValue(o) {
-  const n = o.nation;
-  return n.total('gold') * 2 + n.total('food') + n.total('wood') + n.total('stone');
+// ---------- expansion ----------
+// Nations spread out to find resources. A satellite is founded when the ground
+// at home stops providing — a forest worked out, no rock in reach, no cave for
+// a mine — and it is a real settlement: the extraction building that fixes the
+// shortage, a storehouse to hold the output, and housing for the workers.
+//
+// Siting only ever considers ground the nation has SEEN (ScoutMemoryMap), so
+// expansion is a reason to scout rather than a reason to read the map.
+
+// Which building pulls a given resource out of the ground.
+const EXTRACTOR_FOR = { wood: 'lumber', stone: 'quarry', gold: 'mine', food: 'farm' };
+const SATELLITE_RADIUS = 9;      // how far from the anchor a satellite may sprawl
+const SATELLITE_PLAN = ['storehouse', 'house'];
+
+// How much of `r` the ground around (x, y) can still yield. Depleted forests
+// score zero — that is the whole point of moving.
+function aiGroundRichness(x, y, r) {
+  const map = game.map;
+  let rich = 0;
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const tx = x + dx, ty = y + dy;
+      if (!map.inBounds(tx, ty)) continue;
+      const tt = map.t(tx, ty);
+      if (tt === T_CAVE) rich += r === 'gold' ? 12 : 3;
+      else if (tt === T_ROCK) rich += r === 'stone' ? 4 : 1;
+      else if (tt === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) rich += r === 'wood' ? 4 : 1;
+      else if (tt === T_WATER && r === 'food') rich += 1.5;
+    }
+  }
+  return rich;
 }
 
-// ---------- expansion ----------
-// Ambitious nations found second clusters at resource-rich ground away from
-// home. Expansionist doctrines bias toward other nations' frontiers — which is
-// what makes claims collide and border disputes happen organically.
+// Buildings of `key` this nation already has within reach of an anchor.
+function aiCountNearSite(f, site, key) {
+  let n = 0;
+  for (const b of f.buildings) {
+    if (b.type.key !== key) continue;
+    if (Math.hypot(b.cx - site.x, b.cy - site.y) <= SATELLITE_RADIUS) n++;
+  }
+  return n;
+}
 
-function aiPlanExpansion(f) {
-  const ai = f.ai, prof = DOCTRINES[ai.doctrine];
-  if (prof.expansionAppetite <= 0.2) return;                 // homebodies stay home
-  if (ai.expansionSite && game.time < ai.expansionPickedAt + 150) return;
-  if (f.nation.pop < 16) return;                             // grow roots first
-  const th = f.townhall();
-  if (!th) return;
-  const t = game.territory;
-  let best = null, bestScore = 2;
-  for (let tries = 0; tries < 50; tries++) {
-    const x = 2 + Math.floor(Math.random() * (MAP_W - 4));
-    const y = 2 + Math.floor(Math.random() * (MAP_H - 4));
-    if (game.map.terrain[game.map.idx(x, y)] !== T_GRASS) continue;
-    const owner = t ? t.ownerAt(x, y) : -1;
-    if (owner === f.id) continue;                            // already ours
-    if (owner >= 0 && game.diplomacy.allied(f.id, owner)) continue;   // don't crowd allies
-    let rich = 0, foreignNear = owner >= 0 ? 1 : 0;
-    for (let dy = -3; dy <= 3; dy++) {
-      for (let dx = -3; dx <= 3; dx++) {
-        const tt = game.map.t(x + dx, y + dy);
-        if (tt === T_CAVE) rich += 4;
-        else if (tt === T_ROCK) rich += 1;
-        else if (tt === T_TREE) rich += 1;
-      }
+function aiFindSpotNearSite(f, typeKey, site) {
+  for (let r = 1; r <= SATELLITE_RADIUS; r++) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const a = game.rng() * Math.PI * 2;
+      const x = Math.round(site.x + Math.cos(a) * r), y = Math.round(site.y + Math.sin(a) * r);
+      if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
     }
+  }
+  return null;
+}
+
+// Returns true when it actually spent resources this tick, so the utility
+// engine can fall through to its next-best investment when it did not.
+function aiPlanExpansion(f, shortage = null) {
+  const ai = f.ai, prof = aiArchetype(f);
+  if (prof.expansionAppetite <= 0.05) return false;
+  if (f.nation.pop < 14) return false;                        // grow roots first
+  const want = shortage && shortage.resource !== 'gold' ? shortage.resource : null;
+
+  const stale = ai.expansionSite && game.time > ai.expansionPickedAt + 180;
+  const dry = ai.expansionSite && want
+    && aiGroundRichness(ai.expansionSite.x, ai.expansionSite.y, want) < 4;
+  if (!ai.expansionSite || stale || dry) {
+    const site = aiPickExpansionSite(f, want);
+    if (site) {
+      ai.expansionSite = site;
+      ai.expansionPickedAt = game.time;
+      ai.expansionBuilt = 0;
+    }
+  }
+  if (!ai.expansionSite) return false;
+  return aiDevelopSatellite(f, ai.expansionSite, want);
+}
+
+function aiPickExpansionSite(f, want) {
+  const prof = aiArchetype(f), th = f.townhall();
+  if (!th) return null;
+  const t = game.territory, mem = f.brain.perception.memory, map = game.map;
+  let best = null, bestScore = 2;
+  for (let tries = 0; tries < 70; tries++) {
+    const x = 2 + Math.floor(game.rng() * (MAP_W - 4));
+    const y = 2 + Math.floor(game.rng() * (MAP_H - 4));
+    if (!mem.isExplored(x, y)) continue;                      // we have never been there
+    if (map.terrain[map.idx(x, y)] !== T_GRASS) continue;
+    const owner = t ? t.ownerAt(x, y) : -1;
+    if (owner === f.id) continue;                             // already ours
+    if (owner >= 0 && game.diplomacy.allied(f.id, owner)) continue;   // don't crowd allies
     const dist = Math.hypot(x - th.cx, y - th.cy);
-    if (dist < 12 || dist > 45) continue;
-    let score = rich - Math.abs(dist - 20) * 0.15;
-    // conquerors and raiders covet contested ground; the cautious avoid it
-    if (foreignNear) score += prof.expansionAppetite > 0.5 ? 3 : -4;
+    if (dist < 10 || dist > 45) continue;
+    // ground is scored for what we came looking for, with a general-purpose
+    // richness term so nations without a specific shortage still spread sensibly
+    let score = aiGroundRichness(x, y, want) * (want ? 1 : 0.7)
+      - Math.abs(dist - 20) * 0.15;
+    // the bold covet contested frontiers; the cautious keep their distance
+    if (owner >= 0) score += prof.expansionAppetite > 0.5 ? 3 : -4 - f.personality.caution * 4;
     if (score > bestScore) { bestScore = score; best = { x, y }; }
   }
-  if (best) {
-    ai.expansionSite = best;
-    ai.expansionPickedAt = game.time;
+  return best;
+}
+
+// Raise one building per call, cheapest-first through the settlement plan.
+function aiDevelopSatellite(f, site, want) {
+  const n = f.nation;
+  const order = [];
+  if (want && EXTRACTOR_FOR[want]) order.push(EXTRACTOR_FOR[want]);
+  order.push(...SATELLITE_PLAN);
+  for (const key of order) {
+    const type = BUILDING_TYPES[key];
+    if (!type || !n.canAfford(type.cost)) continue;
+    if (!f.brain.utility.respectsWoodFloor(key)) continue;
+    const cap = key === 'house' ? 2 : 1;
+    if (aiCountNearSite(f, site, key) >= cap) continue;
+    const spot = aiFindSpotNearSite(f, key, site);
+    if (!spot) continue;
+    n.pay(type.cost);
+    placeBuilding(game, key, spot[0], spot[1], f.id);
+    f.ai.expansionBuilt = (f.ai.expansionBuilt || 0) + 1;
+    if (f.ai.expansionBuilt === 1) {
+      game.log(`Settlers from ${f.name} are breaking ground on new land.`);
+    }
+    return true;
   }
+  return false;
 }
 
 // ---------- turtle wall rings ----------
@@ -576,8 +670,11 @@ function aiPlanExpansion(f) {
 // leaving a gate toward the map's heart and one near their market.
 
 function aiPlanWalls(f) {
-  const prof = DOCTRINES[f.ai.doctrine];
+  const prof = aiArchetype(f);
   if (!prof.wallRing) return;
+  // fortify nothing until there is a garrison to hold it — a turtle that spends
+  // its stone on a wall ring before building a Castle can never train a soldier
+  if (!f.buildings.some(b => b.type.key === 'castle' && b.done && b.hp > 0)) return;
   const n = f.nation;
   if (!n.canAfford(BUILDING_TYPES.gate.cost)) return;   // afford the priciest piece
   // core bounding box; freeze the ring so it stays coherent, expanding only

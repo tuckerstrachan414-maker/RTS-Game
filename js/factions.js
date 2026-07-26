@@ -12,10 +12,12 @@ class Faction {
     this.buildings = [];
     this.units = [];
     this.eliminated = false;
+    this.conqueredBy = null;          // faction that felled our Town Hall; inherits what's left
     this.kingAlive = null;            // null = never had one; true/false once trained
     this.castleTier = 1;              // rises with CASTLE_UPGRADES, gating troop unlocks
-    this.aiT = Math.random() * 2;
-    this.ai = null;                   // goal-brain state, lazily built by initFactionAI (js/ai.js)
+    this.aiT = id * (AI_TICK_PERIOD / 4);   // fixed phase: nations never tick together
+    this.ai = null;                   // ambition state, lazily built by initFactionAI (js/ai.js)
+    this.brain = null;                // perception + utility + trade + combat managers
   }
 
   townhall() { return this.buildings.find(b => b.type.key === 'townhall' && b.hp > 0); }
@@ -97,128 +99,57 @@ class Faction {
 
 // ---------- AI ----------
 
-const AI_PERSONALITIES = [
-  null,                                          // player slot
-  { aggression: 0.8, mercantile: 0.3, label: 'warlike' },     // Crimson
-  { aggression: 0.25, mercantile: 0.9, label: 'mercantile' }, // Violeta
-  { aggression: 0.4, mercantile: 0.5, label: 'cautious' },    // Aurelia
+// Temperaments a rival nation can be born with. Three are drawn (without
+// replacement) and jittered at the start of every match, so the continent is
+// not the same three opponents every game — the warlord next door in one run is
+// a walled-up trader in the next. Rolled from the map seed, so ?seed=N still
+// reproduces the whole setup.
+//   aggression — appetite for war        mercantile — appetite for trade
+//   greed      — pull toward loot/riches caution    — weight on threat & walls
+//   loyalty    — how much it values pacts and alliances holding
+const AI_TEMPERAMENTS = [
+  { label: 'warlike',     aggression: 0.80, mercantile: 0.30, greed: 0.55, caution: 0.20, loyalty: 0.30 },
+  { label: 'mercantile',  aggression: 0.25, mercantile: 0.90, greed: 0.70, caution: 0.50, loyalty: 0.55 },
+  { label: 'cautious',    aggression: 0.40, mercantile: 0.50, greed: 0.40, caution: 0.85, loyalty: 0.60 },
+  { label: 'opportunist', aggression: 0.60, mercantile: 0.55, greed: 0.85, caution: 0.35, loyalty: 0.25 },
+  { label: 'diplomatic',  aggression: 0.30, mercantile: 0.65, greed: 0.45, caution: 0.55, loyalty: 0.90 },
+  { label: 'zealous',     aggression: 0.90, mercantile: 0.15, greed: 0.35, caution: 0.15, loyalty: 0.45 },
 ];
 
+const PERSONALITY_TRAITS = ['aggression', 'mercantile', 'greed', 'caution', 'loyalty'];
+
+// Draw one temperament per AI nation and jitter it. Index 0 is the player slot.
+function rollPersonalities(rng, count) {
+  const pool = AI_TEMPERAMENTS.map(t => ({ ...t }));
+  for (let i = pool.length - 1; i > 0; i--) {          // Fisher-Yates on the seeded rng
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const out = [{ aggression: 0, mercantile: 0.5, greed: 0.5, caution: 0.5, loyalty: 0.5, label: 'you' }];
+  for (let i = 1; i < count; i++) {
+    const base = pool[(i - 1) % pool.length];
+    const p = { label: base.label };
+    for (const k of PERSONALITY_TRAITS) {
+      p[k] = Math.max(0, Math.min(1, base[k] + (rng() - 0.5) * 0.24));
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+// The AI executor. Everything it used to do inline — staffing, building, market
+// orders, army sizing, raiding, war planning — now lives behind the utility
+// engine (js/ai-utility.js), which scores those options against each other
+// instead of running them in a fixed order.
+//
+// Ticks are staggered by a fixed per-faction phase rather than a random one, so
+// the nations stay evenly de-phased and a given seed replays identically.
 function aiTick(f, dt) {
   f.aiT -= dt;
   if (f.aiT > 0) return;
-  f.aiT = 2 + Math.random();
+  f.aiT = AI_TICK_PERIOD;
   if (!f.ai) initFactionAI(f);
-  const n = f.nation;
-  const prof = DOCTRINES[f.ai.doctrine];
-
-  // 0. strategy layer: doctrine re-evaluation, grudge decay (js/ai.js)
-  aiStrategy(f);
-
-  // 1. keep workers assigned: farms staffed first when food is short
-  const foodRate = estimateFoodRate(f);
-  const staffOrder = foodRate < 0
-    ? [...f.buildings].sort((a, b) => (b.type.key === 'farm' ? 1 : 0) - (a.type.key === 'farm' ? 1 : 0))
-    : f.buildings;
-  for (const b of staffOrder) {
-    if (!b.done || !b.type.slots) continue;
-    while (b.workers < b.type.slots && n.idleWorkers() > 0) b.workers++;
-  }
-  // starving with everyone employed: pull a worker off a non-farm to the fields
-  if (foodRate < 0 && n.idleWorkers() === 0) {
-    const donor = f.buildings.find(b => b.workers > 0 && b.type.key !== 'farm');
-    const field = f.buildings.find(b => b.done && b.type.key === 'farm' && b.workers < b.type.slots);
-    if (donor && field) { donor.workers--; field.workers++; }
-  }
-
-  // 2. build: deficit-scored wishes from the doctrine (js/ai.js); try the top
-  // few so an unbuildable first choice doesn't stall growth
-  const counts = {};
-  for (const b of f.buildings) counts[b.type.key] = (counts[b.type.key] || 0) + 1;
-  for (const wish of aiBuildWishes(f, counts)) {
-    if (!n.canAfford(BUILDING_TYPES[wish].cost)) continue;
-    const spot = findBuildSpot(f, wish, f.ai.expansionSite);
-    if (spot) {
-      n.pay(BUILDING_TYPES[wish].cost);
-      placeBuilding(game, wish, spot[0], spot[1], f.id);
-      break;
-    }
-  }
-
-  // 3. market trading: sell gluts, buy shortfalls — creates real price movement
-  if (game.market && f.buildings.some(b => b.type.key === 'market' && b.done)) {
-    for (const r of ['wood', 'stone']) {
-      if (n.total(r) > n.pop * 1.5 + 90) game.market.sell(n, r, 15);
-    }
-    if (n.total('food') > n.pop * 4 + 120) game.market.sell(n, 'food', 15);
-    if (n.total('gold') > 160) {
-      for (const r of ['food', 'wood', 'stone']) {
-        const need = r === 'food' ? n.pop * 2 : 35;
-        if (n.total(r) < need) game.market.buy(n, r, 15);
-      }
-    }
-  }
-
-  // 4. military: army sized by the doctrine's ambition, not a fixed cap
-  const castle = f.buildings.find(b => b.type.key === 'castle' && b.done);
-  const enemies = game.factions.filter(o => !o.eliminated && game.diplomacy.status(f.id, o.id) === 'war');
-  if (castle && castle.trainQueue.length < 2) {
-    const armySize = f.armyUnits().length;
-    const threat = maxThreatAgainst(f);
-    // invest in castle upgrades to unlock stronger troops
-    if (!castle.upgrading && CASTLE_UPGRADES[f.castleTier + 1]
-        && (threat > 25 || prof.upgradesEagerly || n.pop > 22)
-        && n.canAfford(CASTLE_UPGRADES[f.castleTier + 1].cost)) {
-      f.startCastleUpgrade();
-    }
-    const wantArmy = Math.min(prof.armyMax,
-      Math.round((prof.armyBase + threat * 0.12 + n.pop * prof.armyPerPop) * game.diff.armyMul));
-    if (armySize < wantArmy && n.total('food') > 60) {
-      const pool = ['sword', 'spear', 'archer', 'sword', 'shield', 'crossbow', 'halberd', 'cavalier']
-        .filter(k => UNIT_TYPES[k].tier <= f.castleTier);
-      const pick = pool[Math.floor(Math.random() * pool.length)];
-      f.trainUnit(pick);
-    } else {
-      // diplomats keep an envoy ready; raiders keep a stable of bandits
-      if (prof.trainsPrince && !f.units.some(u => u.alive && u.type.envoy)
-          && !castle.trainQueue.some(q => q.unitKey === 'prince') && n.total('gold') > 60) {
-        f.trainUnit('prince');
-      }
-      const banditWant = prof.bandits || (enemies.length && f.personality.aggression >= 0.4 ? 2 : 0);
-      if (banditWant && n.total('food') > 40) {
-        const bandits = f.units.filter(u => u.alive && u.type.robber).length;
-        if (bandits < banditWant && Math.random() < 0.5) f.trainUnit('bandit');
-      }
-    }
-  }
-  if (prof.pursuesGrand) aiPursueGrand(f);
-
-  // 5. raiders: send bandits to rob the richest enemy storehouse
-  if (enemies.length) {
-    for (const bnd of f.units) {
-      if (bnd.alive && bnd.type.robber && !bnd.mission && bnd.carryTotal() === 0) {
-        const tgt = richestEnemyStorage(enemies);
-        if (tgt) bnd.orderRob(tgt);
-      }
-    }
-  }
-
-  // 6. war behavior: staged attack waves planned by the doctrine (js/ai.js)
-  if (enemies.length) {
-    aiWarTick(f, enemies);
-  } else if (f.ai.wave) {
-    aiDisbandWave(f);
-  } else {
-    // peacetime: rally army near townhall
-    const th = f.townhall();
-    if (th) {
-      for (const u of f.armyUnits()) {
-        if (!u.target && u.path.length === 0 && Math.hypot(u.x - th.cx, u.y - th.cy) > 8) {
-          u.orderMove(Math.floor(th.cx) + (Math.random() * 6 - 3 | 0), Math.floor(th.cy) + (Math.random() * 6 - 3 | 0));
-        }
-      }
-    }
-  }
+  f.brain.utility.tick();
 }
 
 function estimateFoodRate(f) {
@@ -229,28 +160,9 @@ function estimateFoodRate(f) {
   return rate;
 }
 
-function richestEnemyStorage(enemies) {
-  let best = null, bv = 15;
-  for (const o of enemies) {
-    for (const b of o.buildings) {
-      if (!b.done || b.hp <= 0 || !b.type.storage) continue;
-      const v = b.store.food + b.store.wood + b.store.stone + b.store.gold;
-      if (v > bv) { bv = v; best = b; }
-    }
-  }
-  return best;
-}
-
-function maxThreatAgainst(f) {
-  let worst = 0;
-  for (const o of game.factions) {
-    if (o.id === f.id || o.eliminated) continue;
-    const st = game.diplomacy.status(f.id, o.id);
-    if (st === 'war') worst = Math.max(worst, o.strength() * 1.5);
-    else if (st === 'neutral') worst = Math.max(worst, o.strength() * 0.5);
-  }
-  return worst;
-}
+// richestEnemyStorage and maxThreatAgainst are gone: both read every rival's
+// live contents and army value. Their replacements answer from memory —
+// AIPerception.richestKnownStore and aiMaxThreat (js/ai-utility.js).
 
 // Find a valid spot for a building near an anchor (spiral search). Resource and
 // storage buildings prefer the faction's expansion site when one is set, so new

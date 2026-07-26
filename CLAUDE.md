@@ -43,8 +43,14 @@ the code; stale docs are treated as bugs.
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
 - `js/events.js` — event-card queue (AI-initiated player choices, expiry)
 - `js/territory.js` — per-tile influence/ownership, contested borders, disputes
-- `js/ai.js` — AI goal brain: doctrines (`f.ai`), re-evaluation, proactive
-  diplomacy, war waves, bridge/wall engineering, coalitions
+- `js/ai.js` — ambitions (`f.ai`), re-evaluation, proactive diplomacy, war
+  waves, expansion, bridge/wall engineering, coalitions
+- `js/ai-perception.js` — `AIPerception` + `ScoutMemoryMap`: everything an AI
+  knows about rivals, written only by observation
+- `js/ai-utility.js` — `AIUtilityEngine`, `AI_ARCHETYPES`,
+  `calculateMarginalUtility`, the day/night tax controller
+- `js/ai-trade.js` — `AITradeManager`, `evaluateWarVersusTrade`
+- `js/ai-combat.js` — `AICombatManager`: scouting, army, defence, war gating
 - `js/ui.js` — rendering, input (mouse + touch), HUD, panels, minimap, event card
 - `js/main.js` — Game class, fixed-timestep loop (SIM_DT 0.1), victory, loot
   piles, `DIFFICULTIES` + pre-game difficulty overlay
@@ -53,10 +59,11 @@ the code; stale docs are treated as bugs.
 
 - `nation.res.gold -= x` works — it's a Proxy that withdraws from physical
   building stores (Town Hall drained first, Storehouses filled first).
-- `estimateIncome` in `js/ui.js` deliberately re-implements
+- `estimateIncome` (now in `js/economy.js`) deliberately re-implements
   `buildingProduction` math because the real function mutates tree tiles.
-  Change production math in BOTH places (they've already drifted once — see
-  BUGS #6).
+  Change production math in BOTH places — they drifted once already (BUGS #6,
+  fixed), and the AI reads this number to decide whether a shortage is
+  structural.
 - `trainUnit` / `startCastleUpgrade` return error *strings*, not exceptions.
 - Bridges live in `map.bridge`, not `map.buildingAt` — they're terrain, not
   targetable buildings.
@@ -67,10 +74,17 @@ the code; stale docs are treated as bugs.
   must pass `?difficulty=ramped|slanted|ruthless` in the URL or `game` stays
   null behind the `#difficulty` overlay.
 - All AI *initiative* (wars, pacts, gifts, embargoes, peace) lives in
-  `js/ai.js`; `Diplomacy.tick` is ambient relations drift only. Don't add AI
-  decision-making back into diplomacy.js.
-- `aiTick` reads every knob from `f.ai` (doctrine) and `game.diff`
-  (difficulty). Personality (`AI_PERSONALITIES`) is static seed data — don't
-  mutate it; mutate the doctrine instead.
+  `js/ai.js` and the `js/ai-*.js` managers; `Diplomacy.tick` is ambient
+  relations drift only. Don't add AI decision-making back into diplomacy.js.
+- **The AI must not read live rival state.** Army sizes, store contents and
+  building positions come from `f.brain.perception` only. Public knowledge —
+  the diplomacy matrices, market prices, drawn territory borders, and a
+  nation's own state — is fair game. There is a list of the reads that were
+  removed in `docs/FEATURES.md`; don't reintroduce them.
+- `aiTick` is a thin dispatcher into `f.brain.utility.tick()`. Knobs come from
+  `AI_ARCHETYPES` (keyed by `f.ai.doctrine`) and `game.diff`. Personality is
+  rolled per match by `rollPersonalities` — don't mutate it; mutate the
+  ambition instead.
+- Use `game.rng()` in AI code, not `Math.random()`, so seeds replay.
 - Verification pattern (headless Playwright driving `game.tick(0.1)` loops) is
   documented at the bottom of `docs/formations-tiers-ui.md`.

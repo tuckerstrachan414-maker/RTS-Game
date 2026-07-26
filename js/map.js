@@ -3,6 +3,9 @@
 
 const T_GRASS = 0, T_WATER = 1, T_TREE = 2, T_ROCK = 3, T_CAVE = 4;
 const MAP_W = 96, MAP_H = 96;
+// Walkable tiles a nation must be able to reach from its start, or the map
+// generator cuts it a track out (see connectStartZones).
+const MIN_START_REGION = 500;
 
 function mulberry32(seed) {
   return function () {
@@ -93,6 +96,156 @@ class GameMap {
       this.plant(rng, cx, cy, T_ROCK, 5, 5, 7);
       this.plant(rng, cx, cy, T_CAVE, 1, 5, 7);
     }
+    this.connectStartZones();
+  }
+
+  // Terrain-only walkability. Used during generation, before any building exists.
+  openAt(x, y) { return this.inBounds(x, y) && this.terrain[this.idx(x, y)] === T_GRASS; }
+
+  // Flood the contiguous walkable region containing (sx, sy), stopping early
+  // once `limit` tiles have been found.
+  floodRegion(sx, sy, limit = Infinity) {
+    const seen = new Set();
+    if (!this.openAt(sx, sy)) return seen;
+    const q = [[sx, sy]];
+    seen.add(this.idx(sx, sy));
+    while (q.length && seen.size < limit) {
+      const [x, y] = q.pop();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (!this.openAt(nx, ny)) continue;
+        const i = this.idx(nx, ny);
+        if (seen.has(i)) continue;
+        seen.add(i);
+        q.push([nx, ny]);
+      }
+    }
+    return seen;
+  }
+
+  // Tiles of a track between two points, stepping one axis at a time. A
+  // straight-line rasterisation would step diagonally, and pathfinding here is
+  // 4-directional — a diagonal chain of tiles is not a route anyone can walk.
+  linePath(x0, y0, x1, y1) {
+    const tiles = [[x0, y0]];
+    let x = x0, y = y0;
+    while (x !== x1 || y !== y1) {
+      if (Math.abs(x1 - x) >= Math.abs(y1 - y)) x += Math.sign(x1 - x);
+      else y += Math.sign(y1 - y);
+      tiles.push([x, y]);
+    }
+    return tiles;
+  }
+
+  // How expensive is a track between these points? Forest and rock are free to
+  // cut; water has to be filled into an isthmus, so routes needing less of it
+  // win. Caves are too valuable to bulldoze, so a route through one is rejected.
+  lineCost(x0, y0, x1, y1) {
+    let water = 0;
+    for (const [x, y] of this.linePath(x0, y0, x1, y1)) {
+      if (!this.inBounds(x, y)) return null;
+      const t = this.terrain[this.idx(x, y)];
+      if (t === T_CAVE) return null;
+      if (t === T_WATER) water++;
+    }
+    return water;
+  }
+
+  // Cut the track, filling water as it goes.
+  carveLine(x0, y0, x1, y1) {
+    for (const [x, y] of this.linePath(x0, y0, x1, y1)) {
+      if (!this.inBounds(x, y)) continue;
+      const i = this.idx(x, y);
+      if (this.terrain[i] === T_CAVE || this.terrain[i] === T_GRASS) continue;
+      this.terrain[i] = T_GRASS;
+      this.decor[i] = -1;
+      this.treeWood[i] = 0;
+    }
+  }
+
+  // A cut-off start zone is a prison. The clearing above stamps a 7x7 square of
+  // grass wherever the quadrant centre lands — including in the middle of a
+  // lake — and then plants trees and rocks in the ring just outside it. The
+  // result can be an island: a nation with ~46 walkable tiles that can never
+  // scout, expand, trade overland, attack, or be attacked for the whole match.
+  // Guarantee every start reaches real country by cutting the cheapest track to
+  // the nearest large region, filling water into an isthmus where it must.
+  connectStartZones() {
+    for (const z of this.startZones) {
+      const home = this.floodRegion(z.x, z.y, MIN_START_REGION + 1);
+      if (home.size > MIN_START_REGION) continue;
+      let best = null;
+      for (let r = 4; r < 45; r++) {
+        for (let a = 0; a < 64; a++) {
+          const ang = a / 64 * Math.PI * 2;
+          const x = Math.round(z.x + Math.cos(ang) * r), y = Math.round(z.y + Math.sin(ang) * r);
+          if (!this.openAt(x, y) || home.has(this.idx(x, y))) continue;
+          const water = this.lineCost(z.x, z.y, x, y);
+          if (water === null) continue;
+          if (this.floodRegion(x, y, MIN_START_REGION + 1).size <= MIN_START_REGION) continue;
+          if (!best || water < best.water) best = { x, y, water };
+          if (best.water === 0) break;
+        }
+        // a dry route is ideal, but keep widening the search a little in case a
+        // much shorter crossing lies just beyond the first one found
+        if (best && (best.water === 0 || r > 20)) break;
+      }
+      if (best) this.carveLine(z.x, z.y, best.x, best.y);
+    }
+    this.linkStartZones();
+  }
+
+  // Every nation must be able to walk to every other. Quadrant centres can land
+  // on separate landmasses, and when they do those nations are invisible to each
+  // other forever: no scouting, no overland trade, no expansion toward each
+  // other, and no war — aiReachInfo (js/ai.js) refuses a campaign it cannot
+  // path, and aiFindCrossing only bridges channels up to 16 tiles wide. Rather
+  // than a canal-straight highway, link them at the NARROWEST crossing so the
+  // result reads as an isthmus.
+  linkStartZones() {
+    for (let i = 1; i < this.startZones.length; i++) {
+      const home = this.floodRegion(this.startZones[0].x, this.startZones[0].y);
+      const z = this.startZones[i];
+      if (home.has(this.idx(z.x, z.y))) continue;
+      this.carveShortestLink(z, home);
+    }
+  }
+
+  // Dijkstra from a start zone to the nearest tile of `targetSet`. Existing
+  // grass is nearly free, forest and rock cost a little (they can be cut), water
+  // costs a lot (it has to be filled), and caves are never touched — so the
+  // route hugs the land and crosses at the tightest gap it can find.
+  carveShortestLink(z, targetSet) {
+    const N = MAP_W * MAP_H;
+    const dist = new Float32Array(N).fill(Infinity);
+    const prev = new Int32Array(N).fill(-1);
+    const heap = new MinHeap();
+    const start = this.idx(z.x, z.y);
+    dist[start] = 0;
+    heap.push(0, start);
+    let goal = -1;
+    while (heap.size()) {
+      const i = heap.pop();
+      if (targetSet.has(i)) { goal = i; break; }
+      const d = dist[i];
+      const x = i % MAP_W, y = (i / MAP_W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (!this.inBounds(nx, ny)) continue;
+        const j = this.idx(nx, ny), t = this.terrain[j];
+        if (t === T_CAVE) continue;
+        const nd = d + (t === T_GRASS ? 0.1 : t === T_WATER ? 6 : 1);
+        if (nd < dist[j]) { dist[j] = nd; prev[j] = i; heap.push(nd, j); }
+      }
+    }
+    if (goal < 0) return false;
+    for (let i = goal; i !== -1; i = prev[i]) {
+      if (this.terrain[i] === T_GRASS) continue;
+      this.terrain[i] = T_GRASS;
+      this.decor[i] = -1;
+      this.treeWood[i] = 0;
+    }
+    return true;
   }
 
   plant(rng, cx, cy, type, count, rMin, rMax) {

@@ -129,7 +129,8 @@ class Diplomacy {
     if (na.res.gold < cost) return `Peace requires ${cost} gold in reparations`;
     // AI accepts if not clearly winning
     const them = game.factions[b], us = game.factions[a];
-    if (!them.isPlayer && them.strength() > us.strength() * 1.6 && them.nation.warWeariness < 15) return `${them.name} smells victory and refuses`;
+    const seenUs = them.brain ? them.brain.perception.estimatedStrength(a).value : us.strength();
+    if (!them.isPlayer && them.strength() > seenUs * 1.6 && them.nation.warWeariness < 15) return `${them.name} smells victory and refuses`;
     na.res.gold -= cost;
     them.nation.res.gold += cost;
     this.setStatus(a, b, STATUS.NEUTRAL);
@@ -299,8 +300,10 @@ class Diplomacy {
         // them or gift them to stay off their list
         if (st === STATUS.NEUTRAL) {
           const hungry = f.personality.aggression > 0.6
-            || (f.ai && (f.ai.doctrine === 'conquest' || f.ai.doctrine === 'raider'));
-          const covets = hungry && f.strength() > game.factions[b].strength();
+            || (f.ai && (f.ai.doctrine === 'aggressor' || f.ai.doctrine === 'raider'));
+          const seen = f.brain ? f.brain.perception.estimatedStrength(b).value
+            : game.factions[b].strength();
+          const covets = hungry && f.strength() > seen;
           this.addRel(a, b, covets ? -0.35 : this.rel[a][b] < 0 ? 0.15 : 0.05);
         }
       }

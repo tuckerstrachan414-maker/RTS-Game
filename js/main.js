@@ -47,8 +47,13 @@ class Game {
     this.msgs = [];
     this.events = [];     // pending player choice-cards (js/events.js)
     this.market = new Market();
+    // Seeded stream for every AI decision, derived from (but not shared with)
+    // the map generator: personalities, tick jitter and the utility engine all
+    // draw from it, so ?seed=N replays the opponents as well as the terrain.
+    this.rng = mulberry32((seed | 0) ^ 0x5f3a7c1d);
+    const personalities = rollPersonalities(this.rng, 4);
     for (let i = 0; i < 4; i++) {
-      this.factions.push(new Faction(i, i === 0, AI_PERSONALITIES[i] || { aggression: 0, mercantile: 0.5, label: 'you' }));
+      this.factions.push(new Faction(i, i === 0, personalities[i]));
     }
     this.diplomacy = new Diplomacy(4);
     this.territory = new Territory(4);
@@ -180,8 +185,16 @@ class Game {
       if (!f.townhall()) {
         f.eliminated = true;
         f.units = [];
-        for (const b of [...f.buildings]) removeBuilding(this, b);
+        // a conquered nation is absorbed, not erased: its farms, mines, markets
+        // and full storehouses pass to whoever felled its Town Hall
+        const victorFid = f.conqueredBy;
+        const taken = annexBuildings(this, f, victorFid);
         this.log(`The nation of ${f.name} has fallen!`, f.isPlayer ? 'bad' : '');
+        if (taken > 0) {
+          const victor = this.factions[victorFid];
+          this.log(`${victor.name} annexes ${taken} of ${f.name}'s buildings.`,
+            victor.isPlayer ? 'good' : f.isPlayer ? 'bad' : '');
+        }
         for (let o = 0; o < 4; o++) if (o !== f.id) this.diplomacy.cancelRoute(f.id, o);
         // the world reshapes: every survivor rethinks its ambitions
         for (const o of this.factions) if (!o.eliminated) aiPoke(o.id);
@@ -259,6 +272,9 @@ function onBuildingDestroyed(b, attacker) {
     // rests and digests instead of rolling straight into the next war
     if (b.type.key === 'townhall' && attacker.faction !== b.faction) {
       const victor = game.factions[attacker.faction];
+      // remember who struck the seat of government down — checkVictory hands
+      // that nation whatever the fallen one still owns
+      game.factions[b.faction].conqueredBy = attacker.faction;
       if (victor.ai && game.diff.consolidation) {
         victor.ai.consolidationUntil = game.time + game.diff.consolidation;
         game.log(`${victor.name}'s armies rest and garrison their conquests.`);
