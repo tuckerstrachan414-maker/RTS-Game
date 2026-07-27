@@ -64,11 +64,23 @@ happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, a
 the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
-**Walls and gates build into one structure.** Drag to lay a line (walls also
-snap to 45° diagonals) and the segments knit together — east–west and
-north–south alike — with towers rising at corners, junctions and ends. Drop a
-Gate anywhere in a run and it takes the run's direction, an archway set into
-the wall rather than a gap in it.
+**Box-select works on buildings too.** Drag a selection box like you would over
+an army; if it catches no units, it grabs every building inside instead (troops
+in the box always win — buildings are only picked up when the box has no
+units in it). With one or more of your own buildings selected, use **Copy**
+to copy the type(s) and layout, then pan the camera and click **Paste** to
+stamp a copy at the center of the screen (Ctrl+C / Delete also work from the
+keyboard). **Delete All** tears every selected building down for the same 75%
+refund as Demolish.
+
+**Walls and gates build into one structure.** Click-and-hold, then drag to lay
+a line (walls also snap to 45° diagonals) — the whole run shows as a
+translucent preview while you drag, so you can see exactly what will be built
+before you commit. Release to place it all at once; nothing is built or paid
+for until you let go. The segments knit together — east–west and north–south
+alike — with towers rising at corners, junctions and ends. Drop a Gate
+anywhere in a run and it takes the run's direction, an archway set into the
+wall rather than a gap in it.
 
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
@@ -204,15 +216,22 @@ while it's up. From there: Diplomacy, Select Army (grabs your whole standing
 army), game **Speed** (1x/2x/3x), Hide UI, and New Game.
 
 **Controls (desktop):** WASD/arrows pan (Shift = faster) · wheel zooms ·
-left-click/drag selects · right-click moves/attacks — or, with bandits selected,
-sends them to rob an enemy storehouse; sets rally with a Castle selected ·
-Shift+click places multiple buildings · R rotates a bridge while placing ·
-Esc cancels placement / clears selection / closes menus.
+left-click/drag selects an army, or buildings if the box has no units in it ·
+right-click moves/attacks — or, with bandits selected, sends them to rob an
+enemy storehouse; sets rally with a Castle selected · click-and-hold then drag
+to lay a wall/gate/bridge run, shown as a preview until you release · Shift+click
+places multiple buildings · R rotates a bridge while placing · Ctrl+C copies
+selected building(s) (then click Paste, or press it again, to stamp another) ·
+Delete/Backspace removes selected building(s) for a 75% refund · Esc cancels
+placement or a pending paste / clears selection / closes menus.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
 anyway" to dismiss the rotate hint). One-finger drag pans · pinch zooms · tap selects
-or places · hold-and-drag box-selects an army · **double-tap** (or two-finger tap)
-moves/attacks/robs or sets a rally.
+or places · hold-and-drag box-selects an army, or buildings if none are caught ·
+holding while placing a wall/gate/bridge previews the run until you lift your
+finger · **double-tap** (or two-finger tap) moves/attacks/robs or sets a rally.
+With buildings selected, use the panel's **Copy**/**Paste** and **Demolish**/
+**Delete All** buttons.
 
 **Hide UI** (Menu → Hide UI, or press H) clears every panel off the screen to
 watch the battle; tap the 👁 eye to bring the interface back. Each HUD panel

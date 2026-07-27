@@ -29,10 +29,11 @@ class UI {
     this.ctx.imageSmoothingEnabled = false;
     this.cam = { x: 0, y: 0, zoom: 2 };
     this.mouse = { x: 0, y: 0, down: false, dragStart: null };
-    this.selection = { units: [], building: null };
+    this.selection = { units: [], building: null, buildings: [] };
     this.placing = null;            // building type key while placing
     this.placeVertical = false;     // bridge orientation while placing (false=H, true=V)
-    this.paint = null;              // active click-drag "draw a line of walls/bridges" state
+    this.paint = null;              // active click-drag "draw a line of walls/bridges" state: {anchor,line,horizontal}
+    this.copyBuffer = null;         // {parts:[{key,dx,dy}...]} while a copied building group awaits Paste
     this.paused = false;            // pause menu open → sim frozen
     this.keys = {};
     this.minimapT = 0;
@@ -83,11 +84,22 @@ class UI {
       this.keys[e.key.toLowerCase()] = true;
       if (e.key === 'Escape') {
         if (this.paused) { this.closePause(); return; }
+        if (this.copyBuffer) { this.copyBuffer = null; return; }
         if (this.placing) { this.placing = null; return; }
         this.clearSelection(); this.closeDiplomacy();
       }
       if (e.key.toLowerCase() === 'r' && this.placing) this.rotatePlacing();
       if (e.key.toLowerCase() === 'h') document.body.classList.toggle('ui-hidden');
+      const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+      if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'
+          && (this.selection.buildings.length || (this.selection.building && this.selection.building.faction === 0))) {
+        e.preventDefault();
+        this.copySelected();
+      }
+      if (!typing && (e.key === 'Delete' || e.key === 'Backspace')) {
+        if (this.selection.buildings.length) { e.preventDefault(); this.deleteSelectedBuildings(); }
+        else if (this.selection.building && this.selection.building.faction === 0) { e.preventDefault(); this.demolishSelected(); }
+      }
     });
     window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
     c.addEventListener('contextmenu', e => e.preventDefault());
@@ -117,6 +129,7 @@ class UI {
         this.mouse.dragStart = [e.offsetX, e.offsetY];
       } else if (e.button === 2) {
         if (this.placing) { this.placing = null; return; }
+        if (this.copyBuffer) { this.copyBuffer = null; return; }
         this.rightClick(e.offsetX, e.offsetY);
       }
     });
@@ -353,12 +366,12 @@ class UI {
     this.clampCam();
   }
 
-  clearSelection() { this.selection.units = []; this.selection.building = null; this.refreshPanel(); }
+  clearSelection() { this.selection.units = []; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); }
 
   selectArmy() {
     const units = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy);
     if (units.length === 0) { game.log('No army to select.'); return; }
-    this.selection.units = units; this.selection.building = null;
+    this.selection.units = units; this.selection.building = null; this.selection.buildings = [];
     this.refreshPanel();
   }
 
@@ -371,19 +384,33 @@ class UI {
       const d = Math.hypot(u.x - wx, u.y - wy + 0.3);
       if (d < bestD) { best = u; bestD = d; }
     }
-    if (best) { this.selection.units = [best]; this.selection.building = null; this.refreshPanel(); return; }
+    if (best) { this.selection.units = [best]; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); return; }
     const [tx, ty] = [Math.floor(wx), Math.floor(wy)];
     const b = game.map.inBounds(tx, ty) ? game.map.buildingAt[game.map.idx(tx, ty)] : null;
-    if (b) { this.selection.building = b; this.selection.units = []; this.refreshPanel(); return; }
+    if (b) { this.selection.building = b; this.selection.units = []; this.selection.buildings = []; this.refreshPanel(); return; }
     this.clearSelection();
   }
 
+  // Drag-box select. Troops take priority: if any of the player's units fall inside the
+  // box, buildings inside the same box are ignored. Only when the box contains no units
+  // does it fall back to picking up the player's buildings for copy/delete.
   boxSelect(x0, y0, x1, y1) {
     const [wx0, wy0] = this.screenToWorld(Math.min(x0, x1), Math.min(y0, y1));
     const [wx1, wy1] = this.screenToWorld(Math.max(x0, x1), Math.max(y0, y1));
     const picked = game.factions[0].units.filter(u =>
       u.alive && !u.mission && u.x >= wx0 && u.x <= wx1 && u.y >= wy0 && u.y <= wy1);
-    if (picked.length) { this.selection.units = picked; this.selection.building = null; }
+    if (picked.length) {
+      this.selection.units = picked; this.selection.building = null; this.selection.buildings = [];
+      this.refreshPanel();
+      return;
+    }
+    const buildings = game.factions[0].buildings.filter(b =>
+      b.x + b.type.size > wx0 && b.x < wx1 && b.y + b.type.size > wy0 && b.y < wy1);
+    if (buildings.length) {
+      this.selection.buildings = buildings;
+      this.selection.building = buildings.length === 1 ? buildings[0] : null;
+      this.selection.units = [];
+    }
     this.refreshPanel();
   }
 
@@ -456,10 +483,11 @@ class UI {
 
   // Straight axis-locked run: whichever of dx/dy is larger wins, so a drag lays a clean
   // line of segments rather than an L-shaped scribble. Bridges auto-face along that run.
+  // Nothing is placed while dragging — the run is only a preview (drawPaintPreview) until
+  // the mouse/touch is released (endPaint), so the player can freely reposition it first.
   beginPaint() {
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
-    this.paint = { anchor: [tx, ty], done: new Set(), horizontal: true };
-    this.paintTo(tx, ty);
+    this.paint = { anchor: [tx, ty], line: [[tx, ty]], horizontal: true };
   }
 
   // Snap the drag to a straight run anchored at the start tile: horizontal, vertical, or — for
@@ -477,26 +505,25 @@ class UI {
     if (mode === 'horiz') for (let x = 0; x <= adx; x++) line.push([ax + sx * x, ay]);
     else if (mode === 'vert') for (let y = 0; y <= ady; y++) line.push([ax, ay + sy * y]);
     else { const n = Math.min(adx, ady); for (let k = 0; k <= n; k++) line.push([ax + sx * k, ay + sy * k]); }
-    const horizontal = mode !== 'vert';   // only used for bridge orientation (bridges never diagonal)
-    this.paint.horizontal = horizontal;
-    for (const [x, y] of line) this.paintPlace(x, y, horizontal);
+    this.paint.horizontal = mode !== 'vert';   // only used for bridge orientation (bridges never diagonal)
+    this.paint.line = line;
   }
 
-  paintPlace(tx, ty, horizontal) {
-    const kkey = tx + ',' + ty;
-    if (this.paint.done.has(kkey)) return;
-    this.paint.done.add(kkey);
-    const key = this.placing;
-    const type = BUILDING_TYPES[key];
-    if (!canPlace(game.map, key, tx, ty, 0)) return;               // skip blocked tiles silently
-    const nation = game.factions[0].nation;
-    if (!nation.canAfford(type.cost)) return;                       // stop spending when broke
-    nation.pay(type.cost);
-    const orient = key === 'bridge' ? (horizontal ? 1 : 2) : 1;
-    placeBuilding(game, key, tx, ty, 0, orient);
-  }
-
+  // Commit the previewed run: pay and place every valid, affordable tile in the line,
+  // in drag order, stopping silently on blocked tiles or once resources run out.
   endPaint() {
+    if (this.paint) {
+      const key = this.placing;
+      const type = BUILDING_TYPES[key];
+      const nation = game.factions[0].nation;
+      for (const [x, y] of this.paint.line) {
+        if (!canPlace(game.map, key, x, y, 0)) continue;
+        if (!nation.canAfford(type.cost)) break;
+        nation.pay(type.cost);
+        const orient = key === 'bridge' ? (this.paint.horizontal ? 1 : 2) : 1;
+        placeBuilding(game, key, x, y, 0, orient);
+      }
+    }
     this.paint = null;
     if (!this.keys['shift']) this.placing = null;
   }
@@ -524,6 +551,56 @@ class UI {
     this.clearSelection();
   }
 
+  // Box-selected buildings, all at once: same 75% refund as demolishSelected.
+  deleteSelectedBuildings() {
+    const own = this.selection.buildings.filter(b => b.faction === 0 && b.type.key !== 'townhall');
+    if (!own.length) return;
+    const total = {};
+    for (const b of own) {
+      const refund = demolishBuilding(game, b);
+      for (const r in refund) total[r] = (total[r] || 0) + refund[r];
+    }
+    const parts = Object.entries(total).filter(([, v]) => v > 0)
+      .map(([r, v]) => `${icon(r)}${v}`).join(' ');
+    game.log(`${own.length} building${own.length > 1 ? 's' : ''} demolished${parts ? ' — reclaimed ' + parts : ''}.`, 'good');
+    this.clearSelection();
+  }
+
+  // ---------- copy / paste buildings ----------
+  // Copies the current selection's building type(s) and their relative layout into
+  // copyBuffer. The preview is locked to the centre of the screen (drawPastePreview) —
+  // pan the camera to line it up, then click Paste (or press it again to stamp more).
+  copySelected() {
+    const list = this.selection.buildings.length ? this.selection.buildings
+      : (this.selection.building ? [this.selection.building] : []);
+    const own = list.filter(b => b.faction === 0 && b.type.key !== 'townhall');
+    if (!own.length) { game.log('Nothing to copy.', 'bad'); return; }
+    const minX = Math.min(...own.map(b => b.x)), minY = Math.min(...own.map(b => b.y));
+    this.copyBuffer = { parts: own.map(b => ({ key: b.type.key, dx: b.x - minX, dy: b.y - minY })) };
+    this.placing = null; this.paint = null;
+    game.log(`Copied ${own.length} building${own.length > 1 ? 's' : ''} — pan the map and click Paste.`, 'good');
+  }
+
+  // Stamps the copied buildings centred on the current screen, skipping any tile that's
+  // blocked or unaffordable rather than failing the whole paste.
+  pasteBuffer() {
+    if (!this.copyBuffer) return;
+    const [cx, cy] = this.screenToTile(this.canvas.width / 2, this.canvas.height / 2);
+    const nation = game.factions[0].nation;
+    let placed = 0;
+    for (const part of this.copyBuffer.parts) {
+      const type = BUILDING_TYPES[part.key];
+      const x = cx + part.dx, y = cy + part.dy;
+      if (!canPlace(game.map, part.key, x, y, 0)) continue;
+      if (!nation.canAfford(type.cost)) continue;
+      nation.pay(type.cost);
+      placeBuilding(game, part.key, x, y, 0);
+      placed++;
+    }
+    if (placed) game.log(`Pasted ${placed} building${placed > 1 ? 's' : ''}.`, 'good');
+    else game.log('Nothing could be pasted here.', 'bad');
+  }
+
   // ---------- HUD ----------
   buildHud() {
     const bar = document.getElementById('buildbar');
@@ -539,11 +616,12 @@ class UI {
       btn.className = 'bbtn';
       btn.innerHTML = `<b>${t.name}</b><span>${costText(t.cost)}</span>`;
       btn.title = t.desc + (t.reqText ? ` (${t.reqText})` : '');
-      btn.onclick = () => { this.placing = key; this.clearSelection(); };
+      btn.onclick = () => { this.placing = key; this.copyBuffer = null; this.clearSelection(); };
       bar.appendChild(btn);
     }
-    document.getElementById('cancel-place').onclick = () => { this.placing = null; };
+    document.getElementById('cancel-place').onclick = () => { this.placing = null; this.copyBuffer = null; };
     document.getElementById('rotate-place').onclick = () => this.rotatePlacing();
+    document.getElementById('paste-place').onclick = () => this.pasteBuffer();
     // tap a topbar stat to open a live info tooltip about it
     document.querySelectorAll('#topbar .stat[data-tip]').forEach(el => {
       el.onclick = () => this.toggleTooltip(el.dataset.tip);
@@ -612,8 +690,28 @@ class UI {
     const p = document.getElementById('panel');
     const b = this.selection.building;
     const us = this.selection.units.filter(u => u.alive);
-    if (!b && us.length === 0) { p.style.display = 'none'; return; }
+    const bs = this.selection.buildings;
+    if (!b && us.length === 0 && bs.length === 0) { p.style.display = 'none'; return; }
     p.style.display = 'block';
+    if (!b && bs.length > 1) {
+      const own = bs.filter(x => x.faction === 0 && x.type.key !== 'townhall');
+      const byType = {};
+      for (const x of bs) byType[x.type.name] = (byType[x.type.name] || 0) + 1;
+      let html = `<h3>${bs.length} buildings selected</h3>`;
+      html += '<div>' + Object.entries(byType).map(([n, c]) => `${c}× ${n}`).join(', ') + '</div>';
+      if (own.length) {
+        html += `<div style="margin-top:8px">`
+          + `<button id="copy-buildings" title="Copy these buildings — pan the map and click Paste to place a copy">📋 Copy</button> `
+          + `<button id="delete-buildings" title="Tear these down and reclaim 75% of each one's cost">Delete All</button>`
+          + `</div>`;
+      }
+      p.innerHTML = html;
+      const cp = document.getElementById('copy-buildings');
+      if (cp) cp.onclick = () => this.copySelected();
+      const del = document.getElementById('delete-buildings');
+      if (del) del.onclick = () => this.deleteSelectedBuildings();
+      return;
+    }
     if (b) {
       const own = b.faction === 0;
       let html = `<h3><span class="dot" style="background:${game.factions[b.faction].color.css}"></span> ${b.type.name}${own ? '' : ' — ' + game.factions[b.faction].name}</h3>`;
@@ -664,9 +762,14 @@ class UI {
       if (own && b.type.key !== 'townhall') {
         const refund = Object.entries(b.type.cost || {}).filter(([, v]) => v > 0)
           .map(([r, v]) => `${icon(r)}${Math.ceil(v * 0.75)}`).join(' ');
-        html += `<div style="margin-top:8px"><button id="demolish" title="Tear this down and reclaim 75% of its cost">Demolish${refund ? ` (+ ${refund})` : ''}</button></div>`;
+        html += `<div style="margin-top:8px">`
+          + `<button id="copy-buildings" title="Copy this building — pan the map and click Paste to place a copy">📋 Copy</button> `
+          + `<button id="demolish" title="Tear this down and reclaim 75% of its cost">Demolish${refund ? ` (+ ${refund})` : ''}</button>`
+          + `</div>`;
       }
       p.innerHTML = html;
+      const cp = document.getElementById('copy-buildings');
+      if (cp) cp.onclick = () => this.copySelected();
       const dem = document.getElementById('demolish');
       if (dem) dem.onclick = () => this.demolishSelected();
       if (own && b.type.slots) {
@@ -937,8 +1040,9 @@ class UI {
   // ---------- rendering ----------
   render() {
     const cancelBtn = document.getElementById('cancel-place');
-    cancelBtn.style.display = this.placing ? 'block' : 'none';
+    cancelBtn.style.display = (this.placing || this.copyBuffer) ? 'block' : 'none';
     document.getElementById('rotate-place').style.display = this.placing === 'bridge' ? 'block' : 'none';
+    document.getElementById('paste-place').style.display = this.copyBuffer ? 'block' : 'none';
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
     ctx.fillStyle = '#2a3038';
@@ -1019,6 +1123,7 @@ class UI {
 
     // placement ghost
     if (this.placing) this.drawGhost();
+    if (this.copyBuffer) this.drawPastePreview();
 
     // drag box
     if (this.mouse.dragStart) {
@@ -1195,7 +1300,7 @@ class UI {
       this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.type.hp), '#5c5');
     }
     // selection outline + faction tint corner
-    if (this.selection.building === b) {
+    if (this.selection.building === b || this.selection.buildings.includes(b)) {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(px + 0.5, py + 0.5, s * b.type.size - 1, s * b.type.size - 1);
     }
@@ -1267,7 +1372,7 @@ class UI {
     ctx.globalAlpha = 1;
     if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
     else if (b.hp < b.type.hp) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
-    if (this.selection.building === b) {
+    if (this.selection.building === b || this.selection.buildings.includes(b)) {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
     }
@@ -1363,38 +1468,43 @@ class UI {
 
   // Tile indices (map.idx) covered by the current placement ghost, or null if
   // not placing. Shared by drawForest (which fades canopy under it) so the two
-  // never disagree about which tiles are about to be built on.
+  // never disagree about which tiles are about to be built on. While a wall/gate/
+  // bridge run is being dragged, this covers the whole previewed line, not just
+  // the tile under the cursor.
   placementFootprint() {
     if (!this.placing) return null;
     const type = BUILDING_TYPES[this.placing];
-    const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
     const set = new Set();
-    for (let dy = 0; dy < type.size; dy++) {
-      for (let dx = 0; dx < type.size; dx++) {
-        const x = tx + dx, y = ty + dy;
-        if (game.map.inBounds(x, y)) set.add(game.map.idx(x, y));
+    const tiles = this.paint ? this.paint.line : [this.screenToTile(this.mouse.x, this.mouse.y)];
+    for (const [tx, ty] of tiles) {
+      for (let dy = 0; dy < type.size; dy++) {
+        for (let dx = 0; dx < type.size; dx++) {
+          const x = tx + dx, y = ty + dy;
+          if (game.map.inBounds(x, y)) set.add(game.map.idx(x, y));
+        }
       }
     }
     return set;
   }
 
-  drawGhost() {
-    const type = BUILDING_TYPES[this.placing];
-    const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
-    const ok = canPlace(game.map, this.placing, tx, ty, 0) && game.factions[0].nation.canAfford(type.cost);
+  // Draws one tile's worth of translucent placement ghost: art + a validity wash
+  // (white = legal, red = blocked/unaffordable). Shared by the single hover ghost,
+  // the drag-line preview, and the copy/paste preview so all three read identically.
+  drawGhostTile(key, tx, ty, ok, vertical) {
+    const type = BUILDING_TYPES[key];
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(tx, ty);
     this.ctx.globalAlpha = 0.6;
     let art = type.art;
     if (type.pair) art = art[1];
-    if (this.placing === 'farm') {
+    if (key === 'farm') {
       for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) this.tile(AT.CROP_VARS[(dx + dy) % 2], tx + dx, ty + dy);
-    } else if (this.placing === 'wall') {
+    } else if (key === 'wall') {
       this.drawTileCanvas(Assets.rampart[0].tower, tx, ty);
-    } else if (this.placing === 'gate') {
+    } else if (key === 'gate') {
       this.drawTileCanvas(Assets.rampart[0].gateH, tx, ty);
-    } else if (this.placing === 'bridge') {
-      if (this.placeVertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
+    } else if (key === 'bridge') {
+      if (vertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
       else this.tile(AT.BRIDGE_H, tx, ty);
     } else if (art) {
       this.ctx.drawImage(Assets.tileset, art[0] * TILE, art[1] * TILE, TILE, TILE, sx, sy, s * type.size, s * type.size);
@@ -1409,6 +1519,50 @@ class UI {
     this.ctx.strokeStyle = ok ? '#ffffff' : '#ff4d4d';
     this.ctx.lineWidth = 2;
     this.ctx.strokeRect(sx, sy, s * type.size, s * type.size);
+  }
+
+  // Placement preview: a single tile under the cursor normally, or — mid-drag on a
+  // line-type building (wall/gate/bridge) — every tile of the previewed run, so the
+  // whole straight/diagonal stretch shows as an opaque ghost before release commits it.
+  drawGhost() {
+    const key = this.placing;
+    const type = BUILDING_TYPES[key];
+    const nation = game.factions[0].nation;
+    if (this.paint) {
+      const spent = {};
+      for (const [x, y] of this.paint.line) {
+        const placeable = canPlace(game.map, key, x, y, 0);
+        let afford = true;
+        for (const [r, v] of Object.entries(type.cost || {})) {
+          spent[r] = (spent[r] || 0) + v;
+          if (spent[r] > nation.total(r)) afford = false;
+        }
+        this.drawGhostTile(key, x, y, placeable && afford, !this.paint.horizontal);
+      }
+      return;
+    }
+    const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
+    const ok = canPlace(game.map, key, tx, ty, 0) && nation.canAfford(type.cost);
+    this.drawGhostTile(key, tx, ty, ok, this.placeVertical);
+  }
+
+  // Copy/paste preview: locked to the centre of the current view (not the cursor) —
+  // pan the camera to line the copied group up with where it should land, then Paste.
+  drawPastePreview() {
+    const [cx, cy] = this.screenToTile(this.canvas.width / 2, this.canvas.height / 2);
+    const nation = game.factions[0].nation;
+    const spent = {};
+    for (const part of this.copyBuffer.parts) {
+      const type = BUILDING_TYPES[part.key];
+      const x = cx + part.dx, y = cy + part.dy;
+      const placeable = canPlace(game.map, part.key, x, y, 0);
+      let afford = true;
+      for (const [r, v] of Object.entries(type.cost || {})) {
+        spent[r] = (spent[r] || 0) + v;
+        if (spent[r] > nation.total(r)) afford = false;
+      }
+      this.drawGhostTile(part.key, x, y, placeable && afford, false);
+    }
   }
 
   bar(x, y, w, frac, color) {

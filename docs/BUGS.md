@@ -24,11 +24,16 @@ and re-proposing a pact is rejected with "Already trading".
 just stands wherever he spawned or last returned to — including in danger.
 **Plan:** TBD
 
-### 3. Bridges cannot be selected or demolished
+### 3. Bridges cannot be clicked, only box-selected
 `js/buildings.js:157` — bridges write to `map.bridge`, not `map.buildingAt`,
-so `clickSelect` can never find them and the demolish path is unreachable.
-A misplaced bridge is permanent (though it still cost wood, sits in
-`faction.buildings`, and has 120 HP nothing can target).
+so `clickSelect` (single click) can never find them. **Partially worked
+around**: `UI.boxSelect` now selects from `game.factions[0].buildings`
+directly rather than through `map.buildingAt`, so dragging a box over a bridge
+(with no units in it) does pick it up, and Copy/Delete All on it work
+correctly (`demolishBuilding`/`removeBuilding` already handle the `bridge`
+case). A misplaced bridge is no longer permanent — but there is still no way
+to select *just* a bridge with a single click/tap, and the single-building
+info panel (workers/storage/etc.) never applies to one.
 **Plan:** TBD
 
 ### 9. Menu button tooltip promises "Esc" opens it, but Esc never does
