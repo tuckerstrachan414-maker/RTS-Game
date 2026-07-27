@@ -564,6 +564,10 @@ function aiGroundRichness(x, y, r) {
       const tt = map.t(tx, ty);
       if (tt === T_CAVE) rich += r === 'gold' ? 12 : 3;
       else if (tt === T_ROCK) rich += r === 'stone' ? 4 : 1;
+      // A cliff face or a mountainside quarries like a boulder field, and the
+      // mountain is the better face of the two (see quarry's placeReq).
+      else if (tt === T_MOUNTAIN) rich += r === 'stone' ? 5 : 1;
+      else if (tt === T_CLIFF) rich += r === 'stone' ? 4 : 1;
       else if (tt === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) rich += r === 'wood' ? 4 : 1;
       else if (tt === T_WATER && r === 'food') rich += 1.5;
     }
@@ -624,7 +628,10 @@ function aiPickExpansionSite(f, want) {
     const x = 2 + Math.floor(game.rng() * (MAP_W - 4));
     const y = 2 + Math.floor(game.rng() * (MAP_H - 4));
     if (!mem.isExplored(x, y)) continue;                      // we have never been there
-    if (map.terrain[map.idx(x, y)] !== T_GRASS) continue;
+    // an anchor has to be ground a satellite can actually be built on; a plateau
+    // top qualifies, and a nation that settles one gets a defensible outpost
+    const anchor = map.terrain[map.idx(x, y)];
+    if (anchor !== T_GRASS && anchor !== T_HILL) continue;
     const owner = t ? t.ownerAt(x, y) : -1;
     if (owner === f.id) continue;                             // already ours
     if (owner >= 0 && game.diplomacy.allied(f.id, owner)) continue;   // don't crowd allies

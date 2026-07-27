@@ -19,10 +19,21 @@ const TREE_BASE = 1.1;
 // the sort agrees with what is actually on screen.
 const UNIT_FOOT = 0.44;
 
+// Escarpment and peaks (Assets.cliff / Assets.mountain, baked in js/assets.js).
+// The cliff is a hair over a tile wide so consecutive rim tiles butt into one
+// unbroken rock face, and taller than it is wide so it reads as a drop rather
+// than a kerb. Peaks tower: well over a tile, like the tree canopies, so a
+// mountain field closes up into a range.
+const CLIFF_WIDTH = 1.06, CLIFF_HEIGHT = 1.3;
+const MOUNTAIN_SPAN = 2.2;
+// Where each meets the ground, in tiles below its tile origin — their depth keys.
+const CLIFF_BASE = 1.0, MOUNTAIN_BASE = 1.05;
+
 // Depth-pass entry kinds. Everything with height goes through one Y-sorted list
 // (see `collectDepthLayers`), so a thing nearer the camera overlaps what is
 // behind it no matter which category it belongs to.
-const L_TREE = 0, L_BUILDING = 1, L_RAMPART = 2, L_UNIT = 3, L_LOOT = 4;
+const L_TREE = 0, L_BUILDING = 1, L_RAMPART = 2, L_UNIT = 3, L_LOOT = 4,
+      L_CLIFF = 5, L_MOUNTAIN = 6;
 
 // Deterministic per-tile noise: tileNoise(x, y)(k) is a stable 0..1 value for
 // slot k of that tile. Decoration placement has to be a pure function of the
@@ -1083,6 +1094,14 @@ class UI {
           if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
         } else if (t === T_CAVE) {
           this.tile(AT.CAVE, x, y);
+        } else if (t === T_HILL || t === T_CLIFF || t === T_MOUNTAIN) {
+          // the plateau surface; the rock face and the peaks standing on it are
+          // drawn in the depth pass below so they can rise past their own tile.
+          // `highTile` returns null for a fully-enclosed tile — the atlas set has
+          // no plain cell, so interiors take the baked fill instead
+          const at = map.highTile(x, y);
+          if (at) this.tile(at, x, y);
+          else this.drawTileCanvas(Assets.highFill, x, y);
         }
       }
     }
@@ -1125,6 +1144,8 @@ class UI {
     for (const it of layers) {
       switch (it.kind) {
         case L_TREE: this.drawTreeClump(it.ref % MAP_W, (it.ref / MAP_W) | 0, it.alpha); break;
+        case L_CLIFF: this.drawCliff(it.ref % MAP_W, (it.ref / MAP_W) | 0); break;
+        case L_MOUNTAIN: this.drawMountain(it.ref % MAP_W, (it.ref / MAP_W) | 0); break;
         case L_BUILDING: this.drawBuilding(it.ref); break;
         case L_RAMPART: this.drawRampart(it.ref); break;
         case L_UNIT: this.drawUnit(it.ref); break;
@@ -1247,16 +1268,22 @@ class UI {
   collectDepthLayers(x0, y0, x1, y1, fadeSet) {
     const map = game.map;
     const out = [];
-    // canopies are taller than their tile and spill upward and sideways, so sweep a
-    // margin past the viewport or trees pop in at the edges
-    const m = Math.ceil(TREE_CANOPY);
+    // canopies and peaks are taller than their tile and spill upward and sideways,
+    // so sweep a margin past the viewport or they pop in at the edges
+    const m = Math.ceil(Math.max(TREE_CANOPY, MOUNTAIN_SPAN));
     const yEnd = Math.min(MAP_H - 1, y1 + m), xEnd = Math.min(MAP_W - 1, x1 + m);
     const xStart = Math.max(0, x0 - m), yStart = Math.max(0, y0 - 1);
     for (let y = yStart; y <= yEnd; y++) {
       for (let x = xStart; x <= xEnd; x++) {
         const i = map.idx(x, y);
-        if (map.terrain[i] !== T_TREE) continue;
-        out.push({ d: y + TREE_BASE, kind: L_TREE, ref: i, alpha: fadeSet && fadeSet.has(i) ? 0.32 : 1 });
+        const t = map.terrain[i];
+        if (t === T_TREE) {
+          out.push({ d: y + TREE_BASE, kind: L_TREE, ref: i, alpha: fadeSet && fadeSet.has(i) ? 0.32 : 1 });
+        } else if (t === T_CLIFF) {
+          out.push({ d: y + CLIFF_BASE, kind: L_CLIFF, ref: i, alpha: 1 });
+        } else if (t === T_MOUNTAIN) {
+          out.push({ d: y + MOUNTAIN_BASE, kind: L_MOUNTAIN, ref: i, alpha: 1 });
+        }
       }
     }
     for (const f of game.factions) {
@@ -1308,6 +1335,41 @@ class UI {
       x + 0.5 + (rnd(9) - 0.5) * 0.36, y + 1.12 + (rnd(10) - 0.5) * 0.34,
       TREE_CANOPY * (0.84 + rnd(11) * 0.34));
     if (alpha < 1) ctx.globalAlpha = baseAlpha;
+  }
+
+  // The rock face along a plateau's rim. Deliberately NOT jittered the way boulders
+  // and canopies are: an escarpment is one continuous wall, and nudging each tile
+  // off the grid would open daylight between neighbouring segments. Only which of
+  // the two baked variants gets used varies, so a long rim still has texture.
+  drawCliff(x, y) {
+    const rnd = tileNoise(x, y);
+    this.spriteCanvasAt(Assets.cliff[rnd(0) < 0.5 ? 0 : 1],
+      x + 0.5, y + CLIFF_BASE, CLIFF_WIDTH, CLIFF_HEIGHT);
+  }
+
+  // A peak. Same treatment as a tree clump — the variant comes from the tile's
+  // `decor` so a seed always raises the same range, and the position and size are
+  // jittered from the tile coordinates so a mountain field is a ridgeline rather
+  // than a grid of identical lumps.
+  drawMountain(x, y) {
+    const map = game.map;
+    const art = Assets.mountain;
+    const variant = Math.max(0, map.decor[map.idx(x, y)]) % art.length;
+    const rnd = tileNoise(x, y);
+    const span = MOUNTAIN_SPAN * (0.86 + rnd(2) * 0.3);
+    this.spriteCanvasAt(art[variant], x + 0.5 + (rnd(0) - 0.5) * 0.34,
+      y + MOUNTAIN_BASE + (rnd(1) - 0.5) * 0.24, span, span);
+  }
+
+  // Draw a baked 16x16 sprite canvas at an arbitrary world position, anchored at
+  // its bottom centre so it grows upward out of its tile. `spriteAt` does the same
+  // for atlas cells; this one takes width and height separately, because the cliff
+  // has to stay a tile wide while standing taller than one.
+  spriteCanvasAt(canvas, wx, wy, wScale, hScale) {
+    const s = TILE * this.cam.zoom;
+    const [sx, sy] = this.worldToScreen(wx, wy);
+    const w = Math.ceil(s * wScale), h = Math.ceil(s * hScale);
+    this.ctx.drawImage(canvas, 0, 0, TILE, TILE, Math.round(sx - w / 2), Math.round(sy - h), w, h);
   }
 
   // One building's sprite at a screen rect. Prefers the composited art baked at load
@@ -1653,6 +1715,10 @@ class UI {
     const colors = {
       [T_GRASS]: [116, 196, 80], [T_WATER]: [64, 120, 200],
       [T_TREE]: [40, 120, 50], [T_ROCK]: [130, 130, 130], [T_CAVE]: [80, 70, 70],
+      // Highland reads as a band from passable to solid: the plateau top is the
+      // tan of its own tiles, the escarpment ringing it is dark stone, and the
+      // peaks are the brightest thing on the map, so a range is legible at a glance.
+      [T_HILL]: [196, 176, 132], [T_CLIFF]: [112, 104, 98], [T_MOUNTAIN]: [206, 206, 212],
     };
     // territory tint: claimed tiles blend toward their owner's color
     const ownerCols = game.factions.map(f => [

@@ -57,7 +57,7 @@ rather than snapping. The top bar shows the day count and whether it's day
 |---|---|---|
 | 🍞 Food | crop fields (bonus next to water/wells) | Farm workers |
 | 🪵 Wood | tree tiles (they deplete!) | Lumber Camp workers |
-| 🪨 Stone | rock tiles | Quarry workers |
+| 🪨 Stone | rock tiles, cliff faces, mountainsides | Quarry workers |
 | 🪙 Gold | cave tiles, taxes, trade, plunder | Gold Mine, Market |
 
 Click a finished building and use **+/−** to assign idle citizens to its worker
@@ -96,11 +96,21 @@ east–west one, not a thinner fence.
 
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
-cross a forest tile and 1.9× a rocky one. Roads still speed you up. Only deep
-water without a bridge, cave mouths, walls and keeps stop a unit outright.
+cross a forest tile and 1.9× a rocky one. Climbing a plateau costs 1.5×. Roads
+still speed you up. Only deep water without a bridge, cave mouths, **cliffs,
+mountains**, walls and keeps stop a unit outright.
 
-**You can build on forest and rock.** Place a Wall, House, or anything else
-(except a Bridge, which needs water) right on top of trees or boulders and
+**Highlands cut the map up.** Every seed raises tablelands ringed by sheer
+cliff, and bare mountain ranges nothing can cross. A range is a wall you have to
+march around — expect chokepoints, and expect the enemy to use them. A plateau
+is better news: its cliff rim has only two or three **ramps** cut into it, so
+whoever holds the ramps holds the whole tabletop. You can build up there, and
+you should — a Quarry set against a cliff face or a mountainside works the stone
+just like a boulder field, and a few shafts are driven into the mountains for
+Gold Mines. Your start is always in open country, never boxed in.
+
+**You can build on forest, rock and plateau tops.** Place a Wall, House, or
+anything else (except a Bridge, which needs water) right on top of trees or boulders and
 the footprint clears them to make room — so a wall ring closes all the way
 around a wooded camp instead of stopping at the treeline. While placing, the
 ghost washes the tile **white** when the spot is legal and **red** when it
@@ -260,7 +270,7 @@ Plain `<script>` modules, no build step:
 
 - `js/assets.js` — atlas coordinates, animation auto-detection, faction palette-swap
   (the blue Minifolks art and orange roofs are hue-shifted per nation at load)
-- `js/map.js` — seeded map generation, water autotiling, A* pathfinding
+- `js/map.js` — seeded map generation, water/highland autotiling, A* pathfinding
 - `js/buildings.js` — building defs/placement, incl. physical storage buildings
 - `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
 - `js/market.js` — supply/demand commodity pricing, buy/sell, barter
@@ -295,3 +305,8 @@ Plain `<script>` modules, no build step:
   replaced with art from the **PUNY_WORLD_v1** tileset pack (same 16×16 grid,
   spliced tile-for-tile into `assets/tileset16x16_1.png` — see
   `docs/FEATURES.md` → Rendering & assets)
+- Highland art is a **placeholder**: the cliffs and mountains are meant to use
+  the PUNY_WORLD_v1 cliff set, which is not in this repo (only its spliced
+  results ever were). The plateau surface uses the atlas's own previously-unused
+  tan tableland autotile set; the cliff faces and peaks are drawn in code from
+  the same stone palette as the Quarry. See `docs/BUGS.md` #29.

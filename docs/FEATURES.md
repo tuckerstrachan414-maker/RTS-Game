@@ -15,8 +15,9 @@ are tracked in `docs/BUGS.md`.
 
 `js/map.js`. Seeded procedural generation (mulberry32 + smoothed value noise)
 of a 96×96 continent: water, grass, depleting forests (`treeWood` per tile),
-rocks, and 14 sprinkled cave tiles. Four cleared start zones, each guaranteed
-trees/rocks/a cave within reach. Water autotiling picks from a 9-slice + strip
+rocks, highland, and 14 sprinkled cave tiles plus up to 5 shafts driven into the
+mountainside. Four cleared start zones, each guaranteed trees/rocks/a cave
+within reach. Water autotiling picks from a 9-slice + strip
 set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
 iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
 onto trade roads; per-faction passability (gates open for owner + allies,
@@ -31,15 +32,50 @@ whatever it lands on (terrain → grass, `treeWood` zeroed), the same way
 `carveLine` clears a track — so a wall ring can seal all the way around a
 wooded perimeter instead of stopping at the treeline; unit muster/formation
 slots still deliberately prefer `moveCost === 1` tiles so ranks don't form up
-inside a thicket. **Start zones are guaranteed
+inside a thicket.
+
+**Highland: plateaus, cliffs and mountain ranges.** A second noise field
+(`alt`, independent of the water elevation so peaks don't just ring every lake)
+raises three new terrain types on ~10% of a map: `T_HILL` is the walkable top of
+a plateau (`HILL_MOVE_COST` 1.5× — a climb, nowhere near a wood's 2.4×),
+`T_CLIFF` is the impassable escarpment ringing it, `T_MOUNTAIN` is impassable
+bare peak (~2.7% of tiles, in ranges rather than specks). Highland wins over
+forest and boulders on the same tile — a plateau is bare stone, and a wood drawn
+on one would hide the barrier. `raiseHighlands` shapes the raw blobs in three
+passes: every plateau tile touching lower ground becomes escarpment (off-map
+counts as lower, so a plateau running off the edge is hemmed in there too);
+masses under `MIN_HIGHLAND` are demoted to boulders, since after the rim pass
+they are all edge and no top and read as litter; then **ramps** are cut through
+the rim — one pass per *plateau top* rather than per highland mass, because one
+mass can hold several tops separated by peaks and cutting per mass left whole
+tabletops sealed. A ramp head must have plateau behind it and walkable low ground
+in front (a cliff facing only lake or cave mouth is no way up), heads are spaced
+`RAMP_GAP` apart so the ways up land on different sides, and each takes its
+neighbouring cliffs with it so a ramp is a gap a column marches through, not a
+one-tile turnstile. Measured over 80 seeds: every land-adjacent plateau top has
+at least one way up (median ~6 rim tiles opened), and the only sealed tops are
+island plateaus sitting in lakes (2.9%), which are no more sealed than any other
+island. A mass that is *all* rim after the first pass — a ridge one or two tiles
+wide — has no top to ramp and is deliberately left whole: that is the range that
+makes a chokepoint. Altitude is damped within `HIGHLAND_CLEARANCE` of each
+quadrant centre so no nation opens the match walled into its own start zone.
+Plateaus are **buildable** (`canPlace`) — high ground you can settle is the
+payoff for taking it — while escarpment and peak are not, since nothing could
+reach a building put there. Quarries accept a cliff face or mountainside as
+their stone (`placeReq`), and the AI scores both in `aiGroundRichness` and will
+site a satellite on a plateau top.
+
+**Start zones are guaranteed
 traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
 stamped wherever the quadrant centre lands, which could leave a nation on a
 grass island in a lake or sealed behind planted forest, so the generator floods
 each zone, cuts a track to real country when the region is too small, and links
 every start zone into one landmass at the narrowest crossing it can find
-(Dijkstra weighting grass cheap, forest and rock a little, water heavily, caves
-never — this still runs on grass-only connectivity, so the guarantee is stricter
-than movement now requires and seeds keep generating identical terrain).
+(Dijkstra weighting grass and plateau top cheap, forest and rock a little,
+escarpment and peak more — a pass has to be broken through them — water heavily,
+caves never; `openAt` counts plateau tops as open ground so a ramp reads as a way
+out). Verified over 80 seeds: no unreachable start zone. That Dijkstra used to
+hang the tab on any link longer than a few thousand pops — see BUGS #12, fixed.
 `?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
 entry is unused), map sizes, biomes.
 
@@ -474,6 +510,28 @@ terrain tile), the Church (mushroom caps `strip`ped off, belfry/spire/cross and
 a gabled nave drawn on), the Castle (`shiftHue` moves its violet stonework onto
 the faction colour) and the two farmland tiles. `drawBuilding` prefers a baked
 canvas over the atlas lookup, so `BUILDING_TYPES.art` is `null` for those types.
+**Highland art is a PLACEHOLDER** (`bakeHighlandFill`/`bakeCliffs`/
+`bakeMountains`, fenced off in its own section of `js/assets.js`). The intended
+source is the cliff set from the PUNY_WORLD_v1 pack — which is not in this repo
+and never was: only its *spliced results* were committed, into
+`assets/tileset16x16_1.png` (see BUGS #29). What ships instead: the plateau
+**surface** uses `AT.HI_*`, the atlas's second and previously entirely unused
+terrain autotile set (a tan tableland with a grassy fringe, rows 11–13 columns
+2–7, in exactly the same 9-slice + strips + single layout as the water set —
+confirmed by checking which tile edges the tan runs off). Unlike the water set it
+has **no plain cell** — every piece carries fringe, its "centre" included — so
+painting interiors with that cell tiled one grass tuft across a whole tabletop in
+a visible grid; `highTile` returns `null` for a fully-enclosed tile and the
+renderer paints `Assets.highFill` instead, a solid fill in the set's own dominant
+tan with a sparse deterministic grain. The **escarpment** (2 variants, full tile
+width so a rim closes into one unbroken wall, not jittered for exactly that
+reason) and the **peaks** (3 silhouettes, variant chosen from the tile's `decor`
+so a seed always raises the same range, position and size jittered from the tile
+coordinates like tree clumps) are baked from the shared `STONE` ramp. Both are
+drawn standing up in the depth pass, so they rise past their own tile and sort
+correctly against units and buildings. The baked escarpment still reads closer to
+masonry than natural rock — that is the part waiting on the real sheet.
+
 Note the church is baked from the *untouched* atlas and tinted afterwards:
 `strip` matches exact hexes, and on the recoloured faction sheet the caps'
 pinks have already moved. Gaps: bandits reuse the horseman sprite

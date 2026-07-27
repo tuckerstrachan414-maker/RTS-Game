@@ -35,6 +35,18 @@ const AT = {
   W_VN: [3, 5], W_V: [3, 6], W_VS: [3, 7],
   W_HW: [4, 5], W_H: [5, 5], W_HE: [6, 5],
   W_ONE: [7, 5],
+  // Highland plateau: the atlas's OTHER terrain autotile set, and until now
+  // entirely unused. Rows 11-13, columns 2-7 hold a tan tableland with a grassy
+  // fringe in exactly the same 9-slice + strips + single layout as the water set
+  // above — verified by checking which tile edges the tan runs off. `highTile`
+  // (js/map.js) picks from it by neighbour inspection, the same way `waterTile`
+  // does. HI_ONE is the same cell as PATH_DOT; a lone one-tile plateau cannot
+  // survive generation (MIN_HIGHLAND), so in practice only the road draws it.
+  HI_C: [6, 11], HI_N: [4, 12], HI_S: [3, 13], HI_W: [3, 12], HI_E: [4, 13],
+  HI_NW: [6, 13], HI_NE: [7, 11], HI_SW: [6, 12], HI_SE: [7, 12],
+  HI_VN: [5, 11], HI_V: [5, 12], HI_VS: [5, 13],
+  HI_HW: [2, 11], HI_H: [3, 11], HI_HE: [4, 11],
+  HI_ONE: [7, 13],
   // buildings: [orangeVariant, blueVariant] where a pair exists
   TOWNHALL: [[0, 0], [7, 0]],
   HOUSE: [[2, 3], [3, 3]],
@@ -93,6 +105,9 @@ const Assets = {
   bridgeVmid: null,      // seamless vertical bridge (caps replaced by the plank middle)
   tilled: null,          // farm field under construction (bare furrows)
   crop: null,            // finished farm field (furrows in crop)
+  highFill: null,        // plateau interior, see bakeHighlandFill
+  cliff: [],             // escarpment faces, see bakeCliffs
+  mountain: [],          // peaks, see bakeMountains
   loaded: false,
 
   async load() {
@@ -117,6 +132,9 @@ const Assets = {
     this.bridgeVmid = bakeTile(tileset, AT.BRIDGE_V, { replicateMid: [1, 13] });
     this.tilled = bakeFarmland(false);
     this.crop = bakeFarmland(true);
+    this.highFill = bakeHighlandFill();
+    this.cliff = bakeCliffs();
+    this.mountain = bakeMountains();
     this.loaded = true;
   },
 };
@@ -175,8 +193,12 @@ function bakeRamparts(sheet) {
 //  castle      [5,0] is violet, and `recolor`'s warm range never touched it, so
 //              every nation's castle came out the same purple. Its stonework is
 //              shifted to the faction's colour here instead.
+// The masonry ramp used by everything baked out of stone — the Quarry and the
+// Well below, and the escarpment and peaks further down. Shared so a cliff face
+// and a quarry's dressed blocks read as the same rock.
+const STONE = { lit: '#cfc6b8', mid: '#a0938e', dim: '#7d7071', dark: '#5a5353' };
+
 function bakeBuildings(plain, sheet, roofHue) {
-  const STONE = { lit: '#cfc6b8', mid: '#a0938e', dim: '#7d7071', dark: '#5a5353' };
   const SLATE = { lit: '#8b93a0', mid: '#666e7a', dark: '#474e58' };
   const WOOD = { lit: '#e2ad6e', mid: '#af834c', dim: '#93674d', dark: '#704d38' };
   return {
@@ -251,6 +273,119 @@ function bakeFarmland(planted) {
       }
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// HIGHLAND ART — PLACEHOLDER. Everything in this section is the one part of the
+// cliffs/mountains work that is NOT final, and it is deliberately fenced off
+// here so it can be swapped without touching anything else.
+//
+// The intended source is the cliff set from the PUNY_WORLD_v1 pack — the same
+// pack `AT.TREES`/`AT.ROCKS`/`AT.CAVE` were spliced from in commit 17faeef. That
+// pack is not in this repo: it was supplied to that session as a reference sheet
+// and only its *spliced results* were ever committed, inside
+// assets/tileset16x16_1.png. Nothing else in git history or on disk has it.
+//
+// Until it is added, highland draws from what the project does have:
+//   * the plateau SURFACE uses AT.HI_* — the atlas's second, previously unused
+//     terrain autotile set (a tan tableland with a grassy fringe), plus the
+//     `highFill` interior below, because that set has no plain cell;
+//   * the escarpment and the peaks are baked here from the shared STONE ramp,
+//     the same way the Quarry and the Well are, since the atlas's only stone is
+//     scattered boulders and a mine mouth — neither reads as a wall or a peak.
+//
+// TO SWAP IN THE REAL CLIFF ART: add the sheet under assets/, point the AT.HI_*
+// block at its cells (or load it separately), and replace bakeCliffs /
+// bakeMountains / bakeHighlandFill with lookups into it. Nothing outside this
+// section and the AT.HI_* block needs to change — terrain generation, ramps,
+// pathing, placement and the depth pass are all art-independent.
+//
+// The escarpment and the peaks are drawn standing up in the depth pass
+// (js/ui.js), anchored at the bottom of their tile, so a run of escarpment tiles
+// closes into one continuous rock face and a field of peaks reads as a range
+// rather than a grid of lumps.
+
+// The plateau interior. The AT.HI_* set has no plain fill — every cell of it,
+// its "centre" included, carries fringe — so painting interiors with the centre
+// cell tiled one grass tuft across the whole tabletop in a visible grid. This is
+// the set's own dominant tan (sampled straight out of the atlas) with a sparse,
+// deterministic grain of its darker band so a big plateau is not a flat slab.
+function bakeHighlandFill() {
+  const TAN = '#f4cca1', GRAIN = '#eea160';
+  return bakeArt(null, px => {
+    px(TAN, 0, 0, TILE, TILE);
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        if (((x * 7 + y * 13) ^ (x * y)) % 23 === 0) px(GRAIN, x, y);
+      }
+    }
+  });
+}
+
+// Escarpment. Full tile width by design — neighbours have to butt together — with
+// a lit crest along the top (the plateau edge catching the light), a shadowed
+// face below it, and a dark line at the foot where it meets the low ground. The
+// two variants differ only in where the fissures and ledges fall, which is
+// enough to stop a long rim reading as brickwork.
+function bakeCliffs() {
+  const CREST = [[0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+                 [1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0]];
+  const FISSURES = [[2, 7, 12], [4, 9, 14]];
+  const LEDGES = [[[1, 9, 6], [9, 11, 5]], [[6, 8, 7], [0, 12, 4]]];
+  return CREST.map((crest, v) => bakeArt(null, px => {
+    px(STONE.dim, 0, 2, TILE, TILE - 2);                   // the face
+    for (let x = 0; x < TILE; x++) {
+      const top = 2 + crest[x];                            // a crest that is not a ruled line
+      px(STONE.mid, x, top, 1, 3);
+      px(STONE.lit, x, top, 1, 1);
+    }
+    for (const x of FISSURES[v]) {                         // weathering down the face
+      px(STONE.dark, x, 6, 1, 9);
+      px(STONE.mid, x + 1, 7, 1, 7);
+    }
+    for (const [x, y, w] of LEDGES[v]) {                   // outcrops catching the light
+      px(STONE.mid, x, y, w, 2);
+      px(STONE.lit, x, y, w, 1);
+      px(STONE.dark, x, y + 2, w, 1);
+    }
+    px(STONE.dark, 0, TILE - 2, TILE, 2);                  // shadow pooled at the foot
+    px('#3d3838', 0, TILE - 1, TILE, 1);
+  }));
+}
+
+// Peaks. Each is a silhouette swept from an apex row down to the tile's base:
+// the western flank takes the light, the eastern falls into shadow, and the
+// ridge runs between them. The tall one wears snow; the squat one is a twin
+// summit, so a range built from the three does not repeat a single outline.
+function bakeMountains() {
+  const SNOW = { lit: '#f2f4f6', mid: '#d3d9e0' };
+  const specs = [
+    { apex: 0, slope: 0.62, snow: 4, peak: 7 },
+    { apex: 3, slope: 0.78, snow: 0, peak: 6 },
+    { apex: 5, slope: 0.92, snow: 0, peak: 6, twin: [12, 8, 0.75] },
+  ];
+  return specs.map(sp => bakeArt(null, px => {
+    const massif = (cx, apex, slope) => {
+      for (let y = apex; y < TILE; y++) {
+        const half = Math.round((y - apex + 1) * slope);
+        const x0 = Math.max(0, cx - half), x1 = Math.min(TILE - 1, cx + half);
+        px(STONE.mid, x0, y, x1 - x0 + 1, 1);
+        px(STONE.lit, x0, y, Math.max(1, Math.round((x1 - x0 + 1) * 0.34)), 1);
+        if (x1 > cx) px(STONE.dim, cx + 1, y, x1 - cx, 1);
+        if (y > apex + 2 && x1 > cx + 1) px(STONE.dark, x1 - 1, y, 2, 1);
+      }
+    };
+    massif(sp.peak, sp.apex, sp.slope);
+    if (sp.twin) massif(sp.twin[0], sp.twin[1], sp.twin[2]);   // the lower summit, in front
+    for (let y = sp.apex; y < sp.apex + sp.snow; y++) {     // snowline, ragged at its edge
+      const half = Math.round((y - sp.apex + 1) * sp.slope);
+      const x0 = Math.max(0, sp.peak - half), x1 = Math.min(TILE - 1, sp.peak + half);
+      const inset = y === sp.apex + sp.snow - 1 ? 1 : 0;
+      px(SNOW.mid, x0 + inset, y, x1 - x0 + 1 - inset * 2, 1);
+      px(SNOW.lit, x0 + inset, y, Math.max(1, Math.round((x1 - x0 + 1) * 0.5)), 1);
+    }
+    px(STONE.dark, 0, TILE - 1, TILE, 1);                  // the range's own ground shadow
+  }));
 }
 
 // Tiny 16x16 pixel canvas. `px(color, x, y, w, h)` paints a run; `strip(colors)`

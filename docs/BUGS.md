@@ -108,6 +108,23 @@ it properly means a per-sheet animation table instead of the row-count
 heuristic.
 **Plan:** TBD
 
+### 29. Highland art is a placeholder — the intended cliff sheet is not in the repo
+`js/assets.js`, the fenced "HIGHLAND ART — PLACEHOLDER" section. Cliffs and
+mountains were meant to use the cliff set from the **PUNY_WORLD_v1** pack, the
+same pack `AT.TREES`/`AT.ROCKS`/`AT.CAVE` were spliced from in commit `17faeef`.
+That pack was supplied to that session as a reference sheet and **only its
+spliced results were ever committed** (inside `assets/tileset16x16_1.png`) — the
+sheet itself is in no commit, no blob in history, and nowhere on disk. Until it
+is added, the plateau surface uses `AT.HI_*` (the atlas's own previously-unused
+tan tableland autotile set) plus a baked interior fill, and the escarpment and
+peaks are baked from the shared `STONE` ramp like the Quarry and the Well. The
+baked escarpment in particular still reads closer to masonry than to natural
+rock. Terrain generation, ramps, pathing, placement and the depth pass are all
+art-independent, so the swap is confined to that section and the `AT.HI_*` block.
+**Plan:** add the sheet under `assets/`, point `AT.HI_*` at its cells (or load it
+as a second image), and replace `bakeCliffs`/`bakeMountains`/`bakeHighlandFill`
+with lookups into it.
+
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
 
 - **Training always leaves 1 citizen free** — `trainUnit` requires
@@ -140,6 +157,18 @@ heuristic.
 
 ## Fixed
 
+- **#12 `carveShortestLink` blew up exponentially and could hang the tab** —
+  `js/map.js`, the Dijkstra that links separated start zones. `dist` was a
+  `Float32Array` while the step costs are doubles like `0.1`, which has no exact
+  float32: writing `dist[j] = nd` rounded the value *up*, so the next time `j`
+  came round as a neighbour `nd < dist[j]` was true **again** and `j` went back
+  on the heap. Every pop re-pushed all four neighbours, which re-pushed theirs.
+  The search still crawled forward, so it looked like it worked — it only ever
+  terminated because the goal used to be a few thousand pops away. Asked for a
+  longer link (highland made separated starts much more common) it ran 19M+
+  iterations with a 13M-entry heap and never finished. `dist` is now
+  `Float64Array`, so the write round-trips exactly and a settled node stays
+  settled; 80 seeds now generate in 1.2s total.
 - **#19 Trees, units and buildings drew in fixed passes, not by depth** —
   `render` (`js/ui.js`) ran forest → buildings → walls → units as separate
   passes, so a tree standing *in front* of a building was painted over by it

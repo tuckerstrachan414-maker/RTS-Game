@@ -44,9 +44,12 @@ const BUILDING_TYPES = {
     key: 'quarry', name: 'Quarry', art: null, size: 1,
     cost: { wood: 25 }, hp: 150, buildTime: 8, slots: 3,
     produces: 'stone', rate: 0.3,
-    desc: 'Workers cut stone from adjacent rock. Needs rocks nearby.',
-    placeReq: (map, x, y) => map.countAdjacent(x, y, T_ROCK, 2) > 0,
-    reqText: 'must be within 2 tiles of rocks',
+    desc: 'Workers cut stone from adjacent rock. Needs rocks, a cliff or mountains nearby.',
+    // A cliff face and a mountainside are stone as surely as a boulder field is —
+    // and they are the reason to settle a plateau rim you cannot otherwise use.
+    placeReq: (map, x, y) => map.countAdjacent(x, y, T_ROCK, 2)
+      + map.countAdjacent(x, y, T_CLIFF, 2) + map.countAdjacent(x, y, T_MOUNTAIN, 2) > 0,
+    reqText: 'must be within 2 tiles of rocks, a cliff or mountains',
   },
   mine: {
     key: 'mine', name: 'Gold Mine', art: AT.MINE, size: 1,
@@ -152,9 +155,12 @@ function canPlace(map, typeKey, x, y, factionId) {
       const t = map.terrain[i];
       if (type.waterOnly) { if (t !== T_WATER || map.bridge[i]) return false; }
       // A footprint clears whatever rough ground it sits on (see placeBuilding) —
-      // forest and rock are buildable, same as they're now walkable (js/map.js).
-      // Caves stay off-limits; they're a resource mouth, not ground to build on.
-      else if (t !== T_GRASS && t !== T_TREE && t !== T_ROCK) return false;
+      // forest and rock are buildable, same as they're now walkable (js/map.js),
+      // and so is a plateau top, which is the whole payoff of taking the high
+      // ground. Caves stay off-limits; they're a resource mouth, not ground to
+      // build on. So do escarpments and peaks — nothing walks there, so nothing
+      // could reach a building put there either.
+      else if (t !== T_GRASS && t !== T_TREE && t !== T_ROCK && t !== T_HILL) return false;
     }
   }
   if (type.placeReq && !type.placeReq(map, x, y)) return false;
