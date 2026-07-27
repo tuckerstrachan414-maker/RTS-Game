@@ -168,6 +168,68 @@ heuristic.
   each node is expanded once — with non-negative costs a node's distance is final
   the first time it is popped, which is both correct and what stops stale heap
   entries from re-relaxing the graph. Verified across 400 seeds.
+- **#30 Start-zone connectivity carving could silently shrink a plateau** —
+  `js/map.js`, `carveLine`/`carveShortestLink`. Both cut a corridor between
+  landmasses by converting whatever they cross to plain grass, and neither
+  distinguishes low ground from a plateau's own top — so a corridor that
+  happened to cross a top tile still carrying its original tree or boulder
+  would clear it to grass *and* reset `high[i]` to 0 in the same assignment,
+  since that reset had always been unconditional. That doesn't just tidy the
+  tile, it silently ejects it from the plateau: same terrain either side,
+  suddenly no longer part of the mesa, and — if it was the specific tile a
+  ramp's `d` vector pointed onto — the ramp now "leads nowhere" and the
+  invariant harness catches it (a hole cut clean through supposedly-sealed
+  rock is exactly the kind of "missing texture" a corner-clipping check is
+  for). First fix attempt overcorrected the other way: skipping every `high`
+  tile outright stopped the mutation, but also stopped the corridor from ever
+  becoming clear ground there, which starved `openAt` (grass-and-ramps-only
+  connectivity) of a tile it needed and dropped one start zone's reachable
+  region from 3885 tiles to 59 on seed 374. Landed on the actual fix: still
+  clear the tile's terrain/decor/treeWood like anywhere else, just never touch
+  `high` — a plateau-top tile crossed by a corridor becomes ordinary top
+  grass (which most of a top already is), not a breach. Verified across 600
+  seeds plus the seed-374 case specifically.
+- **#31 Plateau rims had holes in them: gaps, floating stairs, and a staircase
+  of disconnected rock** — `js/map.js`, `js/ui.js`, `tools/splice-cliffs.py`.
+  Six separate defects, all with the same signature: raised plateau turf drawn
+  directly against low grass with no rock between it, which is what the rim art
+  exists to prevent. In order of how much they showed:
+  1. **Diagonal edges.** `high` is 4-connected (all four *sides* raised), the
+     right rule for an orthogonal pathfinder but silent about corners. Wherever
+     a plateau's edge ran diagonally, the tile inside each step had four raised
+     sides and open ground off one corner, and painted flat turf. The claim in
+     the original commit that 4-connectivity "guarantees every rim tile has an
+     open side for its artwork to face, so the set never needs its
+     concave-corner pieces" was simply wrong — that is exactly what those
+     pieces are for. `plateauTopTile` now hands such a tile one of four concave
+     corners.
+  2. **Stairs floating in a gap.** The jamb either side of a ramp *replaced* the
+     tile's rim piece. A jamb is a narrow rock post meant to frame a stair
+     against a rim that is already drawn, so using it as the whole tile broke
+     the rim run at every single ramp. It is an overlay now (`rampJamb`), drawn
+     on top of the ordinary rim piece.
+  3. **Turf baked into the jambs.** Each jamb carries a strip of plateau turf
+     down its inner edge — harmless in the pack's native south-facing
+     orientation, but facing open ground once rotated to a north rim. Stripped
+     at splice time; the rim piece underneath supplies the turf.
+  4. **Two concave corners did not exist.** The pack has NW and NE notches only;
+     see the note in docs/FEATURES.md for why SW/SE are 180° rotations rather
+     than quadrant composites (the composite left a seam of its own).
+  5. **One-tile-thick rock.** Three open sides is a finger, two *opposite* open
+     sides is a wall one tile thick; the set has a piece for neither, so both
+     fell through to the tall south face, whose turf lip then met open grass.
+     `generatePlateaus` erodes both before classifying the mass.
+  6. **Rims that reverse direction.** A south face beside a north lip, where the
+     edge steps outward between adjacent rows: the south face is the only fully
+     opaque piece in the set, so its lip met the grass showing through its
+     neighbour. `cliffTile` reads the far diagonal on single-open-side tiles and
+     resolves them as the corner they really are.
+  Found and driven to zero with a pixel scanner rather than by eye — render at
+  1 screen px per texel, suppress the day/night tint, and count turf pixels
+  orthogonally touching grass pixels (see docs/formations-tiers-ui.md). 1789 bad
+  pixels across three seeds at the start; 0 across 65 seeds now, with the
+  scanner still reporting ~600/seed when the concave-corner fix is disabled, so
+  it is known to be able to fail.
 - **#19 Trees, units and buildings drew in fixed passes, not by depth** —
   `render` (`js/ui.js`) ran forest → buildings → walls → units as separate
   passes, so a tree standing *in front* of a building was painted over by it

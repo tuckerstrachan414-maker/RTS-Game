@@ -1072,8 +1072,13 @@ class UI {
         const t = map.terrain[i];
         // Plateau tops get their own darker turf as the base coat; the rim pieces
         // are transparent past the rock, so those still go over ordinary grass and
-        // let the low ground they overlook show through underneath.
-        this.tile(map.high[i] ? AT.CLIFF_TOP : AT.GRASS, x, y);
+        // let the low ground they overlook show through underneath. A top tile
+        // that touches low ground at a corner is the exception: it takes a
+        // concave rim piece instead, and that piece is transparent at the corner
+        // it cuts away, so it has to sit on grass rather than on raised turf.
+        const topAt = map.high[i] ? map.plateauTopTile(x, y) : AT.GRASS;
+        this.tile(topAt === AT.CLIFF_TOP ? AT.CLIFF_TOP : AT.GRASS, x, y);
+        if (topAt !== AT.CLIFF_TOP && topAt !== AT.GRASS) this.tile(topAt, x, y);
         if (t === T_GRASS) {
           if (map.road[i]) this.tile(AT.PATH_DOT, x, y);
           else if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
@@ -1088,12 +1093,17 @@ class UI {
           this.tile(AT.CAVE, x, y);
         } else if (t === T_CLIFF) {
           this.tile(map.cliffTile(x, y), x, y);
+          // stair jamb over the rim piece, never instead of it
+          const jamb = map.rampJamb(x, y);
+          if (jamb) this.tile(jamb, x, y);
         } else if (t === T_RAMP) {
-          this.tile(AT.RAMP, x, y);
+          this.tile(AT.RAMP_TREAD[map.rampDir[i]], x, y);
         }
-        // The stair's top step belongs to the tile above it — that is plateau
-        // ground, already painted, so the step is laid over it.
-        if (map.high[i] && map.terrain[map.idx2(x, y + 1)] === T_RAMP) this.tile(AT.RAMP_TOP, x, y);
+        // The stair's top step belongs to the plateau-ground tile it leads onto,
+        // already painted above, so the step is laid over it — whichever of the
+        // four sides that neighbouring ramp climbs from.
+        const topDir = map.high[i] ? map.rampTopHere(x, y) : -1;
+        if (topDir >= 0) this.tile(AT.RAMP_TOP[topDir], x, y);
       }
     }
     // …then boulders, which spill past their own tile. Stamped dead centre they lined up

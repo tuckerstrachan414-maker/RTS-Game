@@ -70,13 +70,29 @@ the code; stale docs are treated as bugs.
   targetable buildings.
 - Plateau tops are ordinary terrain with `map.high[i] === 1`; the wall around
   them is `T_CLIFF` (impassable, and the only terrain with no way through at
-  all) and the way up is `T_RAMP`. `generatePlateaus` guarantees every top tile
-  is walkable from a stair — anything added after it that can make a tile
-  impassable (caves are the existing case) must not land on a top or a ramp's
-  foot, or it strands ground.
-- `assets/tileset16x16_1.png` is 8×17 now, not 8×14. Rows 14-16 are the cliff
+  all) and the way up is `T_RAMP`, facing any of 4 directions per
+  `map.rampDir`/`RAMP_DIRS` (the tileset only drew a south-facing stair; the
+  other 3 are that art rotated by `tools/splice-cliffs.py`, not at runtime).
+  `generatePlateaus` guarantees every top tile is walkable from a stair —
+  anything added after it that can make a tile impassable (caves are the
+  existing case) must not land on a top or any ramp's footing, or it strands
+  ground. Don't reset `map.high` outside `generatePlateaus`: `carveLine`/
+  `carveShortestLink` simplify whatever they cross to grass, including a
+  plateau-top tile, but must never clear its `high` flag while doing so — that
+  silently ejects the tile from the plateau instead of just tidying it
+  (BUGS #30).
+- `assets/tileset16x16_1.png` is 8×18 now, not 8×14. Rows 14-17 are the cliff
   set; re-splice with `tools/splice-cliffs.py` rather than editing pixels by
   hand. Appending kept every older `AT` coordinate valid — don't repack it.
+- Plateau rim art has one rule: **raised turf must never touch low grass** —
+  rock goes between, always. `high` being 4-connected is a movement rule, not a
+  drawing one, so a top tile can still touch open ground at a corner and needs a
+  concave piece (`plateauTopTile`); a stair jamb is an overlay on top of the rim
+  piece, never a replacement for it; and nothing one tile thick survives
+  generation, because the set has no piece for it. If you touch any of this, run
+  the pixel scan in `docs/formations-tiers-ui.md` — six separate holes shipped
+  past visual review here (BUGS #31), and the scan is the only thing that caught
+  them all.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
 - New HUD elements need the `.hud` class to be hidden by Hide UI, and an
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.

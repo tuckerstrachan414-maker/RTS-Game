@@ -30,6 +30,20 @@ const MIN_PLATEAU = 26;
 const MIN_PLATEAU_TOP = 8;
 const PLATEAU_START_CLEAR = 12;
 const ORTH = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+// A ramp can be cut into any of a plateau's four sides, not just the south one
+// the tileset happened to draw. `d` is the step from the ramp tile toward the
+// plateau top (the direction a unit climbs); `p` is the perpendicular step
+// used to find the jamb tiles that close the gap either side of the stair
+// (they sit at ramp ± p). `rot` is how many 90-degree clockwise turns the
+// tileset's native south-rim art (rot 0: cut into the south rim, climbs north)
+// needs to face this way — see AT.RAMP_* in js/assets.js and the note in
+// tools/splice-cliffs.py for how those rotated tiles were baked.
+const RAMP_DIRS = [
+  { d: [0, -1], p: [1, 0], rot: 0 },   // south rim, climbs north (tileset's native art)
+  { d: [1, 0], p: [0, 1], rot: 1 },    // west rim, climbs east
+  { d: [0, 1], p: [-1, 0], rot: 2 },   // north rim, climbs south
+  { d: [-1, 0], p: [0, -1], rot: 3 },  // east rim, climbs west
+];
 // Walkable tiles a nation must be able to reach from its start, or the map
 // generator cuts it a track out (see connectStartZones).
 const MIN_START_REGION = 500;
@@ -64,6 +78,7 @@ class GameMap {
     this.terrain = new Uint8Array(MAP_W * MAP_H);
     this.decor = new Int8Array(MAP_W * MAP_H).fill(-1);   // variant index for trees/rocks/grass
     this.high = new Uint8Array(MAP_W * MAP_H);            // 1 = walkable plateau top (see T_CLIFF)
+    this.rampDir = new Uint8Array(MAP_W * MAP_H).fill(255); // index into RAMP_DIRS for T_RAMP tiles
     this.bridge = new Uint8Array(MAP_W * MAP_H);          // 1=horizontal 2=vertical
     this.road = new Uint8Array(MAP_W * MAP_H);            // trade-route path marker
     this.buildingAt = new Array(MAP_W * MAP_H).fill(null);
@@ -117,7 +132,16 @@ class GameMap {
       const x = Math.floor(rng() * this.w), y = Math.floor(rng() * this.h);
       const i = this.idx(x, y);
       if (this.terrain[i] !== T_ROCK || this.decor[i] !== 0 || this.high[i]) continue;
-      if (this.terrain[this.idx2(x, y - 1)] === T_RAMP) continue;
+      // Is this candidate a ramp's footing — the tile it climbs from — in any
+      // of the 4 directions a ramp can face? (Not just south: a ramp only
+      // exists next to rock its own generation already found footing on, so a
+      // neighbour of any orientation could be one.)
+      if (ORTH.some(([nx, ny]) => {
+        const rx = x + nx, ry = y + ny;
+        if (!this.inBounds(rx, ry) || this.terrain[this.idx(rx, ry)] !== T_RAMP) return false;
+        const d = RAMP_DIRS[this.rampDir[this.idx(rx, ry)]].d;
+        return nx === d[0] && ny === d[1];
+      })) continue;
       this.terrain[i] = T_CAVE; caves++;
     }
     // Clear and provision each start zone
@@ -180,6 +204,29 @@ class GameMap {
         for (let x = cx - PLATEAU_START_CLEAR; x <= cx + PLATEAU_START_CLEAR; x++)
           if (this.inBounds(x, y)) plat[this.idx(x, y)] = 0;
     }
+    // Erode anything one tile thick. The rim set has a piece for a tile with one
+    // open side (an edge) or two adjacent ones (a corner) — and nothing else. A
+    // tile open on three sides is a finger of rock; a tile open on two OPPOSITE
+    // sides is a wall one tile thick. Both fall through to the tall south face,
+    // whose turf lip then meets open grass with no rock between it. Clearing the
+    // start zones above carves fresh ones out of whatever it cuts through, so
+    // this runs after that, and repeats until the outline stops changing.
+    for (let pass = 0; pass < 6; pass++) {
+      let changed = false;
+      const next = plat.slice();
+      for (let y = 2; y < this.h - 2; y++) {
+        for (let x = 2; x < this.w - 2; x++) {
+          const i = this.idx(x, y);
+          if (!plat[i]) continue;
+          const n = !plat[this.idx(x, y - 1)], s = !plat[this.idx(x, y + 1)];
+          const e = !plat[this.idx(x + 1, y)], w = !plat[this.idx(x - 1, y)];
+          const open = n + s + e + w;
+          if (open >= 3 || (n && s) || (e && w)) { next[i] = 0; changed = true; }
+        }
+      }
+      plat = next;
+      if (!changed) break;
+    }
 
     for (const comp of this.plateauMasses(plat)) {
       if (comp.length < MIN_PLATEAU) continue;
@@ -202,7 +249,9 @@ class GameMap {
       // the stairs cannot reach would be ground the game shows but nobody can use.
       if (!this.rampsReachAll(ramps, topSet, top)) continue;
       for (const i of rim) { this.terrain[i] = T_CLIFF; this.decor[i] = -1; this.treeWood[i] = 0; }
-      for (const i of ramps) { this.terrain[i] = T_RAMP; this.decor[i] = -1; this.treeWood[i] = 0; }
+      for (const { i, dir } of ramps) {
+        this.terrain[i] = T_RAMP; this.decor[i] = -1; this.treeWood[i] = 0; this.rampDir[i] = dir;
+      }
       // The tufted grass variants have low-ground turf baked into them, so leaving
       // decor on a raised tile would punch a patch of valley colour into the top.
       for (const i of top) {
@@ -233,35 +282,50 @@ class GameMap {
     return out;
   }
 
-  // Cut stairs into the south rim. The art is a front elevation — treads and two
-  // rock jambs, drawn as if you were looking at the face — so it only reads on a
-  // south-facing edge: open ground below to arrive from, plateau top directly
-  // above to step out onto, and rim either side for the jambs to close against.
+  // Cut stairs into any of the rim's four sides — the art is a front elevation
+  // (treads and two rock jambs, drawn as if looking straight at the face) so it
+  // only reads where its own three neighbours match: open ground to arrive from
+  // on the outside, plateau top directly on the inside to step onto, and rim
+  // either side for the jambs to close against. `RAMP_DIRS` gives the four
+  // rotations of that one shape; a rim tile qualifies for whichever of them its
+  // neighbours happen to satisfy.
   pickRamps(rng, plat, inComp, topSet, rim) {
     const cand = [];
     for (const i of rim) {
       const x = i % this.w, y = (i / this.w) | 0;
-      if (!this.inBounds(x, y + 1) || !this.inBounds(x, y - 1)) continue;
-      const below = this.idx(x, y + 1);
-      if (plat[below]) continue;
-      const bt = this.terrain[below];
-      if (bt === T_WATER || bt === T_CAVE) continue;
-      if (!topSet.has(this.idx(x, y - 1))) continue;
-      const jambs = [-1, 1].every(dx => {
-        const j = this.idx(x + dx, y);
-        return inComp.has(j) && !topSet.has(j) && !plat[this.idx(x + dx, y + 1)];
-      });
-      if (jambs) cand.push(i);
+      for (let dir = 0; dir < RAMP_DIRS.length; dir++) {
+        const { d, p } = RAMP_DIRS[dir];
+        const ox = x - d[0], oy = y - d[1];   // outside: where you climb up from
+        const tx = x + d[0], ty = y + d[1];   // inside: the plateau top you reach
+        if (!this.inBounds(ox, oy) || !this.inBounds(tx, ty)) continue;
+        const outside = this.idx(ox, oy);
+        if (plat[outside]) continue;
+        const ot = this.terrain[outside];
+        if (ot === T_WATER || ot === T_CAVE) continue;
+        if (!topSet.has(this.idx(tx, ty))) continue;
+        const jambs = [-1, 1].every(s => {
+          const jx = x + s * p[0], jy = y + s * p[1];
+          if (!this.inBounds(jx, jy)) return false;
+          const j = this.idx(jx, jy);
+          const jox = jx - d[0], joy = jy - d[1];
+          return inComp.has(j) && !topSet.has(j)
+            && this.inBounds(jox, joy) && !plat[this.idx(jox, joy)];
+        });
+        if (jambs) cand.push({ i, dir });
+      }
     }
     for (let k = cand.length - 1; k > 0; k--) {
       const j = Math.floor(rng() * (k + 1));
       [cand[k], cand[j]] = [cand[j], cand[k]];
     }
     const ramps = [];
-    for (const i of cand) {
-      const x = i % this.w, y = (i / this.w) | 0;
-      const near = ramps.some(r => Math.abs(r % this.w - x) + Math.abs(((r / this.w) | 0) - y) < 7);
-      if (!near) ramps.push(i);
+    for (const c of cand) {
+      const x = c.i % this.w, y = (c.i / this.w) | 0;
+      const near = ramps.some(r => {
+        const rx = r.i % this.w, ry = (r.i / this.w) | 0;
+        return Math.abs(rx - x) + Math.abs(ry - y) < 7;
+      });
+      if (!near) ramps.push(c);
       if (ramps.length >= 3) break;
     }
     return ramps;
@@ -269,7 +333,7 @@ class GameMap {
 
   // Can you get from a stair to every tile on top, walking orthogonally?
   rampsReachAll(ramps, topSet, top) {
-    const reach = new Set(ramps), q = ramps.slice();
+    const reach = new Set(ramps.map(r => r.i)), q = ramps.map(r => r.i);
     while (q.length) {
       const i = q.pop(), x = i % this.w, y = (i / this.w) | 0;
       for (const [dx, dy] of ORTH) {
@@ -291,23 +355,91 @@ class GameMap {
     return this.high[i] === 1 || this.terrain[i] === T_CLIFF || this.terrain[i] === T_RAMP;
   }
 
-  // Pick the rim piece for a cliff tile. Corners first: two open sides meeting at
-  // a right angle is a corner, one open side is a straight edge. A tile open on
+  // Pick the rim piece for a cliff tile. Corners first (two open sides meeting
+  // at a right angle), then a straight edge (one open side). A tile open on
   // opposite sides (a one-tile-thick neck) or on three has no piece of its own —
   // the tall south face is the one that reads from any angle, so it stands in.
+  // A tile beside a ramp still gets its ordinary rim piece here; the stair's
+  // jamb goes on top of it (see rampJamb), so the rim run stays unbroken.
   cliffTile(x, y) {
-    if (this.terrain[this.idx2(x + 1, y)] === T_RAMP) return AT.RAMP_W;
-    if (this.terrain[this.idx2(x - 1, y)] === T_RAMP) return AT.RAMP_E;
     const n = !this.raised(x, y - 1), s = !this.raised(x, y + 1);
     const e = !this.raised(x + 1, y), w = !this.raised(x - 1, y);
     if (n && w && !s && !e) return AT.CLIFF_NW;
     if (n && e && !s && !w) return AT.CLIFF_NE;
     if (s && w && !n && !e) return AT.CLIFF_SW;
     if (s && e && !n && !w) return AT.CLIFF_SE;
-    if (n && !s && !e && !w) return AT.CLIFF_N;
+    // A south face is the only fully opaque piece in the set, turf lip and all,
+    // so where the rim reverses direction beside one — an east edge above it, say,
+    // whose own art cuts its outer half away — that lip is left meeting open
+    // ground. Reading the far diagonal turns it back into the corner it really is.
+    if (s && !n && !e && !w) {
+      if (!this.raised(x + 1, y - 1)) return AT.CLIFF_SE;
+      if (!this.raised(x - 1, y - 1)) return AT.CLIFF_SW;
+      return AT.CLIFF_S;
+    }
+    if (n && !s && !e && !w) {
+      if (!this.raised(x + 1, y + 1)) return AT.CLIFF_NE;
+      if (!this.raised(x - 1, y + 1)) return AT.CLIFF_NW;
+      return AT.CLIFF_N;
+    }
     if (w && !n && !s && !e) return AT.CLIFF_W;
     if (e && !n && !s && !w) return AT.CLIFF_E;
     return AT.CLIFF_S;
+  }
+
+  // The stair jamb for a cliff tile flanking a ramp, or null. Drawn OVER the
+  // tile's ordinary rim piece rather than instead of it: the jamb art is a
+  // narrow rock post, sized to frame a stair against a rim that is already
+  // there, so using it as the whole tile punched a hole in the rim run either
+  // side of every ramp (a stair floating in a gap of bare grass).
+  rampJamb(x, y) {
+    for (const [nx, ny] of ORTH) {
+      const rx = x + nx, ry = y + ny;
+      if (!this.inBounds(rx, ry) || this.terrain[this.idx(rx, ry)] !== T_RAMP) continue;
+      const { p, rot } = RAMP_DIRS[this.rampDir[this.idx(rx, ry)]];
+      // This tile's offset from the ramp is the reverse of the ramp's offset
+      // from it, so it lands on the ramp's +p side or its -p side.
+      if (-nx === p[0] && -ny === p[1]) return AT.RAMP_JAMB_POS[rot];
+      if (-nx === -p[0] && -ny === -p[1]) return AT.RAMP_JAMB_NEG[rot];
+    }
+    return null;
+  }
+
+  // What to paint a plateau-top tile with. Normally the raised turf, but a top
+  // tile can still touch low ground at a CORNER: `high` is 4-connected (all four
+  // sides raised), which is the right rule for an orthogonal pathfinder but says
+  // nothing about diagonals. Wherever a plateau's edge runs diagonally, the tile
+  // inside the step has all four sides raised and open ground off one corner,
+  // and painting it flat turf left raised turf meeting grass with no rock
+  // between — the staircase of disconnected rim fragments.
+  //
+  // All four corners need a piece: the neighbouring rim tiles are transparent on
+  // their outward side by design, so whichever way the step turns, the corner
+  // between them is see-through. A tile cut at more than one corner would need
+  // art that does not exist; that means a one-tile neck, which `generatePlateaus`
+  // erodes away, so first match wins.
+  plateauTopTile(x, y) {
+    if (!this.raised(x - 1, y - 1)) return AT.CLIFF_IN_NW;
+    if (!this.raised(x + 1, y - 1)) return AT.CLIFF_IN_NE;
+    if (!this.raised(x - 1, y + 1)) return AT.CLIFF_IN_SW;
+    if (!this.raised(x + 1, y + 1)) return AT.CLIFF_IN_SE;
+    return AT.CLIFF_TOP;
+  }
+
+  // Is this high tile the one a neighbouring ramp climbs onto? Returns that
+  // ramp's RAMP_DIRS index (so the caller can draw the correctly rotated
+  // RAMP_TOP over it), or -1. Used to lay the stair's top step, which belongs
+  // to the plateau-top tile rather than the ramp tile itself.
+  rampTopHere(x, y) {
+    for (const [ox, oy] of ORTH) {
+      const rx = x + ox, ry = y + oy;
+      if (!this.inBounds(rx, ry)) continue;
+      const ri = this.idx(rx, ry);
+      if (this.terrain[ri] !== T_RAMP) continue;
+      const dir = this.rampDir[ri], { d } = RAMP_DIRS[dir];
+      if (d[0] === -ox && d[1] === -oy) return dir;
+    }
+    return -1;
   }
 
   // idx() clamped to the map, for neighbour lookups that only want to read.
@@ -381,10 +513,18 @@ class GameMap {
     for (const [x, y] of this.linePath(x0, y0, x1, y1)) {
       if (!this.inBounds(x, y)) continue;
       const i = this.idx(x, y);
-      if (this.terrain[i] === T_CAVE || this.terrain[i] === T_GRASS) continue;
+      // Grass and ramps are already open ground; caves are never touched. A ramp
+      // that happened to lie on this line is left alone rather than flattened —
+      // if it were its plateau's only stair, bulldozing it would seal the top.
+      if (this.terrain[i] === T_CAVE || this.terrain[i] === T_GRASS || this.terrain[i] === T_RAMP) continue;
       this.terrain[i] = T_GRASS;
       this.decor[i] = -1;
-      this.high[i] = 0;
+      // `high` is deliberately left alone: a plateau-top tile crossed by this
+      // corridor becomes ordinary plateau-top grass (fine — most of a top is
+      // already grass), not a hole in the plateau. Clearing it here once turned
+      // a forested top tile into low ground mid-rim: same terrain either side,
+      // suddenly no longer part of the mesa, `openAt` connectivity restored at
+      // the cost of quietly breaching what was supposed to be sealed rock.
       this.treeWood[i] = 0;
     }
   }
@@ -433,17 +573,20 @@ class GameMap {
       const home = this.floodRegion(this.startZones[0].x, this.startZones[0].y);
       const z = this.startZones[i];
       if (home.has(this.idx(z.x, z.y))) continue;
-      this.carveShortestLink(z, home);
+      // Go round the mesas first. Only if there is genuinely no route at all does
+      // the second attempt allow cutting through one: a breach leaves plateau top
+      // beside open ground with no rock between, which no rim piece can paint,
+      // and linking the nations matters more than one seed's cosmetics.
+      if (!this.carveShortestLink(z, home)) this.carveShortestLink(z, home, true);
     }
   }
 
   // Dijkstra from a start zone to the nearest tile of `targetSet`. Existing
   // grass is nearly free, forest and rock cost a little (they can be cut), water
-  // costs a lot (it has to be filled), cliffs cost more still (breaching one
-  // leaves a gap in a rock face, so it is a last resort rather than a refusal —
-  // this is the pass that has to succeed), and caves are never touched. The route
-  // hugs the land and crosses at the tightest gap it can find.
-  carveShortestLink(z, targetSet) {
+  // costs a lot (it has to be filled), and caves and cliffs are impassable unless
+  // `allowCliff` (see linkStartZones). The route hugs the land and crosses at the
+  // tightest gap it can find.
+  carveShortestLink(z, targetSet, allowCliff = false) {
     const N = MAP_W * MAP_H;
     // Float64, not Float32. `nd` below is computed in double precision, so a
     // Float32 store rounds it — and when it rounds UP, `nd < dist[j]` is still
@@ -474,16 +617,19 @@ class GameMap {
         if (!this.inBounds(nx, ny)) continue;
         const j = this.idx(nx, ny), t = this.terrain[j];
         if (t === T_CAVE) continue;
-        const nd = d + (t === T_GRASS ? 0.1 : t === T_WATER ? 6 : t === T_CLIFF ? 9 : 1);
+        if (t === T_CLIFF && !allowCliff) continue;
+        // Ramps are already open ground, same as grass — no reason to route
+        // around one, and (see carveLine) no reason to flatten it either.
+        const nd = d + (t === T_GRASS || t === T_RAMP ? 0.1 : t === T_WATER ? 6 : t === T_CLIFF ? 9 : 1);
         if (nd < dist[j]) { dist[j] = nd; prev[j] = i; heap.push(nd, j); }
       }
     }
     if (goal < 0) return false;
     for (let i = goal; i !== -1; i = prev[i]) {
-      if (this.terrain[i] === T_GRASS) continue;
+      if (this.terrain[i] === T_GRASS || this.terrain[i] === T_RAMP) continue;
       this.terrain[i] = T_GRASS;
       this.decor[i] = -1;
-      this.high[i] = 0;
+      // `high` left alone — see carveLine.
       this.treeWood[i] = 0;
     }
     return true;

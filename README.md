@@ -102,12 +102,13 @@ outright.
 
 **Take the high ground.** Every map raises a few plateaus — flat-topped mesas
 ringed by a rock face no one can climb, bridge, or cut through. The only ways up
-are the stairs cut into their southern faces, one to three per plateau, and
-climbing one is a little slower than walking on the flat. That makes a plateau
-two things at once: a wall that armies have to march around, and a piece of
-ground worth holding, because whoever owns the stairs owns everything on top.
-The top itself is ordinary country — you can farm it, log it, quarry it and
-build on it exactly as you would down in the valley.
+are the stairs cut into their rims, one to three per plateau and facing
+whichever of the four sides had room for one, and climbing one is a little
+slower than walking on the flat. That makes a plateau two things at once: a
+wall that armies have to march around, and a piece of ground worth holding,
+because whoever owns the stairs owns everything on top. The top itself is
+ordinary country — you can farm it, log it, quarry it and build on it exactly
+as you would down in the valley.
 
 **You can build on forest and rock.** Place a Wall, House, or anything else
 (except a Bridge, which needs water) right on top of trees or boulders and
