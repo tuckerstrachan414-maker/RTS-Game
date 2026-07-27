@@ -110,6 +110,12 @@ heuristic.
 
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
 
+- **Dev mode writes past storage capacity on purpose** — `Game.devTopOff`
+  (`js/main.js`) sets the player's Town Hall `store` values directly to
+  `DEV_RESOURCE_FLOOR` (9999), which is well past the Town Hall's declared
+  caps (300 food/wood/stone). `capacityFor`/`deposit` are deliberately not
+  involved — this is a cheat, not a storage-system change, and it only ever
+  touches the player's own Town Hall.
 - **Training always leaves 1 citizen free** — `trainUnit` requires
   `pop > workersAssigned + 1`, so the last two citizens can never both become
   soldiers. Prevents pop-0 soft locks.
@@ -152,6 +158,16 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#32 The pause menu was taller than a landscape phone and clipped its own
+  buttons** — `index.html`. `#pause-menu .menu-box` had no `max-height` and no
+  `overflow`, so on an 852×393 viewport its 467px button stack ran off both
+  ends of the screen with no way to scroll to what was cut off. Found while
+  adding the Formations entry, which made it 52px worse — but it was already
+  74px over before that. Fixed with `max-height: 94vh; overflow-y: auto` (plus
+  `flex-shrink: 0` on the children, or the flex column would compress the
+  buttons instead of scrolling). Measured after the fix: box 369px on a 393px
+  viewport, scrollable.
 
 - **#29 `carveShortestLink` could hang the whole game on load** —
   `js/map.js`. The link pass stored distances in a `Float32Array` while computing

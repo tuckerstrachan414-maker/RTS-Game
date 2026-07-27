@@ -48,6 +48,8 @@ class UI {
     this.paint = null;              // active click-drag "draw a line of walls/bridges" state: {anchor,line,horizontal}
     this.copyBuffer = null;         // {parts:[{key,dx,dy}...]} while a copied building group awaits Paste
     this.paused = false;            // pause menu open → sim frozen
+    this.dragRank = null;           // index being dragged in the Formations order list
+    this.splitMode = null;          // {picked:Set<unitId>} while splitting a group in the panel
     this.keys = {};
     this.minimapT = 0;
     this.minimap = document.getElementById('minimap');
@@ -96,6 +98,8 @@ class UI {
     window.addEventListener('keydown', e => {
       this.keys[e.key.toLowerCase()] = true;
       if (e.key === 'Escape') {
+        // innermost overlay first: Formations sits on top of the pause menu
+        if (document.getElementById('formation-panel').classList.contains('open')) { this.closeFormations(); return; }
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
         if (this.placing) { this.placing = null; return; }
@@ -379,7 +383,7 @@ class UI {
     this.clampCam();
   }
 
-  clearSelection() { this.selection.units = []; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); }
+  clearSelection() { this.splitMode = null; this.selection.units = []; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); }
 
   selectArmy() {
     const units = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy);
@@ -389,6 +393,7 @@ class UI {
   }
 
   clickSelect(sx, sy) {
+    if (this.splitMode) return;   // the chips are the only input while splitting
     const [wx, wy] = this.screenToWorld(sx, sy);
     // unit first
     let best = null, bestD = 0.8;
@@ -408,6 +413,7 @@ class UI {
   // box, buildings inside the same box are ignored. Only when the box contains no units
   // does it fall back to picking up the player's buildings for copy/delete.
   boxSelect(x0, y0, x1, y1) {
+    if (this.splitMode) return;
     const [wx0, wy0] = this.screenToWorld(Math.min(x0, x1), Math.min(y0, y1));
     const [wx1, wy1] = this.screenToWorld(Math.max(x0, x1), Math.max(y0, y1));
     const picked = game.factions[0].units.filter(u =>
@@ -429,6 +435,7 @@ class UI {
 
   rightClick(sx, sy) {
     clearTimeout(this.tapTimer);   // an action command supersedes any deferred tap-select
+    if (this.splitMode) return;
     const [wx, wy] = this.screenToWorld(sx, sy);
     const tx = Math.floor(wx), ty = Math.floor(wy);
     if (!game.map.inBounds(tx, ty)) return;
@@ -466,6 +473,11 @@ class UI {
     } else {
       // march in formation: ranks facing the destination, melee up front
       formationMove(this.selection.units, tx, ty);
+      // Ordering a defensive group to move means "defend there instead", not
+      // "go there and then walk all the way back" — so the post moves with it.
+      for (const u of this.selection.units) {
+        if (u.groupRole === 'defensive') u.defensivePost = u.dest ? [u.dest[0], u.dest[1]] : [tx, ty];
+      }
     }
   }
 
@@ -550,6 +562,73 @@ class UI {
   closePause() {
     this.paused = false;
     document.getElementById('pause-menu').classList.remove('open');
+  }
+
+  // ---------- formations panel ----------
+  // Opens over the pause menu with the sim still frozen. Every change writes
+  // straight through to game.formations and localStorage, so closing the panel
+  // (or the tab) never loses a setting.
+  openFormations() {
+    this.paused = true;
+    document.getElementById('formation-panel').classList.add('open');
+    this.refreshFormations();
+  }
+
+  closeFormations() {
+    document.getElementById('formation-panel').classList.remove('open');
+    // hand control back to the pause menu if that's where we came from
+    this.paused = document.getElementById('pause-menu').classList.contains('open');
+  }
+
+  commitFormations() {
+    saveFormations(game.factions[0].name, game.formations);
+    this.refreshFormations();
+  }
+
+  refreshFormations() {
+    const cfg = game.formations;
+    const shapes = document.getElementById('form-shapes');
+    // a tiny ASCII sketch of each shape so the choice reads at a glance
+    const art = { diamond: ' ▲\n▲▲▲\n ▲', rectangle: '▲▲▲\n▲▲▲' };
+    shapes.innerHTML = FORMATION_SHAPES.map(s =>
+      `<button data-shape="${s}" class="${cfg.shape === s ? 'on' : ''}">`
+      + `${s[0].toUpperCase() + s.slice(1)}<pre>${art[s]}</pre></button>`).join('');
+    shapes.querySelectorAll('button[data-shape]').forEach(btn => {
+      btn.onclick = () => { game.formations.shape = btn.dataset.shape; this.commitFormations(); };
+    });
+
+    const list = document.getElementById('form-order');
+    list.innerHTML = cfg.order.map((k, i) => {
+      const t = UNIT_TYPES[k];
+      return `<li draggable="true" data-i="${i}" title="${t.desc}">`
+        + `<span class="grip">⠿</span><span class="rank">${i + 1}</span>`
+        + `<span class="nm">${t.name}</span>`
+        + `<button data-up="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>`
+        + `<button data-down="${i}" ${i === cfg.order.length - 1 ? 'disabled' : ''}>▼</button></li>`;
+    }).join('');
+    list.querySelectorAll('button[data-up]').forEach(b =>
+      b.onclick = () => this.moveFormationRank(+b.dataset.up, +b.dataset.up - 1));
+    list.querySelectorAll('button[data-down]').forEach(b =>
+      b.onclick = () => this.moveFormationRank(+b.dataset.down, +b.dataset.down + 1));
+    // Drag to reorder (mouse/desktop). The ▲▼ buttons are the same edit for
+    // touch, where HTML5 drag events never fire.
+    list.querySelectorAll('li').forEach(li => {
+      li.ondragstart = e => { this.dragRank = +li.dataset.i; li.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; };
+      li.ondragend = () => { this.dragRank = null; list.querySelectorAll('li').forEach(x => x.classList.remove('drag', 'over')); };
+      li.ondragover = e => { e.preventDefault(); li.classList.add('over'); };
+      li.ondragleave = () => li.classList.remove('over');
+      li.ondrop = e => {
+        e.preventDefault();
+        if (this.dragRank !== null && this.dragRank !== undefined) this.moveFormationRank(this.dragRank, +li.dataset.i);
+      };
+    });
+  }
+
+  moveFormationRank(from, to) {
+    const order = game.formations.order;
+    if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    this.commitFormations();
   }
 
   // ---------- demolish ----------
@@ -645,7 +724,20 @@ class UI {
     document.getElementById('resume-btn').onclick = () => this.closePause();
     document.getElementById('pm-diplo').onclick = () => { this.closePause(); this.toggleDiplomacy(); };
     document.getElementById('pm-army').onclick = () => { this.closePause(); this.selectArmy(); };
+    document.getElementById('pm-formations').onclick = () => this.openFormations();
+    document.getElementById('formation-panel').onclick = e => { if (e.target.id === 'formation-panel') this.closeFormations(); };
+    document.getElementById('form-close').onclick = () => this.closeFormations();
+    document.getElementById('form-reset').onclick = () => {
+      game.formations = defaultFormations();
+      this.commitFormations();
+    };
     document.getElementById('pm-hide').onclick = () => { this.closePause(); document.body.classList.add('ui-hidden'); };
+    document.getElementById('pm-devmode').onclick = () => {
+      const on = game.toggleDevMode();
+      document.getElementById('devmode-val').textContent = on ? 'ON' : 'OFF';
+      document.getElementById('pm-devmode').classList.toggle('on', on);
+      document.getElementById('dev-badge').style.display = on ? '' : 'none';
+    };
     document.getElementById('pm-restart').onclick = () => { if (confirm('Abandon this game and start a new one?')) location.reload(); };
     document.getElementById('ui-show').onclick = () => document.body.classList.remove('ui-hidden');
     document.getElementById('pm-speed').onclick = () => {
@@ -701,6 +793,12 @@ class UI {
 
   refreshPanel() {
     const p = document.getElementById('panel');
+    // The frame loop refreshes this panel twice a second by replacing its
+    // innerHTML. That would yank an open <select> out from under the player
+    // mid-choice (and on touch, close the OS picker), so hold off while one has
+    // focus — the panel is live data, but not so live it can't wait a beat.
+    if (document.activeElement && document.activeElement.tagName === 'SELECT'
+        && p.contains(document.activeElement)) return;
     const b = this.selection.building;
     const us = this.selection.units.filter(u => u.alive);
     const bs = this.selection.buildings;
@@ -820,6 +918,9 @@ class UI {
           game.log('Construction of the Grand Castle has begun!', 'good');
         };
       }
+    } else if (this.splitMode) {
+      p.innerHTML = this.splitHTML(us);
+      this.wireSplit(p, us);
     } else {
       const byType = {};
       for (const u of us) byType[u.type.name] = (byType[u.type.name] || 0) + 1;
@@ -830,11 +931,116 @@ class UI {
       for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
       if (hauling) html += `<div class="good">Hauling plunder: ${icon('food')}${Math.floor(carried.food)} ${icon('wood')}${Math.floor(carried.wood)} ${icon('stone')}${Math.floor(carried.stone)} ${icon('gold')}${Math.floor(carried.gold)}</div>`;
       if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
+      const fighters = us.filter(u => !u.type.envoy);
+      if (fighters.length) html += this.targetPriorityHTML(fighters) + this.groupRoleHTML(fighters);
+      if (fighters.length > 1) {
+        html += `<div style="margin-top:8px"><button id="split-group" title="Peel some of these troops off into a group of their own, so the two halves can take different roles">Split Group</button></div>`;
+      }
       html += this.isTouch
         ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
         : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
       p.innerHTML = html;
+      const sel = document.getElementById('target-priority');
+      if (sel) sel.onchange = () => {
+        for (const u of fighters) u.targetPriority = sel.value;
+        const label = TARGET_PRIORITIES.find(t => t.key === sel.value);
+        game.log(`${fighters.length} troop${fighters.length > 1 ? 's' : ''} will seek out: ${label.label.replace(' (default)', '')}.`);
+        sel.blur();          // else the guard at the top of refreshPanel skips the redraw
+        this.refreshPanel();
+      };
+      p.querySelectorAll('input[name="grouprole"]').forEach(r => {
+        r.onchange = () => { if (r.checked) this.applyGroupRole(fighters, r.value); };
+      });
+      const split = document.getElementById('split-group');
+      if (split) split.onclick = () => { this.splitMode = { picked: new Set() }; this.refreshPanel(); };
     }
+  }
+
+  // The group's targeting priority. A selection whose members disagree shows a
+  // "Mixed" entry that is not itself selectable — picking anything else applies
+  // it to the whole selection.
+  targetPriorityHTML(fighters) {
+    const vals = new Set(fighters.map(u => u.targetPriority || 'any'));
+    const mixed = vals.size > 1;
+    const cur = mixed ? '' : [...vals][0];
+    const hint = mixed ? 'These troops are hunting different things.'
+      : TARGET_PRIORITIES.find(t => t.key === cur).hint;
+    return `<div class="priority">Targeting priority`
+      + `<select id="target-priority" title="What these troops go looking for a fight with on their own. Direct attack orders always override it.">`
+      + (mixed ? `<option value="" selected>— Mixed —</option>` : '')
+      + TARGET_PRIORITIES.map(t =>
+          `<option value="${t.key}"${t.key === cur ? ' selected' : ''}>${t.label}</option>`).join('')
+      + `</select></div>`
+      + `<div class="dim">${hint}</div>`;
+  }
+
+  // Standing posture for the selected group (GROUP_ROLES in js/units.js).
+  groupRoleHTML(fighters) {
+    const vals = new Set(fighters.map(u => u.groupRole || ''));
+    const mixed = vals.size > 1;
+    const cur = mixed ? null : [...vals][0];
+    const hint = mixed ? 'These troops hold different roles.'
+      : GROUP_ROLES.find(r => r.key === cur).hint;
+    return `<div class="roles">Group role`
+      + GROUP_ROLES.map(r =>
+          `<label><input type="radio" name="grouprole" value="${r.key}"${r.key === cur ? ' checked' : ''}>${r.label}</label>`).join('')
+      + `</div><div class="dim">${hint}</div>`;
+  }
+
+  applyGroupRole(fighters, role) {
+    for (const u of fighters) u.setGroupRole(role);
+    const label = GROUP_ROLES.find(r => r.key === role).label;
+    const n = fighters.length;
+    if (role === 'defensive') {
+      game.log(`${n} troop${n > 1 ? 's' : ''} posted to defend this ground — they'll patrol it and won't chase far.`, 'good');
+    } else {
+      game.log(`${n} troop${n > 1 ? 's' : ''} set to ${label}.`);
+    }
+    this.refreshPanel();
+  }
+
+  // ---------- split group ----------
+  // Peel part of a selection off into a group of its own. Enter the mode from
+  // the selection panel, toggle troops on, confirm — the picked troops become
+  // the new selection, so the role and priority controls that reappear act on
+  // the new group alone. The chips are the *only* input while the mode is open;
+  // map clicks are ignored (see clickSelect/boxSelect) so a stray tap can't
+  // silently throw the pick away.
+  splitHTML(us) {
+    const picked = this.splitMode.picked;
+    let html = `<h3>Split group — ${picked.size} of ${us.length}</h3>`;
+    html += `<div class="dim">${this.isTouch ? 'Tap' : 'Click'} troops to move them into the new group.</div>`;
+    html += `<div class="splitrow">` + us.map(u =>
+      `<button class="chip${picked.has(u.id) ? ' on' : ''}" data-uid="${u.id}">`
+      + `${u.type.name}${u.hp < u.type.hp ? ` <span class="dim">${Math.ceil(u.hp)}hp</span>` : ''}</button>`).join('')
+      + `</div>`;
+    html += `<div style="margin-top:8px">`
+      + `<button id="split-all">All</button> <button id="split-none">None</button> `
+      + `<button id="split-ok"${picked.size === 0 || picked.size === us.length ? ' disabled title="Pick some — but not all — of the group"' : ''}>Split (${picked.size})</button> `
+      + `<button id="split-cancel">Cancel</button></div>`;
+    return html;
+  }
+
+  wireSplit(p, us) {
+    const picked = this.splitMode.picked;
+    p.querySelectorAll('.chip[data-uid]').forEach(btn => {
+      btn.onclick = () => {
+        const id = +btn.dataset.uid;
+        if (picked.has(id)) picked.delete(id); else picked.add(id);
+        this.refreshPanel();
+      };
+    });
+    document.getElementById('split-all').onclick = () => { for (const u of us) picked.add(u.id); this.refreshPanel(); };
+    document.getElementById('split-none').onclick = () => { picked.clear(); this.refreshPanel(); };
+    document.getElementById('split-cancel').onclick = () => { this.splitMode = null; this.refreshPanel(); };
+    const ok = document.getElementById('split-ok');
+    if (ok && !ok.disabled) ok.onclick = () => {
+      const chosen = us.filter(u => picked.has(u.id));
+      this.splitMode = null;
+      this.selection.units = chosen;
+      game.log(`${chosen.length} troop${chosen.length > 1 ? 's' : ''} split off — give this group its own role.`, 'good');
+      this.refreshPanel();
+    };
   }
 
   // ---------- topbar info tooltips ----------
@@ -1494,6 +1700,16 @@ class UI {
       ctx.beginPath();
       ctx.ellipse(px, footY, 7 * z, 3 * z, 0, 0, Math.PI * 2);
       ctx.stroke();
+      // A garrisoned unit also shows the post it is holding, so "Defensive"
+      // has somewhere to point at on the map rather than only in the panel.
+      if (u.garrisoned()) {
+        const [gx, gy] = this.worldToScreen(u.defensivePost[0] + 0.5, u.defensivePost[1] + 0.5);
+        ctx.strokeStyle = 'rgba(140,200,255,0.7)';
+        ctx.setLineDash([3 * z, 3 * z]);
+        ctx.beginPath(); ctx.moveTo(px, footY); ctx.lineTo(gx, gy); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(gx, gy, 5 * z, 2.5 * z, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
     ctx.save();
     if (u.facing < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }

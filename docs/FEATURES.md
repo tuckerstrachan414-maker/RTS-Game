@@ -211,41 +211,153 @@ means a capped-price market never truly runs out of goods.
 
 ## Raiding & plunder — Deep
 
-`js/units.js`, `js/main.js`. Two paths: Bandits (fast, fragile, `robber`) are
-sent onto an enemy storage building, siphon 30/s prioritizing gold → stone →
-wood → food up to a 45 carry cap, then auto-haul home and bank the take.
-Razing a storage building spills its entire stock as a ground loot pile; units
-have per-type carry capacities (0 for King/Prince), pick loot up by standing on
-it, idle carriers within 5 tiles are auto-drawn to it, laden porters show a
+`js/units.js`, `js/main.js`. Two paths, and **the Bandit is the only unit
+involved in either** — every other troop has `carry: 0` and physically cannot
+pick plunder up. Bandits (fast, fragile, `robber`) are sent onto an enemy
+storage building, siphon 30/s prioritizing gold → stone → wood → food up to a
+45 carry cap, then auto-haul home and bank the take. Razing a storage building
+spills its entire stock as a ground loot pile; a Bandit picks it up by standing
+on it, an idle Bandit within 5 tiles is auto-drawn to it, laden Bandits show a
 sack sprite and spill their cargo when killed, and piles decay after 120s (with
 a blink warning). The AI trains bandits in wartime and targets the richest
-enemy storehouse.
+enemy storehouse. The design consequence is deliberate: an army that sacks a
+storehouse without a raider along watches the spoils rot on the ground.
 
 ## Units & combat — Deep
 
-`js/units.js`. 13 unit types across 3 castle tiers, with three damage types
-(melee/pierce/magic), armor (Shieldman, ignored by magic), an anti-cavalry
-bonus (Spearman ×2.2 vs horse units), projectiles (arrows, fireballs with
-splash), the unique King (aura: +15% damage in 4 tiles; morale penalty on
-death), and the Prince envoy. Real-time combat with cooldowns, auto-acquire
+`js/units.js`. **Nine** unit types across 3 castle tiers, with three damage
+types (melee/pierce/magic), armor (Halberdier, ignored by magic), an
+anti-cavalry bonus (Spearman ×2.2 vs Cavalier), projectiles (arrows, fireballs
+with splash), the unique King (aura: +15% damage in 4 tiles; morale penalty on
+death), and the Prince envoy. The roster was cut from 13 to 9 (Shieldman,
+Crossbowman, Archmage and Horseman are gone) so that no unit is a strictly
+better version of another: tier 1 is Swordsman / Spearman / Archer / Bandit /
+Prince, tier 2 is Halberdier (the armoured tank, which inherited the
+Shieldman's armor at 2) and Cavalier (shock cavalry, promoted down from tier
+3), tier 3 is Mage and King. Real-time combat with cooldowns, auto-acquire
 within 5 tiles, fight-back when hit, periodic repathing toward moving targets,
 building attack/destruction. Training consumes a citizen (requires 2 free) and
 runs through a per-castle queue with rally points.
 
+Note that armor is what gives the three damage types their teeth — magic
+ignores it, melee and pierce do not — so the Halberdier carrying armor is
+load-bearing for the whole damage-type system, not flavour.
+
+### Targeting priorities
+
+`Unit.targetPriority`, `TARGET_PRIORITIES` and `matchesPriority` in
+`js/units.js`; the dropdown in `UI.targetPriorityHTML` (`js/ui.js`). Every
+selected group can be told what to go looking for a fight with: **Anything**
+(default), **Troops only**, **Buildings only**, or one specific building type —
+Town Halls, Storehouses, Farms, Houses. Set it on the unit selection panel and
+it applies to every non-envoy unit in the selection; a selection whose members
+disagree shows a non-selectable "Mixed" entry until one is chosen for all.
+
+The priority filters **proactive acquisition only** — `findEnemyNear`, the
+5-tile auto-target sweep — and deliberately nothing else:
+
+- A direct attack order from the player always lands whatever it was aimed at.
+  The priority is standing orders, not a restraining order.
+- A unit that is *idle* when something hits it still fights back
+  (`Unit.takeDamage`), so a Storehouses-only group is never a row of statues
+  being shot to pieces.
+- A unit that already has a target is not diverted by either mechanism, which
+  is what makes "Buildings only" work as a siege order: the group walks past
+  the defenders, latches onto the works, and stays on them.
+
+A priority that matches nothing within 5 tiles finds nothing, which is the
+point — that is the difference between a group that grinds through the garrison
+and one that goes straight for the granaries. Set on units, not on the
+selection, so it survives deselecting and reselecting. AI units leave it at
+`any`.
+
+### Group roles — offensive & defensive
+
+`Unit.groupRole` / `defensivePost` / `setGroupRole` / `tickPatrol` and
+`GROUP_ROLES` in `js/units.js`; `Territory.controls` and `patrolTileNear` in
+`js/territory.js`; the radio row and Split Group flow in `js/ui.js`. A selected
+group can be given a standing posture:
+
+- **Offensive** — never moves on its own; goes where it is sent, however far.
+  This is the historical default behaviour written down, not new behaviour.
+- **Defensive** — plants a `defensivePost` on the tile each unit is standing on
+  when the role is assigned, then garrisons it. An idle garrison patrols on a
+  5–11s cycle (de-phased per unit so a squad doesn't step off in lockstep) to a
+  random open tile inside **its own nation's territory** within 7 tiles of the
+  post, and walks straight back the moment it is more than `DEFENSE_LEASH` (10)
+  tiles out.
+- **None** — the un-assigned state. Behaves exactly like offensive; kept
+  distinct so the panel can say "no role" honestly.
+
+A garrison sweeps for targets **from its post rather than from itself**
+(`findEnemyNear`'s `ox`/`oy` arguments), so its reach is pinned to the ground it
+holds instead of creeping forward every time it takes a step toward something,
+and it drops any target that gets more than `DEFENSE_LEASH + 1` tiles from the
+post rather than giving chase. That +1 is hysteresis — without it a target
+hovering on the boundary is acquired and dropped on alternating ticks. The
+result is a garrison that cannot be baited: in a headless test a 4000 HP decoy
+retreating one tile per second out to 42 tiles from the post never pulled the
+garrison past 10.7 tiles.
+
+Ordering a defensive group to move **re-posts it** at the destination
+(`UI.rightClick`) — "defend there instead", rather than marching over and then
+walking all the way home again.
+
+**Split Group** (panel button, shown for selections of 2+ fighters) peels part
+of a selection into a group of its own: it opens a chip list of the selected
+troops, you toggle the ones to move, and confirming makes the picked troops the
+new selection — so the role and priority controls that reappear act on the new
+group alone. Map clicks are inert while the mode is open, so a stray tap cannot
+silently discard the pick. Selected garrisons draw a dashed tether to their post
+on the map, so "Defensive" has somewhere to point at outside the panel.
+
+Roles are player-facing only; AI units never set one.
+
 ## Formations & crowd separation — Deep
 
-`js/units.js` (`formationMove`, `separateUnits`). Group orders arrange units in
-rotated ranks facing travel direction — melee/tanky front, ranged/mages rear —
-one unique destination tile per unit via spiral search. Every tick, a spatial
-hash pushes overlapping units apart (0.45-tile radius, capped nudge,
-golden-angle split for perfectly stacked pairs), with an escape hatch for units
-stranded on impassable tiles. Full detail in `docs/formations-tiers-ui.md`.
+`js/units.js` (`formationMove`, `formationSlots`, `separateUnits`), `js/main.js`
+(persistence), `js/ui.js` (the panel). Group orders arrange units in rotated
+ranks facing travel direction, one unique destination tile per unit via spiral
+search — and both halves of that arrangement are now **player-configurable**
+from Menu → Formations:
+
+- **Shape** — `diamond` (default: a point that widens to a middle rank and
+  narrows again; a group of n fits inside a diamond `ceil(sqrt(n))` ranks wide,
+  and a group too small to fill it marches as the leading wedge) or
+  `rectangle` (the old block, up to 6 columns wide).
+- **Marching order** — a drag-reorderable list of all nine unit types, front of
+  the formation first. It replaces the old hardcoded melee-then-ranged sort;
+  that sort survives as the default order. Units of a type not in the list fall
+  to the back, and the sort is stable, so identical orders always produce
+  identical ranks.
+- **Group pace** — a formation now marches at the speed of its *slowest*
+  member (`Unit.formSpeed`, cleared by any non-formation order and on arrival),
+  so cavalry no longer arrives alone several seconds ahead of the shield wall.
+  Measured over a 26-tile march, a Cavalier and a Swordsman end up 1.2 tiles
+  apart with the cap and 8.1 without.
+
+Settings are saved to `localStorage` under `nations_formation_<nation name>`
+and reloaded by the `Game` constructor, so a doctrine persists across
+playthroughs. Loading is defensive (`sanitizeFormations` in `js/main.js`): an
+unknown shape falls back to the default, and unit keys that no longer exist —
+a save written before the roster was cut to nine — are dropped, deduplicated,
+and any newly added type is appended.
+
+The pace cap applies to every nation (it is formation integrity, not taste),
+but the shape and order preference applies to **the player's groups only** —
+AI waves call the same `formationMove` and form up on the defaults, because a
+toggle in the player's menu should not reshape enemy armies.
+
+Every tick, a spatial hash pushes overlapping units apart (0.45-tile radius,
+capped nudge, golden-angle split for perfectly stacked pairs), with an escape
+hatch for units stranded on impassable tiles. Full detail in
+`docs/formations-tiers-ui.md`.
 
 ## Castle tiers — Moderate
 
 `js/buildings.js` (`CASTLE_UPGRADES`), `js/factions.js`. Two purchasable
-upgrades: Garrison (tier 2: Shieldman/Halberdier/Crossbowman/Horseman) and
-Royal Academy (tier 3: Mage/Archmage/Cavalier/King). Locked units render with
+upgrades: Garrison (tier 2: Halberdier/Cavalier) and
+Royal Academy (tier 3: Mage/King). Locked units render with
 a lock icon and unlock hint. The AI buys upgrades under threat/doctrine/
 population triggers (conquest and prosperity upgrade eagerly) and filters its
 training pool by tier. Data-driven — a tier 4 needs only data entries. The
@@ -365,8 +477,16 @@ and spark **border disputes**; so does completing a building on another
 nation's claim. Player disputes arrive as event cards (Concede / Negotiate
 40g / Stand firm — ignoring one is worse); AI–AI disputes resolve from
 strength, ambition and relations, and can harden into wars or soften into
-trade pacts. Gaps: territory has no direct economic effect (no tile tribute),
-walls don't project claims far.
+trade pacts. Two helpers hang off the same field for defensive garrisons
+(see "Group roles" above): `Territory.controls(fid, x, y)` is the bounds-safe
+"is this tile inside that nation's claim?" (`ownerAt` alone reads off the end
+of the array on an off-map tile), and `patrolTileNear(fid, cx, cy, radius)`
+draws a patrol leg — a random open tile inside the nation's own claim within
+`radius` of the post, from `game.rng` so a seed replays the same routes. It
+returns null when the post sits outside its own territory, and a garrison
+posted on foreign ground then simply holds position rather than wandering off
+looking for friendly soil. Gaps: territory has no direct economic effect (no
+tile tribute), walls don't project claims far.
 
 ## Event cards — Moderate
 
@@ -415,6 +535,35 @@ without the player watching — an unwatched corner of the continent can end up
 one giant empire, or the player can outlast every rival and simply keep ruling
 alone; neither stops the sim. No score screen or stats beyond lifetime trade
 gold.
+
+## Dev mode — Basic
+
+`game.devMode` (`js/main.js`), `Game.devTopOff`/`Game.toggleDevMode`; the
+"Dev Mode" toggle in the pause menu (`js/ui.js`, `index.html`). A cheat for
+testing, player-only:
+
+- **Infinite resources.** Every tick while devMode is on, `devTopOff` writes
+  `DEV_RESOURCE_FLOOR` (9999) directly into the player's Town Hall's `store`
+  for each resource if it's below that — bypassing normal storage capacity
+  (`capacityFor`) entirely, since the Town Hall's declared caps (300 food/
+  wood/stone) are far below the floor. This is a deliberate bypass, not a
+  change to how storage capacity normally works for anyone else, including
+  AI nations. It runs every tick rather than once on toggle, so ordinary
+  consumption (eating, upkeep, training/building costs) never drains it for
+  more than an instant.
+- **Unlimited troops.** `Faction.trainUnit` skips the "No free citizens"
+  population gate and the cost/pay step entirely when `this.isPlayer &&
+  game.devMode` — necessary because, unlike resources, population is never
+  topped off, so training would still consume it and eventually hit the gate
+  even with infinite gold sitting in the bank.
+- Castle-tier locks, the one-King rule, and the Grand Castle's population/
+  happiness gates are untouched — those are progression rules, not resource
+  constraints, and stay in effect even in dev mode. (Costs for the castle
+  upgrades and the Grand Castle are trivially affordable once resources are
+  topped off, so tier progression is still fast — just not instant.)
+- A red "DEV" badge appears in the topbar the whole time it's on, so it's
+  never accidentally left running unnoticed. Not persisted — resets to off on
+  reload/new game, since it's a debug aid, not a game setting.
 
 ## Desktop UI/HUD — Deep
 
@@ -531,8 +680,10 @@ the faction colour) and the two farmland tiles. `drawBuilding` prefers a baked
 canvas over the atlas lookup, so `BUILDING_TYPES.art` is `null` for those types.
 Note the church is baked from the *untouched* atlas and tinted afterwards:
 `strip` matches exact hexes, and on the recoloured faction sheet the caps'
-pinks have already moved. Gaps: bandits reuse the horseman sprite
-(distinguished only by behavior); the day/night indicator in the topbar is
+pinks have already moved. Gaps: bandits and trade caravans both ride the
+horseman sheet, which is no longer any unit type's own art — it survives in
+`UNIT_SHEETS` purely as the Bandit's `spriteKey` (and the caravan's, since
+caravans spawn as Bandits with `carryCap` zeroed); the day/night indicator in the topbar is
 still an emoji glyph (no sun/moon in `icons16x16.png`) — the last one, now that
 the Copy/Paste buttons have dropped their clipboard; multi-tile buildings
 scale one 16×16 cell up to their footprint, so a 2×2 Castle has visibly

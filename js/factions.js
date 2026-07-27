@@ -52,10 +52,16 @@ class Faction {
     const type = UNIT_TYPES[typeKey];
     if (type.tier > this.castleTier) return `Locked — requires the ${CASTLE_UPGRADES[type.tier].name} castle upgrade`;
     if (type.unique && (this.kingAlive || this.units.some(u => u.alive && u.type.key === 'king') || castle.trainQueue.some(q => q.unitKey === 'king'))) return 'Only one King';
-    if (this.nation.pop <= this.nation.workersAssigned() + 1) return 'No free citizens';
-    if (!this.nation.canAfford(type.cost)) return 'Not enough resources';
-    this.nation.pay(type.cost);
-    this.nation.pop--;   // a citizen becomes a soldier
+    // Dev mode's resource top-off (Game.devTopOff) already makes canAfford pass
+    // in practice, but population is never topped off — training would still
+    // eat into it and eventually hit "No free citizens" without this bypass.
+    const dev = this.isPlayer && game.devMode;
+    if (!dev) {
+      if (this.nation.pop <= this.nation.workersAssigned() + 1) return 'No free citizens';
+      if (!this.nation.canAfford(type.cost)) return 'Not enough resources';
+      this.nation.pay(type.cost);
+      this.nation.pop--;   // a citizen becomes a soldier
+    }
     castle.trainQueue.push({ unitKey: typeKey, t: 0 });
     return null;
   }

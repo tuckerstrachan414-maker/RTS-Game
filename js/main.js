@@ -29,12 +29,20 @@ const DAY_LENGTH = 150;
 const NIGHT_LENGTH = 150;
 const DAY_NIGHT_CYCLE = DAY_LENGTH + NIGHT_LENGTH;
 
+// Dev-mode cheat: floor the player's Town Hall reserves at this level every
+// tick (see Game.devTopOff) so resources never run out. Written directly to
+// the building's store, bypassing storage capacity — a deliberate cheat, not
+// a change to how storage normally works. Comfortably above every cost in the
+// game (the priciest single thing, the King, is food 100 / gold 100).
+const DEV_RESOURCE_FLOOR = 9999;
+
 let game = null;
 
 class Game {
   constructor(seed, diffKey = 'ramped') {
     this.diffKey = DIFFICULTIES[diffKey] ? diffKey : 'ramped';
     this.diff = DIFFICULTIES[this.diffKey];
+    this.devMode = false;   // cheat toggle: infinite resources + free/unlimited training for the player
     this.map = new GameMap(seed);
     this.factions = [];
     this.projectiles = [];
@@ -57,6 +65,9 @@ class Game {
     }
     this.diplomacy = new Diplomacy(4);
     this.territory = new Territory(4);
+    // Marching doctrine: shape of the ranks and which unit types take the front.
+    // Player-set (Menu → Formations) and remembered across games.
+    this.formations = loadFormations(this.factions[0].name);
     // found each nation at its start zone
     this.map.startZones.forEach((z, i) => {
       const th = placeBuilding(this, 'townhall', z.x - 1, z.y - 1, i);
@@ -114,6 +125,7 @@ class Game {
     for (const f of this.factions) {
       if (f.eliminated) continue;
       f.nation.tick(dt);
+      if (this.devMode && f.isPlayer) this.devTopOff(f.nation);
       f.tickTraining(dt);
       if (!f.isPlayer) aiTick(f, dt);
       for (const u of f.units) u.tick(dt);
@@ -197,6 +209,23 @@ class Game {
     if (this.factions[0].eliminated) this.end('Your Town Hall lies in ruins. The nation is lost.');
   }
 
+  // Refills the player's Town Hall directly, bypassing normal storage capacity —
+  // the Town Hall always exists while the nation is alive, so this can't no-op
+  // the way depositing into a full Storehouse would. Runs every tick devMode is
+  // on, so consumption (eating, upkeep, spending) never drains it for long.
+  devTopOff(nation) {
+    const th = nation.faction.buildings.find(b => b.type.key === 'townhall');
+    if (!th) return;
+    for (const r of RES_KEYS) if (th.store[r] < DEV_RESOURCE_FLOOR) th.store[r] = DEV_RESOURCE_FLOOR;
+  }
+
+  toggleDevMode() {
+    this.devMode = !this.devMode;
+    this.log(this.devMode ? 'Dev mode ON — infinite resources, unlimited training.' : 'Dev mode off.',
+      this.devMode ? 'good' : '');
+    return this.devMode;
+  }
+
   // Freeze the sim and show the end screen. There is only one road here — the
   // player's nation has fallen — so there is no win branch and no way back in.
   end(text) {
@@ -207,6 +236,39 @@ class Game {
     el.querySelector('h1').innerHTML = '<span class="icon icon-skull"></span> Defeat';
     el.querySelector('p').textContent = text;
   }
+}
+
+// ---------- formation settings ----------
+// Stored per nation name (the player is always Azuria today, but keying by name
+// means a future "pick your nation" screen keeps a doctrine per nation for free)
+// and validated on the way in — a stale save from an older roster must not be
+// able to smuggle a removed unit key into formationMove's ordering.
+const FORMATION_KEY = name => `nations_formation_${name}`;
+
+function defaultFormations() {
+  return { shape: 'diamond', order: DEFAULT_FORMATION_ORDER.slice() };
+}
+
+function sanitizeFormations(raw) {
+  const out = defaultFormations();
+  if (!raw || typeof raw !== 'object') return out;
+  if (FORMATION_SHAPES.includes(raw.shape)) out.shape = raw.shape;
+  if (Array.isArray(raw.order)) {
+    // keep the saved order of keys that still exist, then append anything new
+    const kept = raw.order.filter((k, i) => UNIT_TYPES[k] && raw.order.indexOf(k) === i);
+    out.order = kept.concat(out.order.filter(k => !kept.includes(k)));
+  }
+  return out;
+}
+
+function loadFormations(name) {
+  try {
+    return sanitizeFormations(JSON.parse(localStorage.getItem(FORMATION_KEY(name))));
+  } catch (e) { return defaultFormations(); }   // storage blocked or corrupt JSON
+}
+
+function saveFormations(name, cfg) {
+  try { localStorage.setItem(FORMATION_KEY(name), JSON.stringify(cfg)); } catch (e) { /* storage may be blocked */ }
 }
 
 function onUnitDeath(unit, attacker) {

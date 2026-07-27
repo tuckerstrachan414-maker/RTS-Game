@@ -152,21 +152,78 @@ At war, you don't just burn buildings — you rob them.
   **Storehouse** and it siphons the goods inside, then flees home to bank them. Robbery
   doesn't destroy the building — it just empties it.
 - **Full raid:** send your army to raze a storehouse. When it falls, its entire stock
-  **spills onto the ground as loot**. Your troops must physically **carry the plunder
-  home** to a storehouse to keep it — cut down a laden porter and the loot spills again
-  for anyone to grab. Idle troops near spilled loot will move to collect it.
+  **spills onto the ground as loot**. Only **Bandits can carry it** — no other troop
+  has a cargo hold — so bring a raider or two along on a raid, or the spoils just sit
+  there and rot. A laden Bandit must physically carry the plunder home to a storehouse
+  to keep it; cut one down and the loot spills again for anyone to grab. Idle Bandits
+  near spilled loot will move to collect it.
 
 ## Your army
 
-**Castle upgrades unlock troops.** A fresh Castle trains Swordsmen, Spearmen,
-Archers, Bandits and the Prince. Buy the **Garrison** upgrade to unlock the
-Shieldman, Halberdier, Crossbowman and Horseman, then the **Royal Academy** for
-the Mage, Archmage, Cavalier and King. Locked troops show a 🔒 with what unlocks
-them — and AI nations climb the same tiers.
+**Nine troops, and each one does a job no other does.**
+
+| Tier | Troop | What it's for |
+|---|---|---|
+| 1 | **Swordsman** | Cheap line infantry — the body of any army |
+| 1 | **Spearman** | Just as cheap, and hits Cavaliers for ×2.2 |
+| 1 | **Archer** | Ranged, pierce damage, dies fast if anything reaches it |
+| 1 | **Bandit** | Fast raider — **the only troop that can carry plunder** |
+| 1 | **Prince** | Envoy, not a fighter; carries proposals to other nations |
+| 2 | **Halberdier** | Armoured tank — blades and arrows glance off, magic doesn't |
+| 2 | **Cavalier** | Fast, heavy shock cavalry. Spearmen are its answer |
+| 3 | **Mage** | Ranged magic with splash, and armour doesn't stop it |
+| 3 | **King** | One per nation. +15% damage to troops near him |
+
+**Castle upgrades unlock troops.** A fresh Castle trains the whole of tier 1.
+Buy the **Garrison** upgrade to unlock the Halberdier and Cavalier, then the
+**Royal Academy** for the Mage and the King. Locked troops show a 🔒 with what
+unlocks them — and AI nations climb the same tiers.
 
 **Armies march in formation.** Group move orders arrange your troops into ranks
-facing the direction of travel — melee up front, ranged and mages behind — and
-units physically push apart so they never stand inside each other.
+facing the direction of travel, and units physically push apart so they never
+stand inside each other. A formation also marches at the pace of its **slowest**
+member, so your Cavaliers no longer arrive alone, ten seconds ahead of the
+shield wall.
+
+**You decide how they march (Menu → Formations).**
+- **Shape:** a **Diamond** (a point that widens and narrows again — covers the
+  flanks) or a **Rectangle** (a solid block, up to six wide).
+- **Marching order:** drag the nine troop types into the order you want them to
+  hold the line. Whoever is at the top takes the point; whoever is at the bottom
+  brings up the rear. Put Halberdiers first to soak the charge, or Archers first
+  if you want them shooting before your infantry closes.
+- Both settings are **remembered between games**, so you set your doctrine once.
+
+**Tell a group what to hunt.** Select troops and use the **Targeting priority**
+dropdown on their panel: *Anything* (the default), *Troops only*, *Buildings
+only*, or one specific target — *Town Halls*, *Storehouses*, *Farms*, *Houses*.
+A siege group set to **Buildings only** walks past the defenders and puts
+everything into razing their works instead of getting bogged down in a brawl;
+set it to **Farms** and you starve a nation out instead of fighting it.
+
+Two things the priority does *not* do, on purpose: a direct attack order always
+hits what you aimed it at, and troops standing idle still fight back when
+they're attacked. It tells them what to *look for*, not what they're allowed to
+hit.
+
+**Give a group a standing role.** The same panel has **Group role**:
+- **Offensive** — never moves on its own. It waits for your orders and then goes
+  wherever you send it, however far.
+- **Defensive** — the troops take up a **post** on the ground they're standing on
+  and garrison it. They patrol your territory around it, attack anything hostile
+  that comes near — and **won't be lured away**. Bait them and they'll break off
+  and walk back. Order a defensive group to move and they re-post where they
+  arrive, so it means "defend *there* instead".
+- **None** — no standing orders, same as Offensive.
+
+Selected garrisons draw a dashed line to the post they're holding, so you can
+see what each group is guarding.
+
+**Split Group** peels part of a selection into a group of its own: press it, tap
+the troops you want to move out, then confirm. The troops you picked become the
+new selection, ready for their own role and targeting priority — so you can
+leave half your army home on **Defensive** and march the other half out on
+**Offensive** in a few taps.
 
 **Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.
@@ -233,7 +290,12 @@ you face in the late game may not be the one you started on. But it's only
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
 while it's up. From there: Diplomacy, Select Army (grabs your whole standing
-army), game **Speed** (1x/2x/3x), Hide UI, and New Game.
+army), Formations, game **Speed** (1x/2x/3x), Hide UI, **Dev Mode**, and New Game.
+
+**Dev Mode** (Menu → Dev Mode) is a cheat for testing: your resources never run
+out and training is never blocked by cost or population. A red **DEV** badge
+stays on the topbar the whole time it's on so it's never left running by
+accident, and it resets to off on a new game.
 
 **Controls (desktop):** WASD/arrows pan (Shift = faster) · wheel zooms ·
 left-click/drag selects an army, or buildings if the box has no units in it ·

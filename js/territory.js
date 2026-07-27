@@ -19,6 +19,13 @@ class Territory {
   pairKey(a, b) { return a < b ? a * this.n + b : b * this.n + a; }
   ownerAt(x, y) { return this.owner[y * MAP_W + x]; }
 
+  // Bounds-safe "is this tile inside `fid`'s claim?" — the question a defensive
+  // garrison asks before patrolling onto a tile (js/units.js, tickPatrol).
+  // `ownerAt` alone reads out of the array on an off-map tile.
+  controls(fid, x, y) {
+    return game.map.inBounds(x, y) && this.owner[y * MAP_W + x] === fid;
+  }
+
   // Influence radiates from completed buildings with linear falloff; the
   // strongest nation owns the tile, and a close runner-up marks it contested.
   recompute() {
@@ -83,6 +90,23 @@ class Territory {
       }
     }
   }
+}
+
+// A patrol leg for a defensive garrison: a random tile that is open ground,
+// inside `fid`'s own claim, and within `radius` of the post. Drawn from
+// `game.rng` so a seed replays the same patrol routes. Returns null when the
+// post sits outside its own territory (a garrison posted on foreign ground just
+// holds position rather than wandering off looking for friendly soil).
+function patrolTileNear(fid, cx, cy, radius) {
+  for (let i = 0; i < 20; i++) {
+    const a = game.rng() * Math.PI * 2;
+    const r = Math.sqrt(game.rng()) * radius;    // sqrt for an even spread over the disc
+    const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
+    if (!game.territory.controls(fid, x, y)) continue;
+    if (!game.map.passable(x, y, fid) || game.map.moveCost(x, y) !== 1) continue;
+    return [x, y];
+  }
+  return null;
 }
 
 // A finished building standing on another nation's claim starts a dispute

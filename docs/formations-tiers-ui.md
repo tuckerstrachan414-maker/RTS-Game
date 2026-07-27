@@ -19,13 +19,30 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
 1. Filters to movable units (alive, no active mission, not an envoy/Prince).
 2. Computes the group's centroid and the travel angle (`atan2` from centroid
    to target).
-3. Sorts units so melee (`range <= 1.5`) comes before ranged, and within each
-   bucket higher-HP units come first — melee/tanky units end up in the front
-   ranks.
-4. Lays units out in a rotated grid (`cols` scales with group size, capped at
-   6): `depth` = which rank back from the point, `lateral` = position across
-   that rank, both rotated by the travel angle so the formation always faces
-   where it's going.
+3. Sorts units by the *player's* marching order (`game.formations.order`, an
+   array of unit keys, front first). A type not in the list sorts to the back.
+   `Array.prototype.sort` is stable, so units of the same type keep their
+   relative order between identical commands. The default order is the old
+   hardcoded rule spelled out as data — melee, then ranged, tankiest first:
+   `sword, spear, halberd, cavalier, king, archer, mage, bandit, prince`.
+4. Asks `formationSlots(n, shape)` for `n` `[depth, lateral]` offsets in
+   formation space (`-depth` = ranks back from the point, `lateral` = across),
+   then rotates each by the travel angle so the formation always faces where
+   it's going. Two shapes:
+   - `rectangle` — the original block. `cols = clamp(ceil(sqrt(n * 1.7)), 2, 6)`,
+     ranks stacked behind it.
+   - `diamond` (default) — rank widths `1,2,…,W,…,2,1` where `W = ceil(sqrt(n))`.
+     That sequence sums to exactly `W²  >= n`, so there is always room; a group
+     too small to reach the wide rank just stops partway and marches as a wedge.
+     Slots are filled front-to-back, so the head of the marching order takes the
+     point.
+4b. Caps every unit's speed to the group's slowest member (`Unit.formSpeed`,
+   read in `followPath` *before* the terrain `moveCost` divisor, so roads and
+   forest still modulate the capped pace). `formSpeed` is cleared on arrival and
+   by `orderAttack`/`orderRob`/any plain `orderMove`, so it never leaks into a
+   unit's next order. Without this a Cavalier (speed 3.2) reached a target 26
+   tiles away 8.1 tiles ahead of a Swordsman (2.2) it set out beside; with it,
+   1.2.
 5. Each unit's ideal tile is resolved through `freeSpotNear` (spiral search,
    radius 0–2) against a `taken` set so no two units in the same order ever
    get the same destination tile. Falls back to the raw target tile if no
@@ -63,9 +80,149 @@ check relative to a unit that "shouldn't" be there. This was a real bug hit
 during testing (see Testing section) — six units stacked directly on the town
 hall footprint stayed frozen at distance 0 until this clause was added.
 
-If you touch formation logic, keep the melee-in-front sort stable — the AI
-and the player both rely on `formationMove` for group orders, so a formation
-that puts archers in the front line is a regression, not a style choice.
+If you touch formation logic, keep the sort stable — the AI and the player
+both rely on `formationMove` for group orders. The melee-in-front rule is now
+a *default*, not a law: the player can deliberately put archers in the front
+line from the Formations panel, and that is a choice, not a regression. What
+would be a regression is the default order changing, or the sort becoming
+unstable so a group reshuffles between identical commands.
+
+**The preference is the player's, the pace cap is everyone's.** `formationMove`
+only reads `game.formations` when `movers[0].faction === 0`; AI waves fall
+through to the defaults. The speed cap has no such guard — an AI wave arriving
+together is formation integrity, not the player's taste leaking into enemy
+doctrine.
+
+### The Formations panel — `index.html`, `js/ui.js`, `js/main.js`
+
+`#formation-panel` is a second modal overlay layered above `#pause-menu`
+(z-index 22 vs 20), opened from the `#pm-formations` button. It follows the
+pause menu's pattern exactly: `.open` class toggles `display`, a click on the
+backdrop closes it, and `ui.paused` stays true the whole time so the sim is
+frozen underneath. Escape closes the innermost overlay first — the keydown
+handler checks `#formation-panel.open` before `this.paused`, and
+`closeFormations` restores `paused` from whether the pause menu is still open,
+so Escape-Escape gets you back to the game.
+
+- `UI.refreshFormations()` rebuilds both controls from `game.formations`;
+  every edit goes through `UI.moveFormationRank(from, to)` or a shape button
+  and then `UI.commitFormations()`, which writes to `localStorage` immediately.
+  Nothing is buffered until "Done", so a closed tab never loses a setting.
+- Reordering is available two ways on purpose: HTML5 `draggable` for mouse,
+  and ▲/▼ buttons for touch, where drag events never fire at all. If you
+  replace the drag implementation, keep the buttons.
+- Persistence lives in `js/main.js`, not the UI: `loadFormations(name)` /
+  `saveFormations(name, cfg)` / `sanitizeFormations(raw)`, keyed
+  `nations_formation_<nation name>`. **Sanitize on load, always** — a save
+  written against an older roster still names units that no longer exist, and
+  an unknown key in `order` would silently sink every real unit's rank by one.
+  `sanitizeFormations` drops unknown keys, de-duplicates, appends any unit type
+  the save predates, and falls back to `diamond` for an unrecognized shape.
+  It is also the reason `localStorage` access is inside a `try` — storage can
+  be blocked outright, and the game must still boot.
+
+## Targeting priorities — `js/units.js`, `js/ui.js`
+
+`Unit.targetPriority` (default `'any'`) names one of `TARGET_PRIORITIES`, and
+`matchesPriority(priority, target)` is the single predicate — `units`,
+`structures`, or a literal `BUILDING_TYPES` key (`townhall`, `storehouse`,
+`farm`, `house`). Adding a new priority is one entry in that array plus, for a
+building type, nothing at all: the fallthrough case compares `t.type.key`.
+
+**The filter belongs in `findEnemyNear` and nowhere else.** That is the design,
+not an oversight, and there are three separate paths that could each have taken
+the filter and deliberately do not:
+
+- `Unit.orderAttack` — a direct order from the player. Standing orders never
+  override a specific one.
+- `Unit.takeDamage`'s fight-back clause. It only fires when the unit has no
+  target at all, so a group already busy on a building is not diverted by
+  taking fire, but a genuinely idle unit is never a statue. Both halves of that
+  matter: filter it and a Storehouses-only group stands and dies; drop the
+  `!this.target` guard and "Buildings only" stops working as a siege order.
+- The AI. `f.brain.combat` never sets a priority, so AI units sit at `any` and
+  behave exactly as before.
+
+Two smaller things worth knowing:
+
+- The 0.8 distance bias that leans acquisition toward troops over buildings
+  only applies when `priority === 'any'`. With buildings the sole eligible
+  target there is nothing to lean away from, and leaving the bias in made a
+  Storehouses-only group refuse targets it was standing next to.
+- `refreshPanel` runs twice a second off the frame loop and rebuilds the panel's
+  `innerHTML`, which would tear an open `<select>` out from under the player
+  mid-choice — and on touch, dismiss the OS picker. It now returns early while a
+  `<select>` inside `#panel` holds focus. Anything else interactive and stateful
+  added to that panel needs the same treatment (or `sel.blur()` before an
+  explicit refresh, which is what the change handler does).
+
+## Group roles — `js/units.js`, `js/territory.js`, `js/ui.js`
+
+`Unit.groupRole` is `null | 'offensive' | 'defensive'`. Only `defensive` has
+behaviour of its own; `offensive` and `null` are both "the way units have always
+worked", kept as separate values so the panel can distinguish *set to
+offensive* from *never assigned*.
+
+`setGroupRole(role)` is the only place `defensivePost` is written on
+assignment, and it plants the post on the tile the unit is standing on right
+then — that is what makes "select a group, mark it Defensive" read as "hold this
+ground" rather than needing a second click to say where.
+
+Three separate mechanisms keep a garrison on its post, and all three are load
+bearing — remove any one and it wanders:
+
+1. **Acquisition is anchored to the post, not the unit.** `findEnemyNear` grew
+   optional `ox`/`oy` origin arguments; a garrison passes its post. Sweeping
+   from the unit instead would let the watched circle creep forward one step at
+   a time as the unit walks toward whatever it found — a garrison would inch
+   across the map behind a retreating enemy without ever technically chasing.
+2. **The leash drops targets.** Anything more than `DEFENSE_LEASH + 1` (11)
+   tiles from the post is released rather than pursued. The `+ 1` is
+   hysteresis; without it a target sitting exactly on the boundary is acquired
+   and dropped on alternating ticks, and the unit judders in place.
+3. **Patrol pulls it home.** `tickPatrol` runs only when the unit is idle with
+   no target and no path (the last `else if` in `Unit.tick`, ahead of the plain
+   idle case). Past the leash it walks straight back to the post; inside it, it
+   takes a new patrol leg every 5–11s. `setGroupRole` seeds `patrolT` from
+   `game.rng()` so a squad assigned together does not step off in lockstep.
+
+Verified by lure test rather than by reading: a 4000 HP decoy retreating one
+tile per second out to 42 tiles from the post never pulled the garrison past
+10.7 tiles, and tick-by-tick sampling over 90s found a patrolling garrison
+outside its own claim on 0% of ticks.
+
+Patrol legs come from `patrolTileNear` in `js/territory.js` (next to
+`Territory.controls`, the bounds-safe claim test) — territory knowledge belongs
+with territory. It draws from `game.rng`, not `Math.random`, so seeds replay;
+it filters to open ground (`moveCost === 1`) as well as passable, same reason
+`freeSpotNear` does; and it returns null rather than falling back to any
+passable tile, so a garrison posted outside its own claim holds position
+instead of hunting for friendly soil.
+
+`UI.rightClick` re-posts a defensive group at its move destination. Without
+that, ordering a garrison to move produces a unit that walks there, goes idle,
+notices it is past the leash, and walks all the way back — which looks exactly
+like a bug.
+
+### Split Group — `js/ui.js`
+
+`ui.splitMode` is `null` or `{picked: Set<unitId>}`. When set, `refreshPanel`
+renders the chip list (`splitHTML`/`wireSplit`) instead of the normal unit
+panel, and `clickSelect`, `boxSelect` and `rightClick` all return early — the
+chips are the only input, so a stray tap on the map cannot silently discard a
+half-finished pick. `clearSelection` clears the mode, since the selection the
+pick refers to is gone.
+
+Confirming replaces `selection.units` with the picked troops, which is the whole
+point: the role and priority controls that reappear then act on the new group
+alone. Confirm is disabled at 0 picks and at all of them — neither is a split.
+The chip list is capped at `34vh` with `overflow-y: auto`, because a
+select-army on a large army puts 30+ chips in a panel that already has to fit
+above the build bar on a landscape phone.
+
+Note the chips are rebuilt on every click (the whole panel is `innerHTML`), so
+anything holding a reference to a chip element across a click is holding a
+detached node — it caught the test harness before it caught a user.
 
 ## Castle-tier troop unlocks — `js/buildings.js`, `js/factions.js`, `js/ui.js`
 
@@ -74,8 +231,9 @@ upgrade tiers above the base castle.
 
 - `UNIT_TIERS` (`js/units.js`, near the top) maps unit key → tier. Anything
   not listed defaults to tier 1 (always available): sword, spear, archer,
-  bandit, prince. Tier 2: shield, halberd, crossbow, horseman. Tier 3: mage,
-  archmage, cavalier, king.
+  bandit, prince. Tier 2: halberd, cavalier. Tier 3: mage, king. (The roster
+  is nine units now — shield, crossbow, archmage and horseman were cut, and
+  cavalier dropped from tier 3 to tier 2 to keep the Garrison worth buying.)
 - `CASTLE_UPGRADES` (`js/buildings.js`, right after `BUILD_MENU`) is keyed by
   the tier it unlocks (`2`, `3`), each entry `{ name, cost, time, desc }`.
   Tier 2 = "Garrison" (100 wood / 80 stone / 60 gold, 20s). Tier 3 = "Royal
@@ -576,6 +734,21 @@ Things worth re-checking after any change in this area:
   distances exceed `SEP_RADIUS`.
 - Send a mixed-composition group on a formation move, assert every unit gets
   a unique `dest` tile and melee units land closer to the target than ranged.
+- **Start a formation march from open ground, not from the town hall tile.**
+  Teleporting a test squad to `[round(th.cx), round(th.cy)]` puts it inside the
+  Town Hall footprint, where `findPath` starts on an impassable tile — a third
+  of the group then never arrives and the run looks like a formation bug. Use
+  `Faction.spawnPointNear(th)` and spread the units over passable tiles.
+  Two separate formation "failures" were this and nothing else.
+- Compare capped against uncapped pace on *two units with different speeds over
+  a long march* (a Cavalier and a Swordsman, 25+ tiles), measuring the distance
+  between them. Whole-group spread measured from a scattered start is dominated
+  by the starting scatter and by formation depth, and shows nothing.
+- For a defensive garrison, sample the post distance **every tick**, not once at
+  the end — an end-state reading catches the unit mid-patrol-leg and says
+  nothing about whether the leash held. And bait it: a high-HP decoy that
+  retreats a tile per second is the test that actually exercises the leash,
+  because a stationary enemy inside it never asks the question.
 - Train a locked unit (expect a rejection string), buy the upgrade, tick past
   its `time`, train again (expect success); repeat for tier 3.
 - Simulate a tap, then a second tap at the same point within 350ms, assert
