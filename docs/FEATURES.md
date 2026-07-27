@@ -103,7 +103,18 @@ demolish with 75% refund (except Town Hall). **Any non-water building can be
 placed on forest or rock** — the footprint clears it, same as cutting a track
 (caves are still off-limits); the placement ghost fills the tile white when
 legal and red when blocked, and a tree inside the footprint fades so the wash
-doesn't have to fight a solid canopy (`drawGhost`/`drawForest`, `js/ui.js`).
+doesn't have to fight a solid canopy (`drawGhost`/`collectDepthLayers`,
+`js/ui.js`). **Every building reads as what it does.** Five types whose atlas
+cell said the wrong thing are composited at load time instead
+(`bakeBuildings`, `js/assets.js`): the Storehouse no longer shares the Lumber
+Camp's log cabin, the Quarry is a worked rock face rather than a cottage, the
+Well is a wellhead rather than a green mound near-identical to the CAVE terrain
+tile, the Church has a belfry and cross in place of two pink mushroom caps, and
+the Castle takes its nation's colour instead of staying violet for everyone.
+Farms had no art at all — they drew as two grass-tuft tiles, i.e. invisible —
+and now draw ploughed soil while under construction and a crop field once
+finished (`bakeFarmland`; `type.flat` marks them as ground art, painted with
+the terrain rather than in the depth pass).
 **Line placement is a true preview, not a live paint**: `beginPaint`/`paintTo`
 only recompute the previewed run (`ui.paint.line`) as the drag moves — every
 tile in it renders as an opaque ghost (`drawGhost`'s paint branch, sharing
@@ -362,8 +373,8 @@ of the previewed run (`ui.paint.line`), each checked against a running
 cost total so the wash goes red once the run would outspend the nation, not
 just when a single tile is blocked. `placementFootprint()` follows the same
 line (or just the hovered tile outside a drag) into the tile-index set
-`drawForest` uses to fade any tree inside it, so a forest placement's canopy
-doesn't visually fight the wash. The copy/paste preview (`drawPastePreview`)
+`collectDepthLayers` uses to fade any tree inside it, so a forest placement's
+canopy doesn't visually fight the wash. The copy/paste preview (`drawPastePreview`)
 reuses `drawGhostTile` too, but anchors to the screen's center tile instead of
 the cursor. **Ramparts** (`bakeRamparts` in `js/assets.js`,
 `drawRampart`/`drawTileSlice` in `js/ui.js`): walls and gates are assembled per
@@ -374,19 +385,34 @@ junctions, ends, lone posts and diagonals draw a half connector toward each
 neighbour they actually have and a tower over the join. Gates pick a vertical
 arch when the run through them is north–south. Each piece is the tileset's own
 art with the minimum edit needed to make its tile edges match (grass margins
-stripped, one band extended to the tile edge, one flattened column, and
-`GATE`'s arch composited into that column to make the vertical gate the
-tileset lacked). **Forest canopy pass** (`drawForest` /
-`drawTreeClump`): tree tiles are no longer drawn inside the terrain loop — the
-same three `AT.TREES` sprites are redrawn afterwards at `TREE_CANOPY` 2 tiles
-across, 2–4 to a tile, jittered and y-sorted so canopies overlap their
+stripped, one band extended to the tile edge, the vertical run and the tower
+sharing one body row so they cannot disagree on width, the tower's crown closed
+so a wall above it leaves no seam, and `GATE`'s arch composited into the column
+to make the vertical gate the tileset lacked). The owner marker goes on towers,
+gates and every third plain segment rather than every tile, so a long wall is
+not a dotted line of coloured squares. **Depth pass** (`collectDepthLayers` +
+one sort in `render`): everything with height — tree canopies, buildings,
+ramparts, units, loot piles — is drawn in a single list sorted by the world Y
+of its base, so whatever stands nearer the camera overlaps whatever stands
+behind it. The five separate passes this replaced meant a building always
+painted over the tree in front of it and a unit always painted over the
+building it was standing behind. Tree tiles are not drawn inside the terrain
+loop: the same three `AT.TREES` sprites are drawn in the depth pass at
+`TREE_CANOPY` 2 tiles across, 2–4 to a tile, jittered so canopies overlap their
 neighbours and a patch of `T_TREE` closes into a wood instead of a grid of
 lollipops. Clump density follows `countAdjacent(T_TREE)` (dense interior, sparse
 fringe) and drops at zoom 1; placement comes from `tileNoise(x, y)`, a pure
-function of the tile, so the forest never shimmers as the camera moves. The art
-itself is untouched. `drawForest` takes an optional fade set (tile indices to
-render translucent) so the placement ghost can preview a tree about to be
-cleared. Also: minimap (terrain + roads + buildings + units +
+function of the tile, so the forest never shimmers as the camera moves. Boulders
+get the same deterministic jitter in their own terrain sub-pass — stamped dead
+centre they lined up into a visible lattice. The art itself is untouched.
+`collectDepthLayers` takes an optional fade set (tile indices to render
+translucent) so the placement ghost can preview a tree about to be cleared.
+**Unit overlays** (`drawUnit`): the faction flash, health bar, caravan/envoy
+badge and plunder sack stack upward from the top of the *figure*, measured per
+sheet by `describeSheet`, not from the top of its 32px frame — a foot soldier's
+art starts 15 rows down it, so frame-anchored markers floated the better part of
+a tile above his head. The selection ring sits on the sprite's foot line for the
+same reason. Also: minimap (terrain + roads + buildings + units +
 territory ownership tint + viewport rectangle, click/tap to jump), dashed
 territory border lines on the main map, event cards (`#eventcard`, see Event
 cards above). Topbar with live stats, tax slider,
@@ -408,16 +434,51 @@ box-selects, double-tap or two-finger tap issues the command (move/attack/
 rob/rally) with deferred-select logic so double-taps don't drop the selection.
 Safe-area insets, coarse-pointer sizing, portrait rotate prompt with a
 persisted "play anyway" choice, orientation/visualViewport resize handling.
+Panel placement is driven by shared `--hud-*` custom properties rather than
+per-panel arithmetic, so every floating block clears the resource bar and the
+build bar by the same margin and each owns one screen slot (see "HUD layout &
+stacking" in `docs/formations-tiers-ui.md`). On a landscape phone the build bar
+fits its full row of 13 buttons, the diplomacy panel becomes a centred sheet
+with a backdrop and outranks the build bar and log in the stacking order, the
+event card moves to the top row rather than fighting the build panel for the
+bottom-left corner, and the pre-game/end overlays scroll instead of clipping.
+The message log keeps 3 lines instead of 7 on a short screen.
 
-## Rendering & assets — Moderate
+## Rendering & assets — Deep
 
 `js/assets.js`. Tile atlas mapping, per-faction palette swap at load (hue-band
-recolor: blue clothing for units, orange roofs for buildings), automatic
-animation table detection by scanning sheet rows for non-empty frames
-(idle/walk/attack/hurt/death), projectile sheet, pixel-art icon CSS sprites
-replacing emoji throughout the HUD. Gaps: bandits reuse the horseman sprite
-(distinguished only by behavior), farms/walls are procedurally drawn rather
-than sprite art.
+recolor: blue clothing for units via `hue`, warm masonry for buildings via
+`roofHue`), automatic animation table detection by scanning sheet rows for
+non-empty frames (idle/walk/attack/hurt/death) plus the opaque bounds of the
+figure inside its frame (`top`/`bottom`, used to place unit overlays and the
+selection ring), projectile sheet, pixel-art icon CSS sprites replacing emoji
+throughout the HUD.
+
+The two hue knobs used to be one. `hue: null` meant "leave the art alone",
+which is right for the player's units (the Minifolks art is already blue) but
+left Azuria fielding blue troops out of *orange* buildings while every rival's
+buildings matched their banner. `roofHue` is now set for all four nations, and
+the warm band wraps through red (345°–42°) instead of starting at 8° so the
+Lumber Camp's timber — which straddles that seam and so half-recoloured —
+takes the nation's colour cleanly along with everything else.
+
+**Composited building art (`bakeBuildings`, `bakeFarmland`, `bakeArt`).** Same
+approach as `bakeRamparts`: no new image assets, just the atlas plus a few
+pixel ops per tile, baked once per faction at load. Covers the Storehouse
+(barn doors and sacks on the house silhouette — it shared the Lumber Camp's
+cell), the Quarry (a rock face and dressed blocks — the cell was a cottage),
+the Well (a wellhead — the cell was a green mound all but identical to the CAVE
+terrain tile), the Church (mushroom caps `strip`ped off, belfry/spire/cross and
+a gabled nave drawn on), the Castle (`shiftHue` moves its violet stonework onto
+the faction colour) and the two farmland tiles. `drawBuilding` prefers a baked
+canvas over the atlas lookup, so `BUILDING_TYPES.art` is `null` for those types.
+Note the church is baked from the *untouched* atlas and tinted afterwards:
+`strip` matches exact hexes, and on the recoloured faction sheet the caps'
+pinks have already moved. Gaps: bandits reuse the horseman sprite
+(distinguished only by behavior); the day/night indicator in the topbar is
+still an emoji glyph (no sun/moon in `icons16x16.png`); multi-tile buildings
+scale one 16×16 cell up to their footprint, so a 2×2 Castle has visibly
+chunkier pixels than a 1×1 House.
 
 **Tileset is a spliced composite, not a single source.** `assets/tileset16x16_1.png`
 is still one 8×14-cell, 16px-grid PNG at the same coordinates `AT` has always
@@ -436,9 +497,12 @@ strip autotile set), Wall/Gate/rampart art (`bakeRamparts` hardcodes pixel
 offsets against the original wall sprite's geometry — swapping it needs a
 rework, not a splice), Bridge (`bakeTile`'s seamless mid-tile replication is
 similarly geometry-specific), Castle, Church, Quarry, Mine, Lumber Camp/
-Storehouse, and base grass/crop tiles (shared coordinates with `CROP_VARS`,
-and swapping the grass hue risks a visible seam against water art's baked-in
-shoreline-over-grass blend). No code changed — `js/assets.js`, `js/ui.js`, and
+Storehouse, and base grass tiles (swapping the grass hue risks a visible seam
+against water art's baked-in shoreline-over-grass blend). `AT.CROP_VARS` is
+gone (farms have their own baked field tiles now) and so is `AT.QUARRY`;
+`AT.WELL` and `AT.WALL_V` are still catalogued but no longer drawn, along with
+the long-unused `AT.SAPLING` and `AT.POND_DECOR` — there is a note listing all
+four under the `AT` table in `js/assets.js`. No code changed — `js/assets.js`, `js/ui.js`, and
 `js/buildings.js` are untouched; this was purely `assets/tileset16x16_1.png`
 pixels at existing `AT` coordinates. A backup of the pre-splice original is not
 kept in-repo (recoverable via git history).

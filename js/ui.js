@@ -1065,7 +1065,7 @@ class UI {
     const y1 = Math.min(MAP_H - 1, Math.ceil(this.cam.y + this.canvas.height / s));
     const map = game.map;
 
-    // terrain
+    // terrain: strictly tile-bound artwork first…
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         const i = map.idx(x, y);
@@ -1079,13 +1079,25 @@ class UI {
           if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
           else if (map.bridge[i]) this.tile(AT.BRIDGE_H, x, y);
         } else if (t === T_TREE) {
-          // canopy is drawn in its own pass below so it can overlap neighbours
+          // canopy is drawn in the depth pass below so it can overlap neighbours
           if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
-        } else if (t === T_ROCK) {
-          this.tile(AT.ROCKS[map.decor[i] % 5], x, y);
         } else if (t === T_CAVE) {
           this.tile(AT.CAVE, x, y);
         }
+      }
+    }
+    // …then boulders, which spill past their own tile. Stamped dead centre they lined up
+    // into a visible lattice; jittering them off the grid (deterministically, from the
+    // tile coordinates) makes a rocky patch read as scattered stone. Separate pass so a
+    // boulder leaning right is not clipped by the next tile's grass.
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = map.idx(x, y);
+        if (map.terrain[i] !== T_ROCK) continue;
+        const rnd = tileNoise(x, y);
+        this.spriteAt(AT.ROCKS[map.decor[i] % 5],
+          x + 0.5 + (rnd(0) - 0.5) * 0.34, y + 1 + (rnd(1) - 0.5) * 0.3,
+          0.95 + rnd(2) * 0.35);
       }
     }
 
@@ -1134,7 +1146,8 @@ class UI {
     if (this.mouse.dragStart) {
       const [sx, sy] = this.mouse.dragStart;
       ctx.strokeStyle = 'rgba(120,255,120,0.9)';
-      ctx.strokeRect(sx, sy, this.mouse.x - sx, this.mouse.y - sy);
+      ctx.lineWidth = 1;   // drawGhostTile/drawUnit leave their own width behind
+      ctx.strokeRect(sx + 0.5, sy + 0.5, this.mouse.x - sx, this.mouse.y - sy);
     }
 
     this.minimapT -= 1;

@@ -4,7 +4,8 @@
 const TILE = 16;          // tileset cell size in px
 const UF = 32;            // unit frame size in px
 
-// Tileset atlas coordinates [col,row] in tileset16x16_1.png (8x14 grid)
+// Tileset atlas coordinates [col,row] in tileset16x16_1.png (8x14 grid).
+// A few entries are catalogued but unreferenced — see the note under the table.
 const AT = {
   GRASS: [2, 4],
   GRASS_VARS: [[3, 4], [4, 4], [5, 4]],
@@ -45,6 +46,14 @@ const AT = {
   CHURCH: [4, 0],
   CASTLE: [5, 0],
 };
+
+// Catalogued but never drawn, kept so the next person hunting for art does not have
+// to rediscover them:
+//  SAPLING     — there is no tree regrowth (see docs/BUGS.md, design quirks)
+//  POND_DECOR  — decorative pond, never placed by the generator
+//  WELL        — a green mound with a doorway, all but identical to CAVE; the Well
+//                is composited in `bakeBuildings` instead
+//  WALL_V      — a 6px column; `bakeRamparts` takes its vertical run off WALL_TOWER
 
 // Unit spritesheets. Rows: 0=idle, 1=walk, rows-3=attack, rows-2=hurt, rows-1=death.
 const UNIT_SHEETS = {

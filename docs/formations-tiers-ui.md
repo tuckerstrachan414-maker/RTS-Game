@@ -190,6 +190,61 @@ the primary action and shown only on a win) and Play again. `Game.end` toggles
 the button's visibility and binds its handler; `Game.resume` hides the overlay
 and unfreezes the sim. See "Victory & defeat" in `docs/FEATURES.md`.
 
+## HUD layout & stacking — `index.html`
+
+The floating panels used to derive their offsets independently and collided on
+every viewport that was not a wide desktop. Four rules now hold the whole thing
+together; break any of them and something will overlap again.
+
+**1. Anchors come from CSS variables, not per-panel arithmetic.** `:root`
+defines `--hud-inset-t/r/b/l` (8px plus the matching `env(safe-area-inset-*)`),
+`--hud-row2` (the first free row *under* the resource bar:
+`inset-t + --topbar-h + 8px`) and `--hud-bottom2` (the first free row *above*
+the build bar). `--topbar-h`/`--sidebar-w`/`--buildbar-h` are kept live by
+`UI.watchLayout`'s `ResizeObserver`s, so collapsing a panel frees its space for
+its neighbours automatically. Panels that hung off `var(--topbar-h) + 8px`
+without adding the topbar's *own* 8px inset sat flush against it (or 2px under
+it, for `#diplomacy`).
+
+**2. A centred absolutely-positioned box uses `left:0; right:0; margin:0 auto`,
+never `left:50%` + `translateX(-50%)`.** An abspos box anchored only by `left`
+is shrink-to-fit against the space to its *right*, so `#buildbar` was capped at
+roughly half the viewport and clipped its last build buttons even at 1440px
+wide, `max-width: 96vw` notwithstanding. With `left:0; right:0; width:max-content`
+it centres at its natural width and only scrolls when it genuinely cannot fit
+(which on a 667px-wide phone it cannot — that is what `overflow-x:auto` is for).
+
+**3. Each panel owns one slot.** Top-left: log. Top-centre: tooltip. Top-right
+(left of the sidebar): diplomacy. Bottom-left: build panel. Bottom-centre:
+`#place-bar`. Bottom-right: event card. `#eventcard` and `#diplomacy` were both
+pinned to `top: topbar` / `right: sidebar + 16px`, i.e. the identical rectangle,
+so opening Diplomacy buried a pending card. On coarse pointers the diplomacy
+panel becomes a centred sheet and the event card moves to the top row, because
+the bottom strip only has room for one panel on a 390px-tall screen.
+
+**4. Placement controls live in `#place-bar`.** `#cancel-place`,
+`#rotate-place` and `#paste-place` used to be three separately positioned
+buttons at `top: 8px; left: 8/112/220px` — directly on top of the resource
+readouts, every time you picked a building, with hardcoded x offsets that would
+re-collide the moment a label's width changed. They are now flex children of
+one centred row above the build bar (`#place-bar .hud { position: static }`
+overrides `.hud`'s `position:absolute`). `UI.render` still toggles each
+button's own `display`; the wrapper collapses to zero width when they are all
+hidden. The hide-UI list carries `#place-bar` instead of the three ids.
+
+**Stacking order**, highest last: event card 6 · place bar 7 · diplomacy 8 ·
+tooltip 9 · game over 15 · pause menu 20 · difficulty 30 · rotate prompt 999.
+Everything else is `z-index: auto` and therefore in document order, which is
+what put the build bar and the message log *over* the touch diplomacy sheet.
+The tooltip outranks diplomacy because it is opened deliberately and closes on
+a tap; `#gameover` outranks every HUD panel because a game that has ended
+should not have a diplomacy panel floating on top of the result.
+
+Both full-screen overlays (`#difficulty`, `#gameover`) are
+`justify-content: safe center` with `overflow-y: auto`. Plain `center`
+overflows in *both* directions and the part above the viewport cannot be
+scrolled to, which clipped the first difficulty card on a 375px-tall phone.
+
 ## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
 
 Walls used to draw as procedural rectangles, then as one of two whole sprites
@@ -207,15 +262,24 @@ tile edges match its neighbours':
 | Piece | Source | Edit |
 |---|---|---|
 | `wallH` | `AT.WALL` | grass margin (cols 12–15) refilled from the parapet band at col 1, so the band reaches both edges. Pillar untouched |
-| `wallV` | `AT.WALL_V` (`[1,3]`, previously the unused `AT.ROAD`) | flattened to one repeated row; the column is already uniform, this just drops stray pixels that repeated into studs |
-| `tower` | `AT.WALL_TOWER` | grass stripped only |
+| `wallV` | `AT.WALL_TOWER` row 10 | that one row repeated down the tile |
+| `tower` | `AT.WALL_TOWER` | grass stripped; the empty top row filled from the crenellation below it |
 | `gateH` | `AT.GATE` | grass stripped only — its parapet already spans the full width on the same rows as `wallH`'s band |
-| `gateV` | `wallV` + `AT.GATE`'s arch | a 6×6 block of the arch, exactly the column's width, composited into the middle. The vertical gate the tileset never had |
+| `gateV` | `wallV` + `AT.GATE`'s arch | a 6×6 block of the arch composited into the middle. The vertical gate the tileset never had |
 
-The art cooperates more than it looks: `wallV`'s column is pixel-for-pixel the
-base `WALL_TOWER` already trails downward, and `GATE`'s parapet sits on exactly
-`WALL`'s band rows. All the seams are asserted in the verification script (see
-Testing below) by comparing edge rows/columns of the baked canvases.
+`wallV` was originally `AT.WALL_V` (`[1,3]`) flattened to one row, which is a
+**6px-wide column** (cols 5–10) with no shading. Beside `wallH`'s full-width
+parapet a north–south run read as a line of fence posts rather than a wall, and
+because the tower's body is 8px (cols 4–11) every tower in a vertical run
+stepped out a pixel on each side and back in again. Taking the row straight off
+`WALL_TOWER`'s own body makes wall and tower identical by construction — same
+width, same shading, no step. The tower's crown had the matching problem in the
+other axis: its row 0 is empty, so a wall coming down from the tile above met a
+one-pixel transparent seam; `fillRows` copies row 1 up into it.
+
+`GATE`'s parapet sits on exactly `WALL`'s band rows, so a gate drops into a
+horizontal run untouched. All the seams are asserted in the verification script
+(see Testing below) by comparing edge rows/columns of the baked canvases.
 
 **`drawRampart` (`js/ui.js`)** assembles each tile. A clean straight run draws
 the matching connector whole; anything else — corner, T, cross, end, lone post,
@@ -225,7 +289,9 @@ connector at a corner sprouts a length of wall into empty ground. Gates take
 the same stubs and cover the middle with the arch, choosing `gateV` when the
 run through them has more vertical neighbours than horizontal. The owner
 marker sits high on the parapet rather than at the tile centre, which is where
-a gate's archway is.
+a gate's archway is — and only on towers, gates and every third plain segment
+(`(b.x + b.y) % 3`), because one per tile turned a long wall into a dotted line
+of faction-coloured squares marching across the map.
 
 **Sprite baking (`bakeTile` in `js/assets.js`)** extracts a single 16×16
 atlas tile into its own canvas and cleans it up, via four independent options:
@@ -238,6 +304,7 @@ atlas tile into its own canvas and cleans it up, via four independent options:
   horizontal bridge doesn't need this and still draws straight from the atlas.
 - `fillCols: [x0, x1, src]` — overwrites columns `x0..x1` with a copy of column
   `src`, extending a band that stopped short of the tile edge. Used for `wallH`.
+- `fillRows: [y0, y1, src]` — the same for rows. Used to close the tower's crown.
 - `overlay: {at, sx, sy, w, h, dx, dy}` — composites a rect from another atlas
   tile on top. Used to put `GATE`'s arch into `gateV`.
 
@@ -250,23 +317,40 @@ source rect to the same fraction of the tile's screen rect, using the same
 maths at the extremes, so a half-tile stub lines up exactly with a full-tile
 draw of the same sprite.
 
-**Forest canopy (`drawForest` / `drawTreeClump` / `spriteAt` in `js/ui.js`)**
-is the other place tiles stopped drawing one-to-one. `T_TREE` tiles draw only
-their grass (and a tuft) in the terrain loop; the trees themselves come in a
-second pass right after it, so a canopy can spill over the tiles around it
-instead of being clipped by the next row of grass. Each tree tile draws 2–4
-copies of the *same* `AT.TREES` sprites — no new art — at ~`TREE_CANOPY` (2)
-tiles across, bottom-centre anchored via `spriteAt` so they grow upward out of
-their tile, jittered in both axes and drawn undergrowth-first. Clump size
-follows `countAdjacent(x, y, T_TREE)` so the interior of a wood is dense and the
-fringe still shows individual trees, and drops to two sprites at zoom 1 where
-the detail is sub-pixel anyway. All offsets come from `tileNoise(x, y)`, a pure
-hash of the tile coordinates — using `Math.random` here would make the forest
-crawl every frame. Draw order is terrain → canopy → borders → buildings →
-units, so units crossing a wood stay visible on top of it.
+**Forest canopy (`collectDepthLayers` / `drawTreeClump` / `spriteAt` in
+`js/ui.js`)** is the other place tiles stopped drawing one-to-one. `T_TREE`
+tiles draw only their grass (and a tuft) in the terrain loop; the trees
+themselves come from the depth pass below, so a canopy can spill over the tiles
+around it instead of being clipped by the next row of grass. Each tree tile
+draws 2–4 copies of the *same* `AT.TREES` sprites — no new art — at
+~`TREE_CANOPY` (2) tiles across, bottom-centre anchored via `spriteAt` so they
+grow upward out of their tile, jittered in both axes and drawn
+undergrowth-first. Clump size follows `countAdjacent(x, y, T_TREE)` so the
+interior of a wood is dense and the fringe still shows individual trees, and
+drops to two sprites at zoom 1 where the detail is sub-pixel anyway. All offsets
+come from `tileNoise(x, y)`, a pure hash of the tile coordinates — using
+`Math.random` here would make the forest crawl every frame. Boulders get the
+same jitter treatment in their own sub-pass of the terrain loop (stamped dead
+centre they lined up into a visible lattice), but stay under the depth pass —
+they are low enough that nothing needs to pass in front of them.
+
+**One depth pass for everything with height (`collectDepthLayers` + the sort in
+`render`).** Trees, buildings, ramparts, units and loot piles used to be five
+separate passes in a fixed order, which meant a building always painted over
+the tree standing *in front* of it and a unit always painted over the building
+it was standing *behind*. They now go into one list keyed by the world Y of
+each thing's base — `y + TREE_BASE` for a clump, `y + size` for a building,
+`y + UNIT_FOOT` for a unit (`drawUnit` hangs the 32px frame 0.72 of its height
+above the position and every sheet bottoms out on frame row 30, so the soles
+land 0.44 of a tile lower than `u.y`) — sorted ascending and drawn back to
+front. Farms are the exception: `type.flat` marks a building whose art lies on
+the ground, and those are painted with the terrain, because a crop field
+scrubbing out the bottom of a canopy in front of it is the same bug in reverse.
+Cost is ~1000 entries a frame at zoom 1, which measures as no change against
+the old multi-pass render.
 
 **Building on rough terrain + the placement ghost (`canPlace`/`placeBuilding`
-in `js/buildings.js`, `drawGhost`/`placementFootprint`/`drawForest` in
+in `js/buildings.js`, `drawGhost`/`placementFootprint`/`collectDepthLayers` in
 `js/ui.js`)** — BUGS #18. `canPlace` used to require `T_GRASS`, so a wall ring
 stopped dead at the treeline even after forest became walkable rough ground;
 `placeBuilding` now clears whatever `T_TREE`/`T_ROCK` a footprint lands on
@@ -282,7 +366,7 @@ of the old outline-only green/red, so validity reads at a glance even over
 terrain. `placementFootprint()` turns the hovered tile + `type.size` into a Set
 of `map.idx` values (bounds-checked — an out-of-bounds index would alias a real
 tile through the `y*w+x` formula, so unchecked reuse of it elsewhere would be a
-bug); `drawForest` accepts that same set as a fade list and renders any tree
+bug); `collectDepthLayers` accepts that same set as a fade list and renders any tree
 inside it at ~32% opacity, so a canopy about to be cleared doesn't visually
 fight the white/red wash. Both draws read the *same* footprint each frame, so
 they can't disagree about which tiles are in play.
@@ -370,7 +454,8 @@ The enemy-AI overhaul reuses two systems documented here:
   driving units by "has it arrived?" must clear `dest` itself and retry
   (`AICombatManager.orderScoutTo`; see BUGS #15).
 - **Hide-UI list gained `#eventcard`** (the AI choice-card element) in
-  `index.html`'s `body.ui-hidden` CSS list. The pre-game `#difficulty` overlay
+  `index.html`'s `body.ui-hidden` CSS list, and `#cancel-place`/`#rotate-place`/
+  `#paste-place` were replaced in it by their wrapper `#place-bar`. The pre-game `#difficulty` overlay
   is deliberately NOT `.hud` — it exists before the game does, styled like
   `#gameover`, and is also hidden by the portrait-rotate prompt rules.
 
@@ -406,6 +491,23 @@ before dawn and happiness clears the growth gate; conquest annexes buildings
 with stores intact; and 10 sim-minutes on each difficulty run crash-free with a
 nation climbing past castle tier 1.
 
+The 2026-07 visual pass added two more ad hoc harnesses on top of that, worth
+rebuilding if you touch the renderer or the HUD layout:
+
+- **Layout audit.** Open the page at a list of viewports (1440×900, 1280×720,
+  1024×600, iPhone 15 landscape 852×393, iPhone SE landscape 667×375, portrait
+  393×852), force every panel visible at once, then read
+  `getBoundingClientRect` + `scrollWidth`/`clientWidth` for each HUD id and
+  report: boxes past the viewport edge, boxes that scroll when they should not,
+  and every pairwise rectangle intersection. Overlaps are only acceptable where
+  the higher `z-index` is deliberately a modal (see "HUD layout & stacking").
+- **Magnified canvas diffs.** Build a fixed scene in `page.evaluate` (flatten a
+  patch of terrain, place one of each building, plant trees north and south of
+  them, put units on both sides), call `ui.render()`, then blit a region of
+  `#game` into a full-screen overlay canvas with
+  `imageSmoothingEnabled = false` before screenshotting. Screenshotting the
+  canvas directly at zoom 4 is not enough to judge a one-pixel seam.
+
 Things worth re-checking after any change in this area:
 - Stack several units on one tile, tick a few seconds, assert pairwise
   distances exceed `SEP_RADIUS`.
@@ -418,7 +520,11 @@ Things worth re-checking after any change in this area:
 - Toggle a tooltip open, check `#tooltip` content and `display`, toggle
   closed.
 - Toggle hide-UI, check computed `display` on a `.hud` element flips both
-  ways.
+  ways (and on `#place-bar`, which is in the list but not `.hud` itself).
+- Place a wall ring with a gate on each side at zoom 4 and check the corners,
+  the vertical run's width against the towers, and that the gate arches read.
+- Boot at 852×393 and assert `#buildbar.scrollWidth === clientWidth` — the full
+  row of 13 build buttons has to fit a landscape phone.
 - Run several sim-minutes of `game.tick` with AI factions funded, confirm at
   least one climbs past tier 1 without the game crashing (`game.over` stays
   false unless an actual win/loss condition was met).

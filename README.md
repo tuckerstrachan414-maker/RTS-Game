@@ -64,6 +64,15 @@ happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, a
 the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
+**Everything on the map looks like what it is.** A Farm is a field — ploughed
+soil while it is being cleared, standing crop once it is finished — a
+Storehouse is a barn with sacks stacked outside, a Quarry is a worked rock face,
+a Well is a well, and a Church has a steeple. Buildings wear their nation's
+colour, including yours, so you can read who owns a town at a glance. Trees,
+troops and buildings overlap each other by how near they are to you, so a
+soldier walking behind a keep goes behind it and a wood in front of a farm
+hides its front row.
+
 **Box-select works on buildings too.** Drag a selection box like you would over
 an army; if it catches no units, it grabs every building inside instead (troops
 in the box always win — buildings are only picked up when the box has no
@@ -80,7 +89,8 @@ before you commit. Release to place it all at once; nothing is built or paid
 for until you let go. The segments knit together — east–west and north–south
 alike — with towers rising at corners, junctions and ends. Drop a Gate
 anywhere in a run and it takes the run's direction, an archway set into the
-wall rather than a gap in it.
+wall rather than a gap in it. A north–south stretch is the same masonry as an
+east–west one, not a thinner fence.
 
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
@@ -237,6 +247,14 @@ With buildings selected, use the panel's **Copy**/**Paste** and **Demolish**/
 watch the battle; tap the 👁 eye to bring the interface back. Each HUD panel
 (top bar, minimap, build menu) also has its own **▾ collapse tab** if you just
 want one out of the way.
+
+**The interface keeps out of its own way.** Each panel owns one corner of the
+screen: messages top-left, resource tooltips top-centre, Diplomacy top-right,
+the building panel bottom-left, placement controls (Cancel / Rotate / Paste)
+centred above the build menu, and event cards bottom-right — top-centre on a
+phone, where the bottom strip only has room for one panel. The full row of
+build buttons fits without scrolling down to a phone in landscape, and the
+pre-game and end screens scroll rather than clip on a short screen.
 
 ## Code layout
 
