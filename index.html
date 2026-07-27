@@ -119,7 +119,7 @@
     border-radius: 6px; color: #cde; font-size: 18px; padding: 8px 13px; cursor: pointer; touch-action: manipulation; }
   body.ui-hidden #topbar, body.ui-hidden #buildbar, body.ui-hidden #menu-btn, body.ui-hidden #minimap-wrap, body.ui-hidden #panel,
   body.ui-hidden #diplomacy, body.ui-hidden #log, body.ui-hidden #tooltip, body.ui-hidden #cancel-place, body.ui-hidden #rotate-place,
-  body.ui-hidden #eventcard { display: none !important; }
+  body.ui-hidden #paste-place, body.ui-hidden #eventcard { display: none !important; }
   body.ui-hidden #ui-show { display: block; }
 
   #log { position: absolute; left: calc(8px + env(safe-area-inset-left)); top: calc(var(--topbar-h, 54px) + 10px + env(safe-area-inset-top));
@@ -146,6 +146,9 @@
     padding: 8px 14px; font-size: 14px; color: #fda; cursor: pointer; touch-action: manipulation; }
   #rotate-place { display: none; top: calc(8px + env(safe-area-inset-top));
     left: calc(112px + env(safe-area-inset-left)); padding: 8px 14px; font-size: 14px; color: #ad9; cursor: pointer;
+    touch-action: manipulation; }
+  #paste-place { display: none; top: calc(8px + env(safe-area-inset-top));
+    left: calc(220px + env(safe-area-inset-left)); padding: 8px 14px; font-size: 14px; color: #adf; cursor: pointer;
     touch-action: manipulation; }
 
   /* Event cards: AI-initiated proposals/ultimatums/disputes with response buttons.
@@ -295,6 +298,7 @@
 
 <button id="cancel-place" class="hud">✕ Cancel</button>
 <button id="rotate-place" class="hud" title="Rotate the bridge (R)">⟳ Rotate</button>
+<button id="paste-place" class="hud" title="Place a copy of the copied building(s) here">📋 Paste</button>
 <div id="diplomacy" class="hud"></div>
 <div id="eventcard" class="hud"></div>
 <div id="panel" class="hud"></div>

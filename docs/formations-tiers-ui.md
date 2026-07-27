@@ -3,9 +3,11 @@
 Reference for whoever (human or Claude) picks this codebase up next. Covers the
 feature set added on top of the M1–M5 + mobile/trade/raiding milestones: army
 formations with crowd separation, castle-tier troop unlocks, double-tap
-gestures, HUD resource tooltips, the hide-UI toggle, and fortification
-rendering/placement. Read alongside the top-level `README.md` (player-facing)
-— this file is implementation-facing.
+gestures, HUD resource tooltips, the hide-UI toggle, fortification
+rendering/placement, and (see "Drag-preview placement + box-select buildings"
+below) the drag-to-preview wall/gate/bridge placement and building box-select/
+copy/paste/delete. Read alongside the top-level `README.md` (player-facing) —
+this file is implementation-facing.
 
 ## Formations & crowd separation — `js/units.js`
 
@@ -291,6 +293,60 @@ whichever axis it's closest to — horizontal, vertical, or, for walls only, a
 other picks the diagonal). Gates and bridges never go diagonal; bridge
 orientation still comes from whichever of horizontal/vertical the drag
 resolved to.
+
+## Drag-preview placement + box-select buildings — `js/ui.js`, `index.html`
+
+**Line placement used to place live, tile by tile, during the drag itself**
+(the old `paintPlace`, called straight out of `paintTo`) — resources were spent
+and buildings created mid-gesture, and letting go just stopped the spree.
+That's now a true preview: `beginPaint` seeds `ui.paint = {anchor, line,
+horizontal}`, and every `mousemove`/touch-move while dragging just recomputes
+`paint.line` (the same axis/diagonal-snap math as before) — no `canPlace`
+check, no payment, no `placeBuilding` call happens until release. `drawGhost`
+grew a paint branch that walks `paint.line` and draws each tile through the
+shared `drawGhostTile` helper (factored out of the old single-tile `drawGhost`
+body so the hover ghost, the drag-line preview, and the paste preview below all
+render identically), tracking a running cost total per resource so the wash
+goes red once the *run so far* would outspend the nation, not just when one
+tile is individually unaffordable. `endPaint` (mouseup / touch-end) is the only
+place that now calls `canPlace`/`pay`/`placeBuilding`, walking the previewed
+line once and skipping (not aborting) blocked or unaffordable tiles.
+`placementFootprint()` (used by `drawForest` to fade trees under the ghost)
+follows `paint.line` instead of just the hovered tile while a drag is live, so
+the canopy-fade and the wash never disagree mid-drag either.
+
+**Box-select now falls through to buildings.** `UI.boxSelect` still selects
+units first if the box catches any (troops always win); only when it catches
+*zero* units does it filter `game.factions[0].buildings` by AABB overlap into
+`ui.selection.buildings` (a new array alongside the pre-existing single
+`ui.selection.building`/`ui.selection.units`). A one-building result also sets
+`selection.building` so the existing single-building panel (workers, storage,
+castle controls, Demolish) needs no changes; a multi-building result renders a
+new summary panel (`refreshPanel`, the `bs.length > 1` branch) with a type
+breakdown and **Copy**/**Delete All** buttons. `drawBuilding`/`drawRampart`
+check `selection.buildings.includes(b)` in addition to `selection.building ===
+b` so every box-picked building gets the white selection outline, not just a
+lone one.
+
+**Copy/paste (`ui.copyBuffer`, `copySelected`/`pasteBuffer`/
+`drawPastePreview`).** Copy captures each selected building's type key and its
+tile offset from the group's top-left corner (`{key, dx, dy}` per part) — not
+live references — so the source buildings can be deleted or moved without
+corrupting the buffer. Unlike normal placement, the preview is **locked to the
+tile at the center of the screen**, not the cursor: `drawPastePreview` computes
+`screenToTile(canvas.width/2, canvas.height/2)` every frame and draws each part
+at that anchor plus its stored offset (through the same `drawGhostTile`,
+running the same cumulative-cost check as the line preview). The player pans
+the camera to line the group up with the target ground, then clicks the
+**Paste** button (`#paste-place`, shown/hidden in `render()` alongside
+`#cancel-place`) — or presses it again for another copy; the buffer persists
+until Cancel/Escape/right-click, deliberately mirroring shift-held repeat
+placement. `pasteBuffer` places every part whose tile is legal and affordable
+and silently skips the rest, same skip-don't-abort convention as `endPaint`.
+Town Halls are excluded from `copySelected`'s source filter (there's no
+in-game path to place a second one). Ctrl+C and Delete/Backspace are the
+desktop keyboard equivalents of the panel's Copy and Delete All/Demolish
+buttons, guarded against firing while an `<input>` (the tax slider) has focus.
 
 ## 2026-07 AI-overhaul touchpoints (formations & hide-UI)
 

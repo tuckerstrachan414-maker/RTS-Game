@@ -104,14 +104,29 @@ placed on forest or rock** — the footprint clears it, same as cutting a track
 (caves are still off-limits); the placement ghost fills the tile white when
 legal and red when blocked, and a tree inside the footprint fades so the wash
 doesn't have to fight a solid canopy (`drawGhost`/`drawForest`, `js/ui.js`).
-And **capture**
+**Line placement is a true preview, not a live paint**: `beginPaint`/`paintTo`
+only recompute the previewed run (`ui.paint.line`) as the drag moves — every
+tile in it renders as an opaque ghost (`drawGhost`'s paint branch, sharing
+`drawGhostTile` with the single-tile ghost and the paste preview) — and nothing
+is checked, paid for, or placed until the mouse/touch releases, when `endPaint`
+commits the whole run in one pass, skipping blocked or unaffordable tiles.
+**Box-select doubles as a building picker**: dragging a selection box that
+catches no units (troops always win the box) instead selects every one of the
+player's buildings inside it (`UI.boxSelect`). With buildings selected — via
+box or a single click — the panel offers **Copy** (captures each building's
+type and relative layout into `ui.copyBuffer`) and **Demolish**/**Delete All**
+(same 75% refund as solo demolish). Copying arms a **Paste** button and a ghost
+preview locked to the center of the current view rather than the cursor — pan
+the camera to line it up, then Paste (repeatable until Cancel/Escape) to stamp
+the group via `pasteBuffer`. Ctrl+C and Delete/Backspace mirror the buttons on
+desktop. And **capture**
 (`captureBuilding`/`annexBuildings`): a conquered nation's completed civilian
 buildings and bridges change hands with their stored goods intact, at 40% HP,
 unstaffed and with queues cleared, while walls, gates and the fallen Town Hall
 come down. AI nations now build walls/gates
 (turtle doctrine rings) and bridges (war-route engineering) too. Gaps: no
 building upgrades outside the Castle, no repair, bridges can't be removed once
-placed (see BUGS).
+placed (see BUGS), and pasted layouts don't rotate/mirror.
 
 ## Market & commodity trading — Deep
 
@@ -337,13 +352,20 @@ beyond lifetime trade gold.
 
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
-health/construction bars, selection rings/outlines, drag box-select.
-**Placement ghost** (`drawGhost`): the hovered footprint washes white when
-`canPlace` allows it and red when it doesn't — a filled tile, not just an
-outline, so it reads clearly at a glance. `placementFootprint()` turns the
-hovered tile + building size into the same tile-index set `drawForest` uses to
-fade any tree inside it, so a forest placement's canopy doesn't visually fight
-the wash. **Ramparts** (`bakeRamparts` in `js/assets.js`,
+health/construction bars, selection rings/outlines, drag box-select (troops
+first, buildings only when the box has none — see the Buildings entry).
+**Placement ghost** (`drawGhost`/`drawGhostTile`): the hovered footprint washes
+white when `canPlace` (and affordability) allows it and red when it doesn't —
+a filled tile, not just an outline, so it reads clearly at a glance. While a
+wall/gate/bridge line is being dragged, `drawGhost` instead washes every tile
+of the previewed run (`ui.paint.line`), each checked against a running
+cost total so the wash goes red once the run would outspend the nation, not
+just when a single tile is blocked. `placementFootprint()` follows the same
+line (or just the hovered tile outside a drag) into the tile-index set
+`drawForest` uses to fade any tree inside it, so a forest placement's canopy
+doesn't visually fight the wash. The copy/paste preview (`drawPastePreview`)
+reuses `drawGhostTile` too, but anchors to the screen's center tile instead of
+the cursor. **Ramparts** (`bakeRamparts` in `js/assets.js`,
 `drawRampart`/`drawTileSlice` in `js/ui.js`): walls and gates are assembled per
 tile from five baked connector pieces rather than stamped as whole sprites, so
 runs join seamlessly **horizontally and vertically** and gates sit inside a run
@@ -370,7 +392,9 @@ territory border lines on the main map, event cards (`#eventcard`, see Event
 cards above). Topbar with live stats, tax slider,
 and per-stat live tooltips (income vs consumption breakdowns; happiness
 itemized). Building panel: workers, storage contents, castle training/upgrades/
-rally/Grand Castle, market buy/sell/barter, demolish. Diplomacy panel with
+rally/Grand Castle, market buy/sell/barter, copy, demolish; a box-selected
+group of buildings gets its own summary panel with Copy and Delete All.
+Diplomacy panel with
 relation bars and full action set. Event log with fade. Pause menu (freezes
 sim): Resume, Diplomacy, Select Army, Speed 1x/2x/3x, Hide UI, New Game.
 Every HUD block is independently collapsible; global Hide UI (H) for
