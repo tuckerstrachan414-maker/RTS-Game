@@ -74,8 +74,9 @@ upgrade tiers above the base castle.
 
 - `UNIT_TIERS` (`js/units.js`, near the top) maps unit key → tier. Anything
   not listed defaults to tier 1 (always available): sword, spear, archer,
-  bandit, prince. Tier 2: shield, halberd, crossbow, horseman. Tier 3: mage,
-  archmage, cavalier, king.
+  bandit, prince. Tier 2: halberd, cavalier. Tier 3: mage, king. (The roster
+  is nine units now — shield, crossbow, archmage and horseman were cut, and
+  cavalier dropped from tier 3 to tier 2 to keep the Garrison worth buying.)
 - `CASTLE_UPGRADES` (`js/buildings.js`, right after `BUILD_MENU`) is keyed by
   the tier it unlocks (`2`, `3`), each entry `{ name, cost, time, desc }`.
   Tier 2 = "Garrison" (100 wood / 80 stone / 60 gold, 20s). Tier 3 = "Royal

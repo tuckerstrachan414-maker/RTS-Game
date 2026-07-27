@@ -152,17 +152,32 @@ At war, you don't just burn buildings — you rob them.
   **Storehouse** and it siphons the goods inside, then flees home to bank them. Robbery
   doesn't destroy the building — it just empties it.
 - **Full raid:** send your army to raze a storehouse. When it falls, its entire stock
-  **spills onto the ground as loot**. Your troops must physically **carry the plunder
-  home** to a storehouse to keep it — cut down a laden porter and the loot spills again
-  for anyone to grab. Idle troops near spilled loot will move to collect it.
+  **spills onto the ground as loot**. Only **Bandits can carry it** — no other troop
+  has a cargo hold — so bring a raider or two along on a raid, or the spoils just sit
+  there and rot. A laden Bandit must physically carry the plunder home to a storehouse
+  to keep it; cut one down and the loot spills again for anyone to grab. Idle Bandits
+  near spilled loot will move to collect it.
 
 ## Your army
 
-**Castle upgrades unlock troops.** A fresh Castle trains Swordsmen, Spearmen,
-Archers, Bandits and the Prince. Buy the **Garrison** upgrade to unlock the
-Shieldman, Halberdier, Crossbowman and Horseman, then the **Royal Academy** for
-the Mage, Archmage, Cavalier and King. Locked troops show a 🔒 with what unlocks
-them — and AI nations climb the same tiers.
+**Nine troops, and each one does a job no other does.**
+
+| Tier | Troop | What it's for |
+|---|---|---|
+| 1 | **Swordsman** | Cheap line infantry — the body of any army |
+| 1 | **Spearman** | Just as cheap, and hits Cavaliers for ×2.2 |
+| 1 | **Archer** | Ranged, pierce damage, dies fast if anything reaches it |
+| 1 | **Bandit** | Fast raider — **the only troop that can carry plunder** |
+| 1 | **Prince** | Envoy, not a fighter; carries proposals to other nations |
+| 2 | **Halberdier** | Armoured tank — blades and arrows glance off, magic doesn't |
+| 2 | **Cavalier** | Fast, heavy shock cavalry. Spearmen are its answer |
+| 3 | **Mage** | Ranged magic with splash, and armour doesn't stop it |
+| 3 | **King** | One per nation. +15% damage to troops near him |
+
+**Castle upgrades unlock troops.** A fresh Castle trains the whole of tier 1.
+Buy the **Garrison** upgrade to unlock the Halberdier and Cavalier, then the
+**Royal Academy** for the Mage and the King. Locked troops show a 🔒 with what
+unlocks them — and AI nations climb the same tiers.
 
 **Armies march in formation.** Group move orders arrange your troops into ranks
 facing the direction of travel — melee up front, ranged and mages behind — and

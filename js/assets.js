@@ -89,12 +89,11 @@ const AT = {
 const UNIT_SHEETS = {
   sword:    'MiniSwordMan.png',
   spear:    'MiniSpearMan.png',
-  shield:   'MiniShieldMan.png',
   halberd:  'MiniHalberdMan.png',
   archer:   'MiniArcherMan.png',
-  crossbow: 'MiniCrossBowMan.png',
   mage:     'MiniMage.png',
-  archmage: 'MiniArchMage.png',
+  // no unit type is keyed `horseman` any more — the Bandit borrows this sheet
+  // via `spriteKey`, and trade caravans ride it too
   horseman: 'MiniHorseMan.png',
   cavalier: 'MiniCavalierMan.png',
   king:     'MiniKingMan.png',

@@ -247,9 +247,14 @@ class Diplomacy {
         const start = fromA ? r.ma : r.mb;
         const dest = fromA ? r.mb : r.ma;
         const owner = fromA ? r.a : r.b;
-        const c = new Unit('horseman', owner, Math.floor(start.cx), Math.floor(start.cy));
+        // Caravans ride the mounted sheet (the Bandit's, which is the only
+        // horse art left in the roster) but are traders, not raiders: no
+        // aggression and no cargo hold, so a passing cart never scoops up
+        // battlefield plunder and wanders off with it.
+        const c = new Unit('bandit', owner, Math.floor(start.cx), Math.floor(start.cy));
         c.mission = { kind: 'caravan', route: r, dest, home: start };
         c.aggressive = false;
+        c.carryCap = 0;
         c.hp = 40;
         game.factions[owner].units.push(c);
         r.caravans.push(c);

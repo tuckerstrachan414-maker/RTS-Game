@@ -1,32 +1,36 @@
 'use strict';
 // Unit definitions, movement (A*), real-time combat, projectiles.
 
-// dmgType: melee | pierce | magic. Armor types resist differently.
+// Nine units, three tiers, three damage types (melee | pierce | magic). The
+// roster is deliberately small: every entry answers a different question on the
+// battlefield, and none of them is a strictly better version of another.
+//   Tier 1 — sword (line), spear (anti-cavalry), archer (ranged), bandit
+//            (raider), prince (envoy)
+//   Tier 2 — halberd (tank), cavalier (shock)
+//   Tier 3 — mage (splash), king (unique, aura)
 const UNIT_TYPES = {
   sword:    { key: 'sword',    name: 'Swordsman',  cost: { food: 20, gold: 5 },  hp: 60,  dmg: 7,  dmgType: 'melee',  range: 0.9, speed: 2.2, cooldown: 1.0, trainTime: 6,  desc: 'Reliable line infantry.' },
-  spear:    { key: 'spear',    name: 'Spearman',   cost: { food: 20, gold: 5 },  hp: 55,  dmg: 6,  dmgType: 'melee',  range: 1.1, speed: 2.2, cooldown: 1.0, trainTime: 6,  bonusVs: ['horseman', 'cavalier'], bonusMul: 2.2, desc: 'Cheap and deadly against cavalry.' },
-  shield:   { key: 'shield',   name: 'Shieldman',  cost: { food: 25, gold: 10 }, hp: 110, dmg: 5,  dmgType: 'melee',  range: 0.9, speed: 1.8, cooldown: 1.2, trainTime: 8,  armor: 3, desc: 'A walking wall. Soaks damage up front.' },
-  halberd:  { key: 'halberd',  name: 'Halberdier', cost: { food: 30, gold: 15 }, hp: 80,  dmg: 11, dmgType: 'melee',  range: 1.1, speed: 2.0, cooldown: 1.1, trainTime: 9,  desc: 'Elite heavy infantry.' },
+  spear:    { key: 'spear',    name: 'Spearman',   cost: { food: 20, gold: 5 },  hp: 55,  dmg: 6,  dmgType: 'melee',  range: 1.1, speed: 2.2, cooldown: 1.0, trainTime: 6,  bonusVs: ['cavalier'], bonusMul: 2.2, desc: 'Cheap and deadly against cavalry.' },
+  halberd:  { key: 'halberd',  name: 'Halberdier', cost: { food: 30, gold: 15 }, hp: 80,  dmg: 11, dmgType: 'melee',  range: 1.1, speed: 2.0, cooldown: 1.1, trainTime: 9,  armor: 2, desc: 'Elite heavy infantry. Armoured — shrugs off blades and arrows.' },
   archer:   { key: 'archer',   name: 'Archer',     cost: { food: 20, gold: 10 }, hp: 40,  dmg: 6,  dmgType: 'pierce', range: 4.2, speed: 2.2, cooldown: 1.3, trainTime: 7,  projectile: 'arrow', desc: 'Ranged support. Fragile up close.' },
-  crossbow: { key: 'crossbow', name: 'Crossbowman', cost: { food: 25, gold: 20 }, hp: 50, dmg: 10, dmgType: 'pierce', range: 4.6, speed: 2.0, cooldown: 1.8, trainTime: 9,  projectile: 'arrow', desc: 'Slow to reload, hits like a mule.' },
-  mage:     { key: 'mage',     name: 'Mage',       cost: { food: 20, gold: 30 }, hp: 35,  dmg: 9,  dmgType: 'magic',  range: 3.8, speed: 2.0, cooldown: 1.6, trainTime: 10, projectile: 'fireball', splash: 1.0, desc: 'Fireballs. Splash damage.' },
-  archmage: { key: 'archmage', name: 'Archmage',   cost: { food: 30, gold: 60 }, hp: 45,  dmg: 15, dmgType: 'magic',  range: 4.4, speed: 1.9, cooldown: 2.0, trainTime: 14, projectile: 'fireball', splash: 1.4, desc: 'Devastating area magic.' },
-  horseman: { key: 'horseman', name: 'Horseman',   cost: { food: 30, gold: 15 }, hp: 65,  dmg: 7,  dmgType: 'melee',  range: 0.9, speed: 3.6, cooldown: 1.0, trainTime: 8,  desc: 'Fast scout and raider.' },
-  cavalier: { key: 'cavalier', name: 'Cavalier',   cost: { food: 40, gold: 30 }, hp: 100, dmg: 12, dmgType: 'melee',  range: 0.9, speed: 3.2, cooldown: 1.1, trainTime: 12, desc: 'Heavy shock cavalry.' },
+  mage:     { key: 'mage',     name: 'Mage',       cost: { food: 20, gold: 30 }, hp: 35,  dmg: 9,  dmgType: 'magic',  range: 3.8, speed: 2.0, cooldown: 1.6, trainTime: 10, projectile: 'fireball', splash: 1.0, desc: 'Fireballs. Splash damage, and magic ignores armour.' },
+  cavalier: { key: 'cavalier', name: 'Cavalier',   cost: { food: 40, gold: 30 }, hp: 100, dmg: 12, dmgType: 'melee',  range: 0.9, speed: 3.2, cooldown: 1.1, trainTime: 12, desc: 'Heavy shock cavalry. Fast, but Spearmen gut it.' },
   king:     { key: 'king',     name: 'King',       cost: { food: 100, gold: 100 }, hp: 200, dmg: 14, dmgType: 'melee', range: 1.0, speed: 2.4, cooldown: 1.0, trainTime: 20, aura: 1.15, auraR: 4, unique: true, desc: 'One per nation. Nearby troops fight harder. If he falls, morale suffers.' },
   prince:   { key: 'prince',   name: 'Prince (Envoy)', cost: { food: 20, gold: 20 }, hp: 50, dmg: 4, dmgType: 'melee', range: 0.9, speed: 2.8, cooldown: 1.2, trainTime: 8, envoy: true, desc: 'Diplomat. Carries proposals to other nations.' },
-  bandit:   { key: 'bandit',   name: 'Bandit',     spriteKey: 'horseman', cost: { food: 15, gold: 15 }, hp: 45, dmg: 5, dmgType: 'melee', range: 0.9, speed: 3.4, cooldown: 1.1, trainTime: 7, robber: true, desc: 'Fast raider. Send onto an enemy Storehouse to rob it and flee home with the loot.' },
+  bandit:   { key: 'bandit',   name: 'Bandit',     spriteKey: 'horseman', cost: { food: 15, gold: 15 }, hp: 45, dmg: 5, dmgType: 'melee', range: 0.9, speed: 3.4, cooldown: 1.1, trainTime: 7, robber: true, desc: 'Fast raider, and the only troop that can carry plunder. Send onto an enemy Storehouse to rob it and flee home with the loot.' },
 };
 
-// carry capacity: how much plunder a unit can haul (0 = cannot carry loot)
-const UNIT_CARRY = { archer: 12, crossbow: 12, mage: 10, archmage: 10, horseman: 30, cavalier: 30, king: 0, prince: 0, bandit: 45 };
-for (const k in UNIT_TYPES) UNIT_TYPES[k].carry = UNIT_CARRY[k] !== undefined ? UNIT_CARRY[k] : 20;
+// Carry capacity: how much plunder a unit can haul. Only the Bandit can carry
+// anything at all — loot is a raider's job, so spoils on the ground are worth
+// nothing to an army that did not bring one along.
+const UNIT_CARRY = { bandit: 45 };
+for (const k in UNIT_TYPES) UNIT_TYPES[k].carry = UNIT_CARRY[k] || 0;
 
 // castle tier required to train each unit (1 = basic Castle; see CASTLE_UPGRADES)
-const UNIT_TIERS = { shield: 2, halberd: 2, crossbow: 2, horseman: 2, mage: 3, archmage: 3, cavalier: 3, king: 3 };
+const UNIT_TIERS = { halberd: 2, cavalier: 2, mage: 3, king: 3 };
 for (const k in UNIT_TYPES) UNIT_TYPES[k].tier = UNIT_TIERS[k] || 1;
 
-const TRAIN_MENU = ['sword', 'spear', 'shield', 'halberd', 'archer', 'crossbow', 'mage', 'archmage', 'horseman', 'cavalier', 'bandit', 'prince', 'king'];
+const TRAIN_MENU = ['sword', 'spear', 'archer', 'bandit', 'prince', 'halberd', 'cavalier', 'mage', 'king'];
 
 let nextUnitId = 1;
 

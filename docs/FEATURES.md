@@ -211,26 +211,37 @@ means a capped-price market never truly runs out of goods.
 
 ## Raiding & plunder — Deep
 
-`js/units.js`, `js/main.js`. Two paths: Bandits (fast, fragile, `robber`) are
-sent onto an enemy storage building, siphon 30/s prioritizing gold → stone →
-wood → food up to a 45 carry cap, then auto-haul home and bank the take.
-Razing a storage building spills its entire stock as a ground loot pile; units
-have per-type carry capacities (0 for King/Prince), pick loot up by standing on
-it, idle carriers within 5 tiles are auto-drawn to it, laden porters show a
+`js/units.js`, `js/main.js`. Two paths, and **the Bandit is the only unit
+involved in either** — every other troop has `carry: 0` and physically cannot
+pick plunder up. Bandits (fast, fragile, `robber`) are sent onto an enemy
+storage building, siphon 30/s prioritizing gold → stone → wood → food up to a
+45 carry cap, then auto-haul home and bank the take. Razing a storage building
+spills its entire stock as a ground loot pile; a Bandit picks it up by standing
+on it, an idle Bandit within 5 tiles is auto-drawn to it, laden Bandits show a
 sack sprite and spill their cargo when killed, and piles decay after 120s (with
 a blink warning). The AI trains bandits in wartime and targets the richest
-enemy storehouse.
+enemy storehouse. The design consequence is deliberate: an army that sacks a
+storehouse without a raider along watches the spoils rot on the ground.
 
 ## Units & combat — Deep
 
-`js/units.js`. 13 unit types across 3 castle tiers, with three damage types
-(melee/pierce/magic), armor (Shieldman, ignored by magic), an anti-cavalry
-bonus (Spearman ×2.2 vs horse units), projectiles (arrows, fireballs with
-splash), the unique King (aura: +15% damage in 4 tiles; morale penalty on
-death), and the Prince envoy. Real-time combat with cooldowns, auto-acquire
+`js/units.js`. **Nine** unit types across 3 castle tiers, with three damage
+types (melee/pierce/magic), armor (Halberdier, ignored by magic), an
+anti-cavalry bonus (Spearman ×2.2 vs Cavalier), projectiles (arrows, fireballs
+with splash), the unique King (aura: +15% damage in 4 tiles; morale penalty on
+death), and the Prince envoy. The roster was cut from 13 to 9 (Shieldman,
+Crossbowman, Archmage and Horseman are gone) so that no unit is a strictly
+better version of another: tier 1 is Swordsman / Spearman / Archer / Bandit /
+Prince, tier 2 is Halberdier (the armoured tank, which inherited the
+Shieldman's armor at 2) and Cavalier (shock cavalry, promoted down from tier
+3), tier 3 is Mage and King. Real-time combat with cooldowns, auto-acquire
 within 5 tiles, fight-back when hit, periodic repathing toward moving targets,
 building attack/destruction. Training consumes a citizen (requires 2 free) and
 runs through a per-castle queue with rally points.
+
+Note that armor is what gives the three damage types their teeth — magic
+ignores it, melee and pierce do not — so the Halberdier carrying armor is
+load-bearing for the whole damage-type system, not flavour.
 
 ## Formations & crowd separation — Deep
 
@@ -244,8 +255,8 @@ stranded on impassable tiles. Full detail in `docs/formations-tiers-ui.md`.
 ## Castle tiers — Moderate
 
 `js/buildings.js` (`CASTLE_UPGRADES`), `js/factions.js`. Two purchasable
-upgrades: Garrison (tier 2: Shieldman/Halberdier/Crossbowman/Horseman) and
-Royal Academy (tier 3: Mage/Archmage/Cavalier/King). Locked units render with
+upgrades: Garrison (tier 2: Halberdier/Cavalier) and
+Royal Academy (tier 3: Mage/King). Locked units render with
 a lock icon and unlock hint. The AI buys upgrades under threat/doctrine/
 population triggers (conquest and prosperity upgrade eagerly) and filters its
 training pool by tier. Data-driven — a tier 4 needs only data entries. The
@@ -531,8 +542,10 @@ the faction colour) and the two farmland tiles. `drawBuilding` prefers a baked
 canvas over the atlas lookup, so `BUILDING_TYPES.art` is `null` for those types.
 Note the church is baked from the *untouched* atlas and tinted afterwards:
 `strip` matches exact hexes, and on the recoloured faction sheet the caps'
-pinks have already moved. Gaps: bandits reuse the horseman sprite
-(distinguished only by behavior); the day/night indicator in the topbar is
+pinks have already moved. Gaps: bandits and trade caravans both ride the
+horseman sheet, which is no longer any unit type's own art — it survives in
+`UNIT_SHEETS` purely as the Bandit's `spriteKey` (and the caravan's, since
+caravans spawn as Bandits with `carryCap` zeroed); the day/night indicator in the topbar is
 still an emoji glyph (no sun/moon in `icons16x16.png`) — the last one, now that
 the Copy/Paste buttons have dropped their clipboard; multi-tile buildings
 scale one 16×16 cell up to their footprint, so a 2×2 Castle has visibly

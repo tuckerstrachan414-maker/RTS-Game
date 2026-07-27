@@ -147,7 +147,7 @@ class AICombatManager {
     if (!castle || castle.trainQueue.length >= 2) return;
     const want = f.brain.utility.armyTarget();
     if (f.armyUnits().length < want && n.total('food') > 60) {
-      const pool = ['sword', 'spear', 'archer', 'sword', 'shield', 'crossbow', 'halberd', 'cavalier']
+      const pool = ['sword', 'spear', 'archer', 'sword', 'spear', 'halberd', 'cavalier', 'mage']
         .filter(k => UNIT_TYPES[k].tier <= f.castleTier);
       if (pool.length) f.trainUnit(pool[Math.floor(game.rng() * pool.length)]);
       return;
