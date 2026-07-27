@@ -4,7 +4,7 @@
 const TILE = 16;          // tileset cell size in px
 const UF = 32;            // unit frame size in px
 
-// Tileset atlas coordinates [col,row] in tileset16x16_1.png (8x14 grid).
+// Tileset atlas coordinates [col,row] in tileset16x16_1.png (8x18 grid).
 // A few entries are catalogued but unreferenced — see the note under the table.
 const AT = {
   GRASS: [2, 4],
@@ -35,6 +35,33 @@ const AT = {
   W_VN: [3, 5], W_V: [3, 6], W_VS: [3, 7],
   W_HW: [4, 5], W_H: [5, 5], W_HE: [6, 5],
   W_ONE: [7, 5],
+  // Cliff/plateau set, spliced in from PUNY_WORLD_v1 by tools/splice-cliffs.py.
+  // A plateau is drawn as a rim of impassable T_CLIFF tiles around a walkable
+  // top: the eight outer pieces below are the rim seen from slightly above (N is
+  // the far lip, S is the tall face you cannot climb), CLIFF_TOP is the raised
+  // ground itself, and the four I* pieces are the concave corners for where a
+  // plateau's outline turns back on itself. `cliffTile` (js/map.js) picks between
+  // them. Every piece except CLIFF_TOP is transparent outside the rock, so they
+  // are drawn over the base grass tile.
+  CLIFF_NW: [0, 14], CLIFF_N: [1, 14], CLIFF_NE: [2, 14],
+  CLIFF_W:  [3, 14], CLIFF_TOP: [4, 14], CLIFF_E: [5, 14],
+  CLIFF_SW: [6, 14], CLIFF_S: [7, 14], CLIFF_SE: [0, 15],
+  // Concave corners, keyed by which corner is cut away (i.e. where the open
+  // ground is). A plateau-top tile takes one of these when it touches low
+  // ground diagonally — see `plateauTopTile` in js/map.js. NW/NE are the pack's
+  // own art; SW/SE are composed from the plateau top plus the matching outer
+  // corner's quadrant (tools/splice-cliffs.py), because the pack never drew them.
+  CLIFF_IN_NW: [1, 15], CLIFF_IN_NE: [2, 15], CLIFF_IN_SW: [3, 15], CLIFF_IN_SE: [4, 15],
+  // Ramp: a stair cut through a rim, indexed by `rot` (js/map.js RAMP_DIRS) —
+  // 0..3 are 90-degree-clockwise turns of the pack's one staircase, which was
+  // drawn for a south rim (climb north). RAMP_TREAD is the walkable face,
+  // RAMP_TOP the step onto the plateau above it, RAMP_JAMB_NEG/POS the rock
+  // jambs that close the rim either side of the gap (± the ramp's perpendicular
+  // `p` vector — see RAMP_DIRS for which side is which at each rotation).
+  RAMP_TREAD: [[6, 15], [1, 16], [5, 16], [1, 17]],
+  RAMP_TOP: [[5, 15], [2, 16], [6, 16], [2, 17]],
+  RAMP_JAMB_NEG: [[7, 15], [3, 16], [7, 16], [3, 17]],
+  RAMP_JAMB_POS: [[5, 17], [4, 16], [0, 17], [4, 17]],
   // buildings: [orangeVariant, blueVariant] where a pair exists
   TOWNHALL: [[0, 0], [7, 0]],
   HOUSE: [[2, 3], [3, 3]],
@@ -54,6 +81,9 @@ const AT = {
 //  WELL        — a green mound with a doorway, all but identical to CAVE; the Well
 //                is composited in `bakeBuildings` instead
 //  WALL_V      — a 6px column; `bakeRamparts` takes its vertical run off WALL_TOWER
+// (the concave CLIFF_IN_* corners were once in this list, on the theory that 4-connected
+// rim membership made them unnecessary — that was wrong, and left visible holes wherever a
+// plateau's edge ran diagonally. They are all four drawn now; see `plateauTopTile`.)
 
 // Unit spritesheets. Rows: 0=idle, 1=walk, rows-3=attack, rows-2=hurt, rows-1=death.
 const UNIT_SHEETS = {

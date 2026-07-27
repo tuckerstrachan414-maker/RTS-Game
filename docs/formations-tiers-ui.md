@@ -509,6 +509,68 @@ rebuilding if you touch the renderer or the HUD layout:
   `imageSmoothingEnabled = false` before screenshotting. Screenshotting the
   canvas directly at zoom 4 is not enough to judge a one-pixel seam.
 
+A third harness came with the plateaus, and is the one to rebuild if you touch
+map generation:
+
+- **Generation invariants over many seeds.** `js/map.js` has no browser
+  dependency beyond `AT`, so it can be loaded straight into node with
+  `new Function('AT', src + 'return {GameMap, findPath, RAMP_DIRS, ...}')`.
+  Load the *real* `AT` the same way from `js/assets.js` rather than stubbing it
+  with a `Proxy` — once a check needs to compare which array element
+  `cliffTile` picked (e.g. is this jamb `AT.RAMP_JAMB_POS[rot]` or
+  `AT.RAMP_JAMB_NEG[rot]`?), a stub that returns a distinct token per key
+  can't tell rotations apart, only real array identity can. Build a few
+  hundred maps and assert the properties the generator claims rather than
+  eyeballing one: no cliff/ramp/high tile inside a start zone's clearing,
+  every start zone still floods to `MIN_START_REGION`, every start zone paths
+  to every other, no walkable region made only of plateau top (i.e. no mesa
+  you cannot get off), every cliff impassable and every ramp passable, and —
+  reading each ramp's own direction out of `RAMP_DIRS[m.rampDir[i]]`, not
+  assuming north — every ramp has footing on the outside, plateau top on the
+  inside, and a cliff jamb on both perpendicular sides. Flood with
+  `passable()`, not `openAt()` — a wood on top of a mesa is walkable ground
+  that `openAt` deliberately does not count. This is what caught the cave
+  sealing a plateau, the `carveShortestLink` hang (BUGS #29), and — after
+  ramps grew a direction — a still-hardcoded south-facing footing check in the
+  cave-placement guard and a connectivity corridor quietly stripping a
+  plateau top tile's `high` flag while simplifying its terrain (BUGS #30);
+  none of the four showed up in a single-seed screenshot. When a check like
+  this fails, don't just patch it and move on — reproduce the exact seed in
+  isolation (stub the suspect function to a no-op, or instrument it to log
+  before/after state) until you have the actual mechanism, the way BUGS #30
+  went through a wrong first fix (skip `high` tiles entirely) before the
+  region-size regression it caused pointed at the real one (clear the tile,
+  just never touch `high`).
+- **Pixel scan for missing rim art.** The one that actually works for "are there
+  holes in the cliffs". Eyeballing a screenshot found maybe two of the six
+  defects in BUGS #31; this found all six and proved them gone. Render at zoom 1
+  (16 screen px per tile, so 1:1 with the atlas and no filtering), stub out
+  `ui.drawDayNightOverlay` — it tints every pixel off its atlas value and will
+  otherwise silently match nothing — then walk the canvas for pixels of plateau
+  turf `(133,166,67)` orthogonally touching low grass `(182,213,60)`. Rock is
+  what belongs between those two, so every such pair is a hole. Two things must
+  be controlled for or it reports noise: several unrelated sprites (the cave
+  mound especially) are painted in the very same green, so check the pixel's
+  TILE, not just its colour; and group the hits by tile and print each tile's
+  terrain, because the *pattern* is the diagnosis — a uniform 6px in every
+  `high` tile is a seam inside one atlas tile, 13px in `T_CLIFF` tiles is a
+  shape the rim set has no piece for, and pairs of tiles two apart on one row
+  are the jambs either side of a ramp. Always run it once with the fix disabled
+  (`game.map.plateauTopTile = () => AT.CLIFF_TOP`) and confirm it lights up: an
+  early version of this scan reported a clean sheet on *both* the fixed and the
+  broken build, because of the day/night tint.
+- **Synthetic terrain for judging autotiles.** For rim artwork, flatten the map
+  in `page.evaluate`, stamp a shape you chose (an L is the useful one — it puts a
+  concave corner in shot), set the rim/top/ramp tiles by hand — a ramp needs
+  both `m.terrain[i] = T_RAMP` and `m.rampDir[i]` set, or `cliffTile`/
+  `rampTopHere` throw — then dump an ASCII grid of what `cliffTile` picked
+  alongside the magnified blit. The ASCII tells you the *decision* and the
+  blit tells you whether the art lines up; a screenshot of generated terrain
+  confounds the two. For the ramp set specifically, stamp one plateau with a
+  stair centred on each of its four sides (one per `RAMP_DIRS` entry) — the
+  four rotated art sets only get exercised together on a shape like that, and
+  a single generated map usually only shows one or two directions in one shot.
+
 Things worth re-checking after any change in this area:
 - Stack several units on one tile, tick a few seconds, assert pairwise
   distances exceed `SEP_RADIUS`.
