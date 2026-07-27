@@ -10,6 +10,19 @@ const icon = key => `<span class="icon icon-${key}"></span>`;
 // have to overlap their neighbours for a stand of T_TREE tiles to close up into
 // a wood. The sprites themselves are the tileset's originals (AT.TREES).
 const TREE_CANOPY = 2.0;
+// Where a tree clump's trunks meet the ground, in tiles below its tile origin —
+// `drawTreeClump` anchors the crown at y + 1.12. Used as the tree's depth key.
+const TREE_BASE = 1.1;
+// Where a unit's feet land relative to its world Y. `drawUnit` hangs the 32px frame at
+// 0.72 of its height above the position, and every sheet's figure bottoms out on frame
+// row 30, so the soles sit (30 - 0.72*32)/16 of a tile lower. Used as the depth key so
+// the sort agrees with what is actually on screen.
+const UNIT_FOOT = 0.44;
+
+// Depth-pass entry kinds. Everything with height goes through one Y-sorted list
+// (see `collectDepthLayers`), so a thing nearer the camera overlaps what is
+// behind it no matter which category it belongs to.
+const L_TREE = 0, L_BUILDING = 1, L_RAMPART = 2, L_UNIT = 3, L_LOOT = 4;
 
 // Deterministic per-tile noise: tileNoise(x, y)(k) is a stable 0..1 value for
 // slot k of that tile. Decoration placement has to be a pure function of the
@@ -1076,44 +1089,36 @@ class UI {
       }
     }
 
-    // forest canopy: oversized, overlapping, drawn after all ground so a stand
-    // of trees closes over into a wood instead of a grid of separate tiles.
-    // Trees under the current placement footprint fade so the validity wash
-    // (drawGhost) reads clearly over ground that's about to be cleared.
-    this.drawForest(x0, y0, x1, y1, this.placing ? this.placementFootprint() : null);
+    // flat structures painted onto the ground (crop fields): they are terrain as far as
+    // the eye is concerned, so they belong under everything the depth pass sorts
+    for (const f of game.factions) {
+      for (const b of f.buildings) {
+        if (!b.type.flat) continue;
+        if (b.x + b.type.size < x0 || b.x > x1 || b.y + b.type.size < y0 || b.y > y1) continue;
+        this.drawBuildingGround(b);
+      }
+    }
 
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
 
-    // buildings (skip bridges: drawn as terrain; skip walls and gates: drawn as a connected structure)
-    for (const f of game.factions) {
-      for (const b of f.buildings) {
-        if (b.type.key === 'bridge' || b.type.key === 'wall' || b.type.key === 'gate') continue;
-        if (b.x + b.type.size < x0 || b.x > x1 || b.y + b.type.size < y0 || b.y > y1) continue;
-        this.drawBuilding(b);
+    // Everything with height — tree canopies, buildings, ramparts, units, loot piles —
+    // is drawn in ONE pass sorted by the world Y its base sits on. Drawing each category
+    // in its own pass (as this used to) meant a building always painted over the tree
+    // standing in front of it, and a unit always painted over the building it was
+    // standing behind, however far up the screen it was.
+    const layers = this.collectDepthLayers(x0, y0, x1, y1,
+      this.placing ? this.placementFootprint() : null);
+    layers.sort((a, b) => a.d - b.d);
+    for (const it of layers) {
+      switch (it.kind) {
+        case L_TREE: this.drawTreeClump(it.ref % MAP_W, (it.ref / MAP_W) | 0, it.alpha); break;
+        case L_BUILDING: this.drawBuilding(it.ref); break;
+        case L_RAMPART: this.drawRampart(it.ref); break;
+        case L_UNIT: this.drawUnit(it.ref); break;
+        case L_LOOT: this.drawLoot(it.ref); break;
       }
     }
-    // walls + gates: neighbour-aware joinery so a run reads as one continuous barrier
-    for (const f of game.factions) {
-      for (const b of f.buildings) {
-        if (b.type.key !== 'wall' && b.type.key !== 'gate') continue;
-        if (b.x + 1 < x0 || b.x > x1 || b.y + 1 < y0 || b.y > y1) continue;
-        this.drawRampart(b);
-      }
-    }
-
-    // units, y-sorted
-    const units = [];
-    for (const f of game.factions) for (const u of f.units) {
-      if (u.dead && u.deathT > 6) continue;
-      if (u.x < x0 - 1 || u.x > x1 + 1 || u.y < y0 - 1 || u.y > y1 + 1) continue;
-      units.push(u);
-    }
-    units.sort((a, b) => a.y - b.y);
-    for (const u of units) this.drawUnit(u);
-
-    // loot piles on the ground
-    for (const pile of game.loot) this.drawLoot(pile);
 
     // projectiles
     for (const p of game.projectiles) this.drawProjectile(p);
@@ -1212,30 +1217,54 @@ class UI {
       Math.round(sx - d / 2), Math.round(sy - d), d, d);
   }
 
-  // ---------- forest ----------
-  // The tileset's three tree sprites, unchanged — just drawn much larger than one
-  // tile and several to a tile, so neighbouring T_TREE tiles grow into each other
-  // and a patch reads as a wood you push through rather than a row of shrubs.
-  // Everything is derived from the tile coordinates, so a given map always draws
-  // the same forest.
-  // `fadeSet`, if given, is a Set of tile indices (map.idx) whose canopy should
-  // render translucent — used while placing a building on forest, so the
-  // ghost's validity wash (drawGhost) reads clearly over ground that's about
-  // to be cleared instead of competing with a solid green crown.
-  drawForest(x0, y0, x1, y1, fadeSet) {
+  // ---------- depth pass ----------
+  // Gathers every drawable that stands above the ground into one list keyed by the
+  // world Y of its base, for `render` to sort and draw back-to-front.
+  //
+  // Trees are the tileset's three sprites, unchanged — just drawn much larger than one
+  // tile and several to a tile, so neighbouring T_TREE tiles grow into each other and a
+  // patch reads as a wood you push through rather than a row of shrubs. Everything about
+  // a clump is derived from its tile coordinates, so a given map always draws the same
+  // forest.
+  //
+  // `fadeSet`, if given, is a Set of tile indices (map.idx) whose canopy should render
+  // translucent — used while placing a building on forest, so the ghost's validity wash
+  // (drawGhost) reads clearly over ground that's about to be cleared instead of competing
+  // with a solid green crown.
+  collectDepthLayers(x0, y0, x1, y1, fadeSet) {
     const map = game.map;
-    // canopies are taller than their tile and spill upward and sideways, so
-    // sweep a margin past the viewport or trees pop in at the edges
+    const out = [];
+    // canopies are taller than their tile and spill upward and sideways, so sweep a
+    // margin past the viewport or trees pop in at the edges
     const m = Math.ceil(TREE_CANOPY);
     const yEnd = Math.min(MAP_H - 1, y1 + m), xEnd = Math.min(MAP_W - 1, x1 + m);
     const xStart = Math.max(0, x0 - m), yStart = Math.max(0, y0 - 1);
-    // rows drawn top-down so nearer canopies overlap the ones behind them
     for (let y = yStart; y <= yEnd; y++) {
       for (let x = xStart; x <= xEnd; x++) {
         const i = map.idx(x, y);
-        if (map.terrain[i] === T_TREE) this.drawTreeClump(x, y, fadeSet && fadeSet.has(i) ? 0.32 : 1);
+        if (map.terrain[i] !== T_TREE) continue;
+        out.push({ d: y + TREE_BASE, kind: L_TREE, ref: i, alpha: fadeSet && fadeSet.has(i) ? 0.32 : 1 });
       }
     }
+    for (const f of game.factions) {
+      for (const b of f.buildings) {
+        // bridges are terrain (map.bridge), drawn with the water they cross
+        if (b.type.key === 'bridge') continue;
+        const s = b.type.size;
+        if (b.x + s < x0 - 1 || b.x > x1 + 1 || b.y + s < y0 - 1 || b.y > y1 + 1) continue;
+        const rampart = b.type.key === 'wall' || b.type.key === 'gate';
+        out.push({ d: b.y + s, kind: rampart ? L_RAMPART : L_BUILDING, ref: b, alpha: 1 });
+      }
+    }
+    for (const f of game.factions) {
+      for (const u of f.units) {
+        if (u.dead && u.deathT > 6) continue;
+        if (u.x < x0 - 1 || u.x > x1 + 1 || u.y < y0 - 1 || u.y > y1 + 1) continue;
+        out.push({ d: u.y + UNIT_FOOT, kind: L_UNIT, ref: u, alpha: 1 });
+      }
+    }
+    for (const pile of game.loot) out.push({ d: pile.y, kind: L_LOOT, ref: pile, alpha: 1 });
+    return out;
   }
 
   drawTreeClump(x, y, alpha = 1) {
@@ -1268,31 +1297,46 @@ class UI {
     if (alpha < 1) ctx.globalAlpha = baseAlpha;
   }
 
+  // One building's sprite at a screen rect. Prefers the composited art baked at load
+  // time (`bakeBuildings`, js/assets.js) and falls back to the faction's tileset for
+  // the types whose atlas cell was already right.
+  buildingSprite(key, faction, dx, dy, size) {
+    const baked = Assets.buildingArt[faction][key];
+    if (baked) { this.ctx.drawImage(baked, 0, 0, TILE, TILE, dx, dy, size, size); return; }
+    const type = BUILDING_TYPES[key];
+    let art = type.art;
+    if (type.pair) art = faction === 0 ? art[1] : art[0];
+    this.ctx.drawImage(Assets.factionTilesets[faction], art[0] * TILE, art[1] * TILE, TILE, TILE,
+      dx, dy, size, size);
+  }
+
+  // Ground-level art of a `flat` building — the farm's tilled field. Drawn with the
+  // terrain rather than in the depth pass: soil is ground, and painting it later would
+  // let a farm scrub out the bottom of a tree canopy standing in front of it.
+  drawBuildingGround(b) {
+    const soil = b.done ? Assets.crop : Assets.tilled;
+    for (const [tx, ty] of b.footprint()) this.drawTileCanvas(soil, tx, ty);
+  }
+
   drawBuilding(b) {
     const ctx = this.ctx;
     const s = TILE * this.cam.zoom;
-    let art = b.type.art;
-    const sheet = Assets.factionTilesets[b.faction];
-    if (b.type.key === 'farm') {
-      // farms are drawn as crop fields with a sign
-      for (const [tx, ty] of b.footprint()) {
-        this.tile(AT.CROP_VARS[(tx + ty) % 2], tx, ty, b.done ? Assets.tileset : null);
-      }
-      this.tile(AT.SIGN, b.x, b.y);
+    const [px, py] = this.worldToScreen(b.x, b.y);
+    if (b.type.flat) {
+      // the field itself is already on the ground (drawBuildingGround); only the
+      // signpost stands up out of it
+      this.spriteAt(AT.SIGN, b.x + 0.5, b.y + 1, 1);
     } else {
-      if (b.type.pair) art = b.faction === 0 ? b.type.art[1] : b.type.art[0];
-      const [sx, sy] = this.worldToScreen(b.x, b.y);
       ctx.globalAlpha = b.done ? 1 : 0.55;
-      ctx.drawImage(sheet, art[0] * TILE, art[1] * TILE, TILE, TILE,
-        Math.floor(sx), Math.floor(sy), Math.ceil(s * b.type.size), Math.ceil(s * b.type.size));
+      this.buildingSprite(b.type.key, b.faction, Math.floor(px), Math.floor(py),
+        Math.ceil(s * b.type.size));
       ctx.globalAlpha = 1;
       if (b.grand) {
         ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
-        ctx.strokeRect(Math.floor(sx) + 1, Math.floor(sy) + 1, s * b.type.size - 2, s * b.type.size - 2);
+        ctx.strokeRect(Math.floor(px) + 1, Math.floor(py) + 1, s * b.type.size - 2, s * b.type.size - 2);
       }
-      if (b.type.key === 'house' && b.done) this.drawHouseGlow(sx, sy, s);
+      if (b.type.key === 'house' && b.done) this.drawHouseGlow(px, py, s);
     }
-    const [px, py] = this.worldToScreen(b.x, b.y);
     // construction progress
     if (!b.done) {
       this.bar(px, py - 5, s * b.type.size, b.progress, '#7ac');
@@ -1304,8 +1348,11 @@ class UI {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(px + 0.5, py + 0.5, s * b.type.size - 1, s * b.type.size - 1);
     }
+    // Owner marker scales with the zoom, like the rampart's (it used to be a fixed 4px
+    // square, which swallowed a quarter of a house zoomed out and vanished zoomed in).
+    const dot = Math.max(2, Math.round(s * 0.14));
     ctx.fillStyle = game.factions[b.faction].color.css;
-    ctx.fillRect(px + 1, py + 1, 4, 4);
+    ctx.fillRect(Math.floor(px) + 1, Math.floor(py) + 1, dot, dot);
   }
 
   // Draw a standalone 16x16 sprite canvas (baked wall/tower/bridge tiles) at a tile position.
@@ -1358,13 +1405,14 @@ class UI {
       if (dn) this.drawTileSlice(art.wallV, b.x, b.y, 0, H, TILE, H);
     };
     ctx.globalAlpha = b.done ? 1 : 0.5;
+    let node = true;      // this tile is a tower or a gate — a landmark in the run
     if (b.type.key === 'gate') {
       stubs();
       this.drawTileCanvas(v > h ? art.gateV : art.gateH, b.x, b.y);
     } else if (h === 2 && v === 0) {
-      this.drawTileCanvas(art.wallH, b.x, b.y);
+      this.drawTileCanvas(art.wallH, b.x, b.y); node = false;
     } else if (v === 2 && h === 0) {
-      this.drawTileCanvas(art.wallV, b.x, b.y);
+      this.drawTileCanvas(art.wallV, b.x, b.y); node = false;
     } else {
       stubs();
       this.drawTileCanvas(art.tower, b.x, b.y);
@@ -1376,11 +1424,15 @@ class UI {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
     }
-    // Owner marker sits high on the parapet, not at the tile centre: dead centre
-    // is exactly where a gate's archway is, and the dot was covering it.
-    ctx.fillStyle = game.factions[b.faction].color.css;
-    const dot = Math.max(2, Math.round(s * 0.12));
-    ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.22), dot, dot);
+    // Owner marker sits high on the parapet, not at the tile centre: dead centre is
+    // exactly where a gate's archway is, and the dot was covering it. It goes on every
+    // tower and gate but only every third plain segment — one on each tile turned a long
+    // wall into a dotted line of blue squares marching across the map.
+    if (node || (b.x + b.y) % 3 === 0) {
+      ctx.fillStyle = game.factions[b.faction].color.css;
+      const dot = Math.max(2, Math.round(s * 0.12));
+      ctx.fillRect(Math.floor(sx + s * 0.5 - 1), Math.floor(sy + s * 0.22), dot, dot);
+    }
   }
 
   drawUnit(u) {
@@ -1396,38 +1448,45 @@ class UI {
     }
     const [sx, sy] = this.worldToScreen(u.x, u.y);
     const size = UF * z;
-    const drawX = sx - size / 2, drawY = sy - size * 0.72;
+    // Rounded before the mirror transform: flooring the destination and then reflecting
+    // it around a fractional sx left a left-facing unit landing half a pixel off a
+    // right-facing one, so a unit shimmered every time it turned around.
+    const px = Math.round(sx), drawY = Math.round(sy - size * 0.72);
+    const headY = drawY + sheet.top * z;      // top of the art, not of the 32px frame
+    const footY = drawY + sheet.bottom * z;   // where the figure meets the ground
     if (u.dead && u.deathT > 3) ctx.globalAlpha = Math.max(0, 1 - (u.deathT - 3) / 3);
-    // selection ring
+    // selection ring, on the feet rather than around the shins
     if (this.selection.units.includes(u)) {
       ctx.strokeStyle = '#8f8'; ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.ellipse(sx, sy + 2 * z, 7 * z, 3.5 * z, 0, 0, Math.PI * 2);
+      ctx.ellipse(px, footY, 7 * z, 3 * z, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.save();
-    if (u.facing < 0) { ctx.translate(sx * 2, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(sheet.canvas, frame * UF, anim.row * UF, UF, UF, Math.floor(u.facing < 0 ? drawX : drawX), Math.floor(drawY), size, size);
+    if (u.facing < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(sheet.canvas, frame * UF, anim.row * UF, UF, UF,
+      Math.round(px - size / 2), drawY, size, size);
     ctx.restore();
-    // faction chevron + hp
+    // Overlays stack upward from the top of the figure. They used to hang off the top
+    // edge of the 32px frame, which for a foot soldier (whose art starts 15 rows down)
+    // parked them the better part of a tile above his head, adrift in the grass.
     if (!u.dead) {
+      const gap = Math.max(2, Math.round(z));
+      let y = headY - gap;
+      const fh = Math.max(1, Math.round(1.5 * z));
+      y -= fh;
       ctx.fillStyle = game.factions[u.faction].color.css;
-      ctx.fillRect(sx - 2 * z, drawY + 2 * z, 4 * z, 1.5 * z);
-      if (u.hp < u.type.hp) this.bar(sx - 7 * z, drawY, 14 * z, u.hp / u.type.hp, '#5c5');
-      if (u.mission && u.mission.kind === 'caravan') {
-        ctx.fillStyle = '#fd5';
-        ctx.fillRect(sx - 1.5 * z, drawY - 2 * z, 3 * z, 3 * z);
-      }
-      if (u.mission && u.mission.kind === 'envoy') {
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(sx - 1.5 * z, drawY - 2 * z, 3 * z, 3 * z);
-      }
-      if (u.carryTotal() > 0) {   // hauling plunder — draw a little sack
-        ctx.fillStyle = '#a6763a';
-        ctx.fillRect(sx - 2 * z, drawY - 3 * z, 4 * z, 3.5 * z);
-        ctx.fillStyle = '#ffd24a';
-        ctx.fillRect(sx - 1 * z, drawY - 3 * z, 2 * z, 1 * z);
-      }
+      ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), fh);
+      if (u.hp < u.type.hp) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.type.hp, '#5c5'); }
+      const badge = (fill, hi) => {
+        const w = Math.max(3, Math.round(3 * z));
+        y -= gap + w;
+        ctx.fillStyle = fill; ctx.fillRect(Math.round(px - w / 2), y, w, w);
+        if (hi) { ctx.fillStyle = hi; ctx.fillRect(Math.round(px - w / 2), y, w, Math.max(1, Math.round(w / 3))); }
+      };
+      if (u.mission && u.mission.kind === 'caravan') badge('#fd5');
+      else if (u.mission && u.mission.kind === 'envoy') badge('#fff');
+      if (u.carryTotal() > 0) badge('#a6763a', '#ffd24a');   // hauling plunder
     }
     ctx.globalAlpha = 1;
   }
@@ -1495,10 +1554,11 @@ class UI {
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(tx, ty);
     this.ctx.globalAlpha = 0.6;
-    let art = type.art;
-    if (type.pair) art = art[1];
-    if (key === 'farm') {
-      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) this.tile(AT.CROP_VARS[(dx + dy) % 2], tx + dx, ty + dy);
+    if (type.flat) {
+      for (let dy = 0; dy < type.size; dy++) for (let dx = 0; dx < type.size; dx++) {
+        this.drawTileCanvas(Assets.crop, tx + dx, ty + dy);
+      }
+      this.spriteAt(AT.SIGN, tx + 0.5, ty + 1, 1);
     } else if (key === 'wall') {
       this.drawTileCanvas(Assets.rampart[0].tower, tx, ty);
     } else if (key === 'gate') {
@@ -1506,8 +1566,8 @@ class UI {
     } else if (key === 'bridge') {
       if (vertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
       else this.tile(AT.BRIDGE_H, tx, ty);
-    } else if (art) {
-      this.ctx.drawImage(Assets.tileset, art[0] * TILE, art[1] * TILE, TILE, TILE, sx, sy, s * type.size, s * type.size);
+    } else {
+      this.buildingSprite(key, 0, Math.floor(sx), Math.floor(sy), Math.ceil(s * type.size));
     }
     this.ctx.globalAlpha = 1;
     // Validity reads as a filled tile wash rather than an outline alone — white
@@ -1602,7 +1662,10 @@ class UI {
       mctx.fillStyle = f.color.css;
       for (const b of f.buildings) {
         if (b.type.key === 'bridge') continue;
-        mctx.fillRect(b.x, b.y, b.type.size + 1, b.type.size + 1);
+        // exactly the footprint: the old size+1 painted every building a tile wider and
+        // a tile taller than it is, so walls read as a solid slab and a lone house
+        // covered its neighbour's tile
+        mctx.fillRect(b.x, b.y, b.type.size, b.type.size);
       }
       for (const u of f.units) if (u.alive) mctx.fillRect(Math.floor(u.x), Math.floor(u.y), 1, 1);
     }

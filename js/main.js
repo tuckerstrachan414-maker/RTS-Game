@@ -88,7 +88,10 @@ class Game {
     div.className = 'msg ' + cls;
     div.textContent = text;
     el.appendChild(div);
-    while (el.children.length > 7) el.removeChild(el.firstChild);
+    // A landscape phone is ~390px tall; seven stacked messages ate a quarter of it and
+    // ran into the build panel. Keep fewer lines when there is less room for them.
+    const maxLines = window.innerHeight < 460 ? 3 : window.innerHeight < 620 ? 5 : 7;
+    while (el.children.length > maxLines) el.removeChild(el.firstChild);
     setTimeout(() => { div.classList.add('fade'); setTimeout(() => div.remove(), 1200); }, 9000);
   }
 

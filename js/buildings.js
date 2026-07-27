@@ -2,6 +2,10 @@
 // Building definitions, placement rules, construction, per-building production.
 
 // art: atlas entry; pair=true means [orange,blue] faction variants exist in the tileset.
+// art: null means the sprite is composited at load time instead — see `bakeBuildings`
+//      (js/assets.js), which keys its output off this table's `key`.
+// flat: the building's art lies on the ground (crop fields), so it is painted with the
+//      terrain rather than in the depth-sorted pass (js/ui.js).
 // size: tiles per side (art is scaled up for larger buildings).
 const BUILDING_TYPES = {
   townhall: {
@@ -11,7 +15,7 @@ const BUILDING_TYPES = {
     desc: 'Heart of your nation. Stores resources. Lose it and your nation falls.',
   },
   storehouse: {
-    key: 'storehouse', name: 'Storehouse', art: AT.LUMBER, size: 1,
+    key: 'storehouse', name: 'Storehouse', art: null, size: 1,
     cost: { wood: 40, stone: 20 }, hp: 400, buildTime: 10, slots: 0,
     storage: { food: 500, wood: 500, stone: 500, gold: 1e9 },
     desc: 'Holds a large stockpile of goods. Enemies can rob it or raze it for loot — guard it well.',
@@ -22,7 +26,7 @@ const BUILDING_TYPES = {
     desc: '+6 housing. Citizens need roofs over their heads.',
   },
   farm: {
-    key: 'farm', name: 'Farm', art: null, size: 2,
+    key: 'farm', name: 'Farm', art: null, flat: true, size: 2,
     cost: { wood: 15 }, hp: 120, buildTime: 6, slots: 3,
     produces: 'food', rate: 0.5,
     desc: 'Workers grow food on crop fields. +50% next to water.',
@@ -37,7 +41,7 @@ const BUILDING_TYPES = {
     reqText: 'must be within 2 tiles of trees',
   },
   quarry: {
-    key: 'quarry', name: 'Quarry', art: AT.QUARRY, size: 1,
+    key: 'quarry', name: 'Quarry', art: null, size: 1,
     cost: { wood: 25 }, hp: 150, buildTime: 8, slots: 3,
     produces: 'stone', rate: 0.3,
     desc: 'Workers cut stone from adjacent rock. Needs rocks nearby.',
@@ -59,17 +63,17 @@ const BUILDING_TYPES = {
     desc: 'Trade hub: workers earn gold, enables trade routes, +happiness nearby.',
   },
   church: {
-    key: 'church', name: 'Church', art: AT.CHURCH, size: 2,
+    key: 'church', name: 'Church', art: null, size: 2,
     cost: { wood: 20, stone: 40 }, hp: 250, buildTime: 12, slots: 0, happyAura: 14,
     desc: '+happiness for citizens. A content nation grows.',
   },
   well: {
-    key: 'well', name: 'Well', art: AT.WELL, size: 1,
+    key: 'well', name: 'Well', art: null, size: 1,
     cost: { stone: 15 }, hp: 80, buildTime: 4, slots: 0, happyAura: 4,
     desc: 'Fresh water: small happiness boost, +25% to adjacent farms.',
   },
   castle: {
-    key: 'castle', name: 'Castle', art: AT.CASTLE, size: 2,
+    key: 'castle', name: 'Castle', art: null, size: 2,
     cost: { wood: 40, stone: 60 }, hp: 600, buildTime: 16, slots: 0, solid: true,
     desc: 'Trains your army and envoys. Upgrade to Grand Castle for prosperity victory.',
   },
