@@ -303,13 +303,24 @@ Ordering a defensive group to move **re-posts it** at the destination
 (`UI.rightClick`) — "defend there instead", rather than marching over and then
 walking all the way home again.
 
+**Unit selection panel** shows each unit type with a `−` count `+` row so you
+can type a number or click the buttons to set exactly how many of each type are
+in the selection. The pool covers all alive non-envoy player units (including
+defensive), so you can add or remove from the selection without re-box-selecting.
+Reducing a type to 0 deselects those units; clearing the last unit closes the
+panel entirely.
+
 **Split Group** (panel button, shown for selections of 2+ fighters) peels part
-of a selection into a group of its own: it opens a chip list of the selected
-troops, you toggle the ones to move, and confirming makes the picked troops the
-new selection — so the role and priority controls that reappear act on the new
-group alone. Map clicks are inert while the mode is open, so a stray tap cannot
-silently discard the pick. Selected garrisons draw a dashed tether to their post
-on the map, so "Defensive" has somewhere to point at outside the panel.
+of a selection into a group of its own: it opens the same type-based `−` count `+`
+interface for the current selection, you set how many of each type move to the
+new group, and confirming makes the picked troops the new selection — so the role
+and priority controls that reappear act on the new group alone. Map clicks are
+inert while the mode is open, so a stray tap cannot silently discard the pick.
+Selected garrisons draw a dashed tether to their post on the map.
+
+**Select Army** (pause menu) selects all alive, non-envoy, non-defensive player
+units. Defensive (garrisoned) troops are excluded so the button always targets
+the field army.
 
 Roles are player-facing only; AI units never set one.
 

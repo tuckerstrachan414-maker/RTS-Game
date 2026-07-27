@@ -386,7 +386,7 @@ class UI {
   clearSelection() { this.splitMode = null; this.selection.units = []; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); }
 
   selectArmy() {
-    const units = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy);
+    const units = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy && u.groupRole !== 'defensive');
     if (units.length === 0) { game.log('No army to select.'); return; }
     this.selection.units = units; this.selection.building = null; this.selection.buildings = [];
     this.refreshPanel();
@@ -922,10 +922,28 @@ class UI {
       p.innerHTML = this.splitHTML(us);
       this.wireSplit(p, us);
     } else {
-      const byType = {};
-      for (const u of us) byType[u.type.name] = (byType[u.type.name] || 0) + 1;
+      // Build type map: pool = all alive non-envoy player units, partitioned into selected vs available
+      const pool = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy);
+      const selIds = new Set(us.map(u => u.id));
+      const typeMap = {};
+      for (const u of pool) {
+        const k = u.type.name;
+        if (!typeMap[k]) typeMap[k] = { sel: [], avail: [] };
+        (selIds.has(u.id) ? typeMap[k].sel : typeMap[k].avail).push(u);
+      }
       let html = `<h3>${us.length} unit${us.length > 1 ? 's' : ''} selected</h3>`;
-      html += '<div>' + Object.entries(byType).map(([n, c]) => `${c}× ${n}`).join(', ') + '</div>';
+      html += `<div class="type-adj">`;
+      for (const [name, { sel, avail }] of Object.entries(typeMap)) {
+        const total = sel.length + avail.length;
+        html += `<div class="type-row">`
+          + `<span class="type-name">${name}</span>`
+          + `<button class="ts-btn ts-minus" data-type="${name}"${sel.length === 0 ? ' disabled' : ''}>−</button>`
+          + `<input class="ts-count" data-type="${name}" type="number" value="${sel.length}" min="0" max="${total}" step="1">`
+          + `<button class="ts-btn ts-plus" data-type="${name}"${avail.length === 0 ? ' disabled' : ''}>+</button>`
+          + `<span class="ts-avail dim">/ ${total}</span>`
+          + `</div>`;
+      }
+      html += `</div>`;
       const carried = { food: 0, wood: 0, stone: 0, gold: 0 };
       let hauling = 0;
       for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
@@ -940,6 +958,52 @@ class UI {
         ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
         : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
       p.innerHTML = html;
+      // Wire type-based selection controls
+      p.querySelectorAll('.ts-plus').forEach(btn => {
+        btn.onclick = () => {
+          const tm = typeMap[btn.dataset.type];
+          if (tm.avail.length > 0) {
+            const u = tm.avail.shift();
+            tm.sel.push(u);
+            this.selection.units.push(u);
+            this.refreshPanel();
+          }
+        };
+      });
+      p.querySelectorAll('.ts-minus').forEach(btn => {
+        btn.onclick = () => {
+          const tm = typeMap[btn.dataset.type];
+          if (tm.sel.length > 0) {
+            const u = tm.sel.pop();
+            tm.avail.unshift(u);
+            const idx = this.selection.units.indexOf(u);
+            if (idx !== -1) this.selection.units.splice(idx, 1);
+            if (this.selection.units.length === 0) { this.clearSelection(); return; }
+            this.refreshPanel();
+          }
+        };
+      });
+      p.querySelectorAll('.ts-count').forEach(input => {
+        input.onchange = () => {
+          const n = Math.max(0, Math.min(parseInt(input.value) || 0, +input.max));
+          const tm = typeMap[input.dataset.type];
+          const cur = tm.sel.length;
+          if (n > cur) {
+            const toAdd = tm.avail.splice(0, n - cur);
+            tm.sel.push(...toAdd);
+            this.selection.units.push(...toAdd);
+          } else if (n < cur) {
+            const toRemove = tm.sel.splice(n);
+            toRemove.forEach(u => {
+              const idx = this.selection.units.indexOf(u);
+              if (idx !== -1) this.selection.units.splice(idx, 1);
+            });
+            tm.avail.unshift(...toRemove);
+          }
+          if (this.selection.units.length === 0) { this.clearSelection(); return; }
+          this.refreshPanel();
+        };
+      });
       const sel = document.getElementById('target-priority');
       if (sel) sel.onchange = () => {
         for (const u of fighters) u.targetPriority = sel.value;
@@ -1008,25 +1072,77 @@ class UI {
   // silently throw the pick away.
   splitHTML(us) {
     const picked = this.splitMode.picked;
+    const byType = {};
+    for (const u of us) {
+      const k = u.type.name;
+      if (!byType[k]) byType[k] = { sel: [], avail: [] };
+      (picked.has(u.id) ? byType[k].sel : byType[k].avail).push(u);
+    }
     let html = `<h3>Split group — ${picked.size} of ${us.length}</h3>`;
-    html += `<div class="dim">${this.isTouch ? 'Tap' : 'Click'} troops to move them into the new group.</div>`;
-    html += `<div class="splitrow">` + us.map(u =>
-      `<button class="chip${picked.has(u.id) ? ' on' : ''}" data-uid="${u.id}">`
-      + `${u.type.name}${u.hp < u.type.hp ? ` <span class="dim">${Math.ceil(u.hp)}hp</span>` : ''}</button>`).join('')
-      + `</div>`;
+    html += `<div class="dim">Set how many of each type move to the new group.</div>`;
+    html += `<div class="type-adj">`;
+    for (const [name, { sel, avail }] of Object.entries(byType)) {
+      const total = sel.length + avail.length;
+      html += `<div class="type-row">`
+        + `<span class="type-name">${name}</span>`
+        + `<button class="ts-btn ts-minus" data-type="${name}"${sel.length === 0 ? ' disabled' : ''}>−</button>`
+        + `<input class="ts-count" data-type="${name}" type="number" value="${sel.length}" min="0" max="${total}" step="1">`
+        + `<button class="ts-btn ts-plus" data-type="${name}"${avail.length === 0 ? ' disabled' : ''}>+</button>`
+        + `<span class="ts-avail dim">/ ${total}</span>`
+        + `</div>`;
+    }
+    html += `</div>`;
     html += `<div style="margin-top:8px">`
       + `<button id="split-all">All</button> <button id="split-none">None</button> `
-      + `<button id="split-ok"${picked.size === 0 || picked.size === us.length ? ' disabled title="Pick some — but not all — of the group"' : ''}>Split (${picked.size})</button> `
+      + `<button id="split-ok"${picked.size === 0 || picked.size === us.length ? ' disabled' : ''}>Split (${picked.size})</button> `
       + `<button id="split-cancel">Cancel</button></div>`;
     return html;
   }
 
   wireSplit(p, us) {
     const picked = this.splitMode.picked;
-    p.querySelectorAll('.chip[data-uid]').forEach(btn => {
+    const byType = {};
+    for (const u of us) {
+      const k = u.type.name;
+      if (!byType[k]) byType[k] = { sel: [], avail: [] };
+      (picked.has(u.id) ? byType[k].sel : byType[k].avail).push(u);
+    }
+    p.querySelectorAll('.ts-plus').forEach(btn => {
       btn.onclick = () => {
-        const id = +btn.dataset.uid;
-        if (picked.has(id)) picked.delete(id); else picked.add(id);
+        const tm = byType[btn.dataset.type];
+        if (tm.avail.length > 0) {
+          const u = tm.avail.shift();
+          picked.add(u.id);
+          tm.sel.push(u);
+          this.refreshPanel();
+        }
+      };
+    });
+    p.querySelectorAll('.ts-minus').forEach(btn => {
+      btn.onclick = () => {
+        const tm = byType[btn.dataset.type];
+        if (tm.sel.length > 0) {
+          const u = tm.sel.pop();
+          picked.delete(u.id);
+          tm.avail.unshift(u);
+          this.refreshPanel();
+        }
+      };
+    });
+    p.querySelectorAll('.ts-count').forEach(input => {
+      input.onchange = () => {
+        const n = Math.max(0, Math.min(parseInt(input.value) || 0, +input.max));
+        const tm = byType[input.dataset.type];
+        const cur = tm.sel.length;
+        if (n > cur) {
+          const toAdd = tm.avail.splice(0, n - cur);
+          toAdd.forEach(u => picked.add(u.id));
+          tm.sel.push(...toAdd);
+        } else if (n < cur) {
+          const toRemove = tm.sel.splice(n);
+          toRemove.forEach(u => picked.delete(u.id));
+          tm.avail.unshift(...toRemove);
+        }
         this.refreshPanel();
       };
     });
