@@ -2,6 +2,13 @@
 // Procedural map generation, terrain queries, water autotiling.
 
 const T_GRASS = 0, T_WATER = 1, T_TREE = 2, T_ROCK = 3, T_CAVE = 4;
+// Raised ground. A plateau is a mass of high tiles ringed by T_CLIFF — a rock
+// face nothing can climb — with a T_RAMP stair or two cut into its south side.
+// The top itself stays ordinary terrain (grass, and whatever trees and boulders
+// the generator already put there) flagged in `high`, so it builds, harvests and
+// fights exactly like low ground; what makes a plateau matter is that the only
+// ways onto it are the ramps, which turns every mesa into a chokepoint.
+const T_CLIFF = 5, T_RAMP = 6;
 const MAP_W = 96, MAP_H = 96;
 // Rough ground. Forest and boulder fields are crossable — troops push through
 // the undergrowth and scramble over the stones — but it costs them. These are
@@ -11,6 +18,18 @@ const MAP_W = 96, MAP_H = 96;
 // and cuts straight through when it isn't.
 const TREE_MOVE_COST = 2.4;
 const ROCK_MOVE_COST = 1.9;
+// Climbing a stair is slower than walking round its foot. Kept modest: a ramp is
+// meant to be a chokepoint worth holding, not a detour the pathfinder refuses.
+const RAMP_MOVE_COST = 1.7;
+// Plateau generation. PLATEAU_LEVEL is the height the noise has to clear for land
+// to rise; the two minimums throw away masses too small to be worth a rim (and
+// too small to have any usable ground on top once the rim is taken out of them);
+// PLATEAU_START_CLEAR keeps cliffs off every nation's doorstep.
+const PLATEAU_LEVEL = 0.63;
+const MIN_PLATEAU = 26;
+const MIN_PLATEAU_TOP = 8;
+const PLATEAU_START_CLEAR = 12;
+const ORTH = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 // Walkable tiles a nation must be able to reach from its start, or the map
 // generator cuts it a track out (see connectStartZones).
 const MIN_START_REGION = 500;
@@ -44,6 +63,7 @@ class GameMap {
     this.w = MAP_W; this.h = MAP_H;
     this.terrain = new Uint8Array(MAP_W * MAP_H);
     this.decor = new Int8Array(MAP_W * MAP_H).fill(-1);   // variant index for trees/rocks/grass
+    this.high = new Uint8Array(MAP_W * MAP_H);            // 1 = walkable plateau top (see T_CLIFF)
     this.bridge = new Uint8Array(MAP_W * MAP_H);          // 1=horizontal 2=vertical
     this.road = new Uint8Array(MAP_W * MAP_H);            // trade-route path marker
     this.buildingAt = new Array(MAP_W * MAP_H).fill(null);
@@ -79,15 +99,28 @@ class GameMap {
         }
       }
     }
-    // Sprinkle caves on rocky ground
+    // One start zone per quadrant. Declared up here because the plateaus need to
+    // know where they are before they can avoid them.
+    const zones = [[24, 24], [72, 24], [24, 72], [72, 72]];
+    // Raise the plateaus before anything else is placed on the map: they overwrite
+    // whatever the noise put on their rim, and the passes below want to see the
+    // finished cliffs so caves do not land in a rock face and the connectivity
+    // guarantees are made against terrain nobody can climb.
+    this.generatePlateaus(rng, zones);
+    // Sprinkle caves on rocky ground. A cave is a mouth in a rock face rather
+    // than ground, so it is the one thing placed after the plateaus that can take
+    // walkable ground away from them: on top it can cut the plateau in two and
+    // strand the half without a stair, and at the foot of a ramp it seals the
+    // only way up. Keep them off both.
     let caves = 0;
     for (let tries = 0; tries < 4000 && caves < 14; tries++) {
       const x = Math.floor(rng() * this.w), y = Math.floor(rng() * this.h);
       const i = this.idx(x, y);
-      if (this.terrain[i] === T_ROCK && this.decor[i] === 0) { this.terrain[i] = T_CAVE; caves++; }
+      if (this.terrain[i] !== T_ROCK || this.decor[i] !== 0 || this.high[i]) continue;
+      if (this.terrain[this.idx2(x, y - 1)] === T_RAMP) continue;
+      this.terrain[i] = T_CAVE; caves++;
     }
-    // Four start zones, one per quadrant, cleared and provisioned
-    const zones = [[24, 24], [72, 24], [24, 72], [72, 72]];
+    // Clear and provision each start zone
     for (const [cx, cy] of zones) {
       this.startZones.push({ x: cx, y: cy });
       for (let dy = -6; dy <= 6; dy++) {
@@ -96,7 +129,7 @@ class GameMap {
           if (!this.inBounds(x, y)) continue;
           const i = this.idx(x, y);
           const d = Math.max(Math.abs(dx), Math.abs(dy));
-          if (d <= 3) { this.terrain[i] = T_GRASS; this.decor[i] = -1; }
+          if (d <= 3) { this.terrain[i] = T_GRASS; this.decor[i] = -1; this.high[i] = 0; }
         }
       }
       // guarantee trees, rocks and a cave near each start
@@ -107,8 +140,189 @@ class GameMap {
     this.connectStartZones();
   }
 
+  // Raise the high ground. Works on its own noise field so plateaus land
+  // independently of where the coastline and the woods fell, then commits one
+  // mass at a time — a mass that cannot be given a usable stair is abandoned
+  // whole rather than left as a wall around ground no one can reach.
+  generatePlateaus(rng, zones) {
+    const N = this.w * this.h;
+    const field = makeNoise(rng, 12);
+    let plat = new Uint8Array(N);
+    // A rim tile needs its neighbours to exist, so keep the mass off the border.
+    for (let y = 2; y < this.h - 2; y++) {
+      for (let x = 2; x < this.w - 2; x++) {
+        const i = this.idx(x, y);
+        if (this.terrain[i] !== T_WATER && field(x, y) > PLATEAU_LEVEL) plat[i] = 1;
+      }
+    }
+    // Majority smoothing. Thresholded noise frays into single-tile spurs and
+    // pinholes, and against this art every one of those reads as a stray boulder
+    // rather than a cliff; three passes settle it into masses with an outline.
+    for (let pass = 0; pass < 3; pass++) {
+      const next = plat.slice();
+      for (let y = 2; y < this.h - 2; y++) {
+        for (let x = 2; x < this.w - 2; x++) {
+          const i = this.idx(x, y);
+          if (this.terrain[i] === T_WATER) { next[i] = 0; continue; }
+          let n = 0;
+          for (let dy = -1; dy <= 1; dy++)
+            for (let dx = -1; dx <= 1; dx++)
+              if ((dx || dy) && plat[this.idx(x + dx, y + dy)]) n++;
+          next[i] = n >= 5 ? 1 : n <= 2 ? 0 : plat[i];
+        }
+      }
+      plat = next;
+    }
+    // Nobody starts walled in. Cleared after the smoothing rather than before it,
+    // or the passes above would grow the mass straight back over the start zone.
+    for (const [cx, cy] of zones) {
+      for (let y = cy - PLATEAU_START_CLEAR; y <= cy + PLATEAU_START_CLEAR; y++)
+        for (let x = cx - PLATEAU_START_CLEAR; x <= cx + PLATEAU_START_CLEAR; x++)
+          if (this.inBounds(x, y)) plat[this.idx(x, y)] = 0;
+    }
+
+    for (const comp of this.plateauMasses(plat)) {
+      if (comp.length < MIN_PLATEAU) continue;
+      const inComp = new Set(comp);
+      // Rim by 4-connectivity, not 8: this game paths and walks orthogonally, so
+      // a tile whose four sides are all plateau is inside it however its corners
+      // fall. That also means every rim tile has an open side for the artwork to
+      // face, which is the whole reason the set only needs its eight outer pieces.
+      const rim = [], top = [];
+      for (const i of comp) {
+        const x = i % this.w, y = (i / this.w) | 0;
+        const edge = ORTH.some(([dx, dy]) => !inComp.has(this.idx(x + dx, y + dy)));
+        (edge ? rim : top).push(i);
+      }
+      if (top.length < MIN_PLATEAU_TOP) continue;
+      const topSet = new Set(top);
+      const ramps = this.pickRamps(rng, plat, inComp, topSet, rim);
+      if (!ramps.length) continue;
+      // Every tile up there has to be walkable from a stair. A mass with a lobe
+      // the stairs cannot reach would be ground the game shows but nobody can use.
+      if (!this.rampsReachAll(ramps, topSet, top)) continue;
+      for (const i of rim) { this.terrain[i] = T_CLIFF; this.decor[i] = -1; this.treeWood[i] = 0; }
+      for (const i of ramps) { this.terrain[i] = T_RAMP; this.decor[i] = -1; this.treeWood[i] = 0; }
+      // The tufted grass variants have low-ground turf baked into them, so leaving
+      // decor on a raised tile would punch a patch of valley colour into the top.
+      for (const i of top) {
+        this.high[i] = 1;
+        if (this.terrain[i] === T_GRASS) this.decor[i] = -1;
+      }
+    }
+  }
+
+  // 4-connected components of the raised field.
+  plateauMasses(plat) {
+    const seen = new Uint8Array(plat.length), out = [];
+    for (let s = 0; s < plat.length; s++) {
+      if (!plat[s] || seen[s]) continue;
+      const comp = [s];
+      seen[s] = 1;
+      for (let qi = 0; qi < comp.length; qi++) {
+        const x = comp[qi] % this.w, y = (comp[qi] / this.w) | 0;
+        for (const [dx, dy] of ORTH) {
+          const nx = x + dx, ny = y + dy;
+          if (!this.inBounds(nx, ny)) continue;
+          const j = this.idx(nx, ny);
+          if (plat[j] && !seen[j]) { seen[j] = 1; comp.push(j); }
+        }
+      }
+      out.push(comp);
+    }
+    return out;
+  }
+
+  // Cut stairs into the south rim. The art is a front elevation — treads and two
+  // rock jambs, drawn as if you were looking at the face — so it only reads on a
+  // south-facing edge: open ground below to arrive from, plateau top directly
+  // above to step out onto, and rim either side for the jambs to close against.
+  pickRamps(rng, plat, inComp, topSet, rim) {
+    const cand = [];
+    for (const i of rim) {
+      const x = i % this.w, y = (i / this.w) | 0;
+      if (!this.inBounds(x, y + 1) || !this.inBounds(x, y - 1)) continue;
+      const below = this.idx(x, y + 1);
+      if (plat[below]) continue;
+      const bt = this.terrain[below];
+      if (bt === T_WATER || bt === T_CAVE) continue;
+      if (!topSet.has(this.idx(x, y - 1))) continue;
+      const jambs = [-1, 1].every(dx => {
+        const j = this.idx(x + dx, y);
+        return inComp.has(j) && !topSet.has(j) && !plat[this.idx(x + dx, y + 1)];
+      });
+      if (jambs) cand.push(i);
+    }
+    for (let k = cand.length - 1; k > 0; k--) {
+      const j = Math.floor(rng() * (k + 1));
+      [cand[k], cand[j]] = [cand[j], cand[k]];
+    }
+    const ramps = [];
+    for (const i of cand) {
+      const x = i % this.w, y = (i / this.w) | 0;
+      const near = ramps.some(r => Math.abs(r % this.w - x) + Math.abs(((r / this.w) | 0) - y) < 7);
+      if (!near) ramps.push(i);
+      if (ramps.length >= 3) break;
+    }
+    return ramps;
+  }
+
+  // Can you get from a stair to every tile on top, walking orthogonally?
+  rampsReachAll(ramps, topSet, top) {
+    const reach = new Set(ramps), q = ramps.slice();
+    while (q.length) {
+      const i = q.pop(), x = i % this.w, y = (i / this.w) | 0;
+      for (const [dx, dy] of ORTH) {
+        const nx = x + dx, ny = y + dy;
+        if (!this.inBounds(nx, ny)) continue;
+        const j = this.idx(nx, ny);
+        if (topSet.has(j) && !reach.has(j)) { reach.add(j); q.push(j); }
+      }
+    }
+    return top.every(i => reach.has(i));
+  }
+
+  // Is this tile part of a plateau — its top, its rim, or a stair through it?
+  // What the rim artwork keys off: a cliff tile draws the face that looks out
+  // over whichever of its sides is NOT raised.
+  raised(x, y) {
+    if (!this.inBounds(x, y)) return false;
+    const i = this.idx(x, y);
+    return this.high[i] === 1 || this.terrain[i] === T_CLIFF || this.terrain[i] === T_RAMP;
+  }
+
+  // Pick the rim piece for a cliff tile. Corners first: two open sides meeting at
+  // a right angle is a corner, one open side is a straight edge. A tile open on
+  // opposite sides (a one-tile-thick neck) or on three has no piece of its own —
+  // the tall south face is the one that reads from any angle, so it stands in.
+  cliffTile(x, y) {
+    if (this.terrain[this.idx2(x + 1, y)] === T_RAMP) return AT.RAMP_W;
+    if (this.terrain[this.idx2(x - 1, y)] === T_RAMP) return AT.RAMP_E;
+    const n = !this.raised(x, y - 1), s = !this.raised(x, y + 1);
+    const e = !this.raised(x + 1, y), w = !this.raised(x - 1, y);
+    if (n && w && !s && !e) return AT.CLIFF_NW;
+    if (n && e && !s && !w) return AT.CLIFF_NE;
+    if (s && w && !n && !e) return AT.CLIFF_SW;
+    if (s && e && !n && !w) return AT.CLIFF_SE;
+    if (n && !s && !e && !w) return AT.CLIFF_N;
+    if (w && !n && !s && !e) return AT.CLIFF_W;
+    if (e && !n && !s && !w) return AT.CLIFF_E;
+    return AT.CLIFF_S;
+  }
+
+  // idx() clamped to the map, for neighbour lookups that only want to read.
+  idx2(x, y) {
+    return this.idx(Math.min(this.w - 1, Math.max(0, x)), Math.min(this.h - 1, Math.max(0, y)));
+  }
+
   // Terrain-only walkability. Used during generation, before any building exists.
-  openAt(x, y) { return this.inBounds(x, y) && this.terrain[this.idx(x, y)] === T_GRASS; }
+  // Stairs count: they are how the ground on a plateau joins the rest of the map,
+  // so a flood that stopped at them would read every mesa as its own island.
+  openAt(x, y) {
+    if (!this.inBounds(x, y)) return false;
+    const t = this.terrain[this.idx(x, y)];
+    return t === T_GRASS || t === T_RAMP;
+  }
 
   // Flood the contiguous walkable region containing (sx, sy), stopping early
   // once `limit` tiles have been found.
@@ -147,13 +361,16 @@ class GameMap {
 
   // How expensive is a track between these points? Forest and rock are free to
   // cut; water has to be filled into an isthmus, so routes needing less of it
-  // win. Caves are too valuable to bulldoze, so a route through one is rejected.
+  // win. Caves and cliffs are never cut, so a route through either is rejected.
   lineCost(x0, y0, x1, y1) {
     let water = 0;
     for (const [x, y] of this.linePath(x0, y0, x1, y1)) {
       if (!this.inBounds(x, y)) return null;
       const t = this.terrain[this.idx(x, y)];
-      if (t === T_CAVE) return null;
+      // Caves are too valuable to bulldoze; a cliff cannot be bulldozed at all,
+      // so a track that would have to breach one is no track. carveShortestLink
+      // is the fallback and it will go round.
+      if (t === T_CAVE || t === T_CLIFF) return null;
       if (t === T_WATER) water++;
     }
     return water;
@@ -167,6 +384,7 @@ class GameMap {
       if (this.terrain[i] === T_CAVE || this.terrain[i] === T_GRASS) continue;
       this.terrain[i] = T_GRASS;
       this.decor[i] = -1;
+      this.high[i] = 0;
       this.treeWood[i] = 0;
     }
   }
@@ -221,11 +439,23 @@ class GameMap {
 
   // Dijkstra from a start zone to the nearest tile of `targetSet`. Existing
   // grass is nearly free, forest and rock cost a little (they can be cut), water
-  // costs a lot (it has to be filled), and caves are never touched — so the
-  // route hugs the land and crosses at the tightest gap it can find.
+  // costs a lot (it has to be filled), cliffs cost more still (breaching one
+  // leaves a gap in a rock face, so it is a last resort rather than a refusal —
+  // this is the pass that has to succeed), and caves are never touched. The route
+  // hugs the land and crosses at the tightest gap it can find.
   carveShortestLink(z, targetSet) {
     const N = MAP_W * MAP_H;
-    const dist = new Float32Array(N).fill(Infinity);
+    // Float64, not Float32. `nd` below is computed in double precision, so a
+    // Float32 store rounds it — and when it rounds UP, `nd < dist[j]` is still
+    // true next time round and the node is pushed again with a distance it never
+    // actually improves on. That is an infinite loop, not a slow one: 0.1 steps
+    // over grass hit it readily (nd 1.6000002384185792 vs a stored
+    // 1.600000262260437). `settled` is the other half of the fix — with
+    // non-negative costs a node's distance is final the first time it is popped,
+    // so expanding it once is both correct and what stops stale heap entries
+    // from re-relaxing the graph.
+    const dist = new Float64Array(N).fill(Infinity);
+    const settled = new Uint8Array(N);
     const prev = new Int32Array(N).fill(-1);
     const heap = new MinHeap();
     const start = this.idx(z.x, z.y);
@@ -234,6 +464,8 @@ class GameMap {
     let goal = -1;
     while (heap.size()) {
       const i = heap.pop();
+      if (settled[i]) continue;
+      settled[i] = 1;
       if (targetSet.has(i)) { goal = i; break; }
       const d = dist[i];
       const x = i % MAP_W, y = (i / MAP_W) | 0;
@@ -242,7 +474,7 @@ class GameMap {
         if (!this.inBounds(nx, ny)) continue;
         const j = this.idx(nx, ny), t = this.terrain[j];
         if (t === T_CAVE) continue;
-        const nd = d + (t === T_GRASS ? 0.1 : t === T_WATER ? 6 : 1);
+        const nd = d + (t === T_GRASS ? 0.1 : t === T_WATER ? 6 : t === T_CLIFF ? 9 : 1);
         if (nd < dist[j]) { dist[j] = nd; prev[j] = i; heap.push(nd, j); }
       }
     }
@@ -251,6 +483,7 @@ class GameMap {
       if (this.terrain[i] === T_GRASS) continue;
       this.terrain[i] = T_GRASS;
       this.decor[i] = -1;
+      this.high[i] = 0;
       this.treeWood[i] = 0;
     }
     return true;
@@ -284,9 +517,13 @@ class GameMap {
     }
     const t = this.terrain[i];
     if (t === T_WATER) return this.bridge[i] !== 0;
+    // A cliff face is the one piece of terrain with no way through it at all —
+    // no bridge, no cutting, no siege. Getting onto a plateau means finding one
+    // of its ramps, which is what makes the high ground worth taking.
+    if (t === T_CLIFF) return false;
     // Caves are mouths in the rock face, not ground. Everything else — grass,
-    // forest, boulder field — can be walked; rough ground just slows the walker
-    // down (see moveCost).
+    // forest, boulder field, stairs — can be walked; rough ground just slows the
+    // walker down (see moveCost).
     return t !== T_CAVE;
   }
 
@@ -298,7 +535,8 @@ class GameMap {
     const i = this.idx(x, y);
     if (this.buildingAt[i] || this.bridge[i] || this.road[i]) return 1;
     const t = this.terrain[i];
-    return t === T_TREE ? TREE_MOVE_COST : t === T_ROCK ? ROCK_MOVE_COST : 1;
+    return t === T_TREE ? TREE_MOVE_COST : t === T_ROCK ? ROCK_MOVE_COST
+      : t === T_RAMP ? RAMP_MOVE_COST : 1;
   }
 
   // Pick the right water tile from the 9-slice/strip set based on neighbors.

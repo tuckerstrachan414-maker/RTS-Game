@@ -4,7 +4,7 @@
 const TILE = 16;          // tileset cell size in px
 const UF = 32;            // unit frame size in px
 
-// Tileset atlas coordinates [col,row] in tileset16x16_1.png (8x14 grid).
+// Tileset atlas coordinates [col,row] in tileset16x16_1.png (8x17 grid).
 // A few entries are catalogued but unreferenced — see the note under the table.
 const AT = {
   GRASS: [2, 4],
@@ -35,6 +35,22 @@ const AT = {
   W_VN: [3, 5], W_V: [3, 6], W_VS: [3, 7],
   W_HW: [4, 5], W_H: [5, 5], W_HE: [6, 5],
   W_ONE: [7, 5],
+  // Cliff/plateau set, spliced in from PUNY_WORLD_v1 by tools/splice-cliffs.py.
+  // A plateau is drawn as a rim of impassable T_CLIFF tiles around a walkable
+  // top: the eight outer pieces below are the rim seen from slightly above (N is
+  // the far lip, S is the tall face you cannot climb), CLIFF_TOP is the raised
+  // ground itself, and the four I* pieces are the concave corners for where a
+  // plateau's outline turns back on itself. `cliffTile` (js/map.js) picks between
+  // them. Every piece except CLIFF_TOP is transparent outside the rock, so they
+  // are drawn over the base grass tile.
+  CLIFF_NW: [0, 14], CLIFF_N: [1, 14], CLIFF_NE: [2, 14],
+  CLIFF_W:  [3, 14], CLIFF_TOP: [4, 14], CLIFF_E: [5, 14],
+  CLIFF_SW: [6, 14], CLIFF_S: [7, 14], CLIFF_SE: [0, 15],
+  CLIFF_INW: [1, 15], CLIFF_INE: [2, 15], CLIFF_ISW: [3, 15], CLIFF_ISE: [4, 15],
+  // Ramp: a stair cut through a south-facing rim. RAMP is the walkable tread on
+  // the face, RAMP_TOP the step onto the plateau above it, RAMP_W/RAMP_E the
+  // rock jambs that close the rim either side of the gap.
+  RAMP: [6, 15], RAMP_TOP: [5, 15], RAMP_W: [7, 15], RAMP_E: [0, 16],
   // buildings: [orangeVariant, blueVariant] where a pair exists
   TOWNHALL: [[0, 0], [7, 0]],
   HOUSE: [[2, 3], [3, 3]],
@@ -54,6 +70,10 @@ const AT = {
 //  WELL        — a green mound with a doorway, all but identical to CAVE; the Well
 //                is composited in `bakeBuildings` instead
 //  WALL_V      — a 6px column; `bakeRamparts` takes its vertical run off WALL_TOWER
+//  CLIFF_I*    — the cliff set's four concave corners. `generatePlateaus` decides rim
+//                membership by 4-connectivity, so a rim tile always has an open side and
+//                the eight outer pieces always suffice; spliced and catalogued anyway so
+//                nobody has to go find them in the reference sheet again
 
 // Unit spritesheets. Rows: 0=idle, 1=walk, rows-3=attack, rows-2=hurt, rows-1=death.
 const UNIT_SHEETS = {

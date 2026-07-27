@@ -15,9 +15,9 @@ are tracked in `docs/BUGS.md`.
 
 `js/map.js`. Seeded procedural generation (mulberry32 + smoothed value noise)
 of a 96×96 continent: water, grass, depleting forests (`treeWood` per tile),
-rocks, and 14 sprinkled cave tiles. Four cleared start zones, each guaranteed
-trees/rocks/a cave within reach. Water autotiling picks from a 9-slice + strip
-set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
+rocks, plateaus, and 14 sprinkled cave tiles. Four cleared start zones, each
+guaranteed trees/rocks/a cave within reach. Water autotiling picks from a
+9-slice + strip set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
 iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
 onto trade roads; per-faction passability (gates open for owner + allies,
 walls/keeps solid, other buildings walkable). **Forest and rock are rough
@@ -31,17 +31,42 @@ whatever it lands on (terrain → grass, `treeWood` zeroed), the same way
 `carveLine` clears a track — so a wall ring can seal all the way around a
 wooded perimeter instead of stopping at the treeline; unit muster/formation
 slots still deliberately prefer `moveCost === 1` tiles so ranks don't form up
-inside a thicket. **Start zones are guaranteed
+inside a thicket. **Plateaus are the one piece of terrain that is a wall.** A
+second noise field (`generatePlateaus`, `PLATEAU_LEVEL` 0.63) raises masses of
+high ground, majority-smoothed three passes so they settle into shapes with an
+outline rather than fraying into single-tile spurs. Each mass is split into a
+rim of `T_CLIFF` — impassable, unbridgeable, uncuttable, the only terrain with
+no way through it at all — and a top of ordinary ground flagged in `map.high`,
+which builds, harvests and fights exactly like low ground. The way up is
+`T_RAMP`, one to three stairs cut into a mass's *south* rim (the stair art is a
+front elevation, so it only reads on a south face; a candidate needs open ground
+below, plateau top directly above, and rim either side for its jambs), crossed
+at `RAMP_MOVE_COST` 1.7×. That makes every mesa a chokepoint: ~320 cliff tiles,
+~9 ramps and ~700 tiles of high ground per map, and an attacker has to find a
+stair or go round. Rim membership is decided by 4-connectivity, not 8 — a tile
+whose four sides are all plateau is inside it however its corners fall — which
+both matches the orthogonal pathfinder and guarantees every rim tile has an open
+side for its artwork to face, so the set never needs its concave-corner pieces.
+Three invariants are enforced at generation time rather than hoped for: no
+plateau within `PLATEAU_START_CLEAR` (12 tiles) of a start zone, every top tile
+walkable from a stair (`rampsReachAll`, else the mass is abandoned whole), and
+no cave placed on a top or at a ramp's foot — a cave is a hole in a rock face,
+not ground, and is the one thing placed after the plateaus that could strand
+ground behind them. **Start zones are guaranteed
 traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
 stamped wherever the quadrant centre lands, which could leave a nation on a
 grass island in a lake or sealed behind planted forest, so the generator floods
 each zone, cuts a track to real country when the region is too small, and links
 every start zone into one landmass at the narrowest crossing it can find
-(Dijkstra weighting grass cheap, forest and rock a little, water heavily, caves
-never — this still runs on grass-only connectivity, so the guarantee is stricter
-than movement now requires and seeds keep generating identical terrain).
-`?seed=N` URL replay. Notably absent: tree regrowth (the `SAPLING` atlas
-entry is unused), map sizes, biomes.
+(Dijkstra weighting grass cheap, forest and rock a little, water heavily, cliffs
+heavier still — breaching one is a last resort for the pass that has to succeed,
+where `lineCost` simply refuses — and caves never). That connectivity runs on
+clear ground plus ramps (`openAt`), so it is stricter than movement requires:
+forest and rock are walkable but do not count toward it. Adding plateaus changed
+what a given seed generates — the same seed still replays identically, it just
+replays a different map than it did before the mesas existed. `?seed=N` URL
+replay. Notably absent: tree regrowth (the `SAPLING` atlas entry is unused), map
+sizes, biomes.
 
 ## Economy & population — Deep
 
@@ -484,7 +509,7 @@ scale one 16×16 cell up to their footprint, so a 2×2 Castle has visibly
 chunkier pixels than a 1×1 House.
 
 **Tileset is a spliced composite, not a single source.** `assets/tileset16x16_1.png`
-is still one 8×14-cell, 16px-grid PNG at the same coordinates `AT` has always
+is one 8×**17**-cell, 16px-grid PNG at the same coordinates `AT` has always
 pointed at — but a 2026-07 pass overwrote specific cells in place with art from
 the **PUNY_WORLD_v1** pack (a separate 27-column Tiled tileset supplied as a
 reference sheet, never loaded at runtime itself): `AT.TREES` (all 3), `AT.SAPLING`,
@@ -505,7 +530,24 @@ against water art's baked-in shoreline-over-grass blend). `AT.CROP_VARS` is
 gone (farms have their own baked field tiles now) and so is `AT.QUARRY`;
 `AT.WELL` and `AT.WALL_V` are still catalogued but no longer drawn, along with
 the long-unused `AT.SAPLING` and `AT.POND_DECOR` — there is a note listing all
-four under the `AT` table in `js/assets.js`. No code changed — `js/assets.js`, `js/ui.js`, and
-`js/buildings.js` are untouched; this was purely `assets/tileset16x16_1.png`
-pixels at existing `AT` coordinates. A backup of the pre-splice original is not
-kept in-repo (recoverable via git history).
+four under the `AT` table in `js/assets.js`. That pass changed no code — it was
+purely `assets/tileset16x16_1.png` pixels at existing `AT` coordinates. A backup
+of the pre-splice original is not kept in-repo (recoverable via git history).
+
+**The cliff set was appended, not overwritten.** The plateau art needed 17 more
+tiles and the sheet had exactly one free cell, so a later pass grew the PNG from
+14 rows to 17 and put the set in the new rows 14–16 (`AT.CLIFF_*`, `AT.RAMP*`).
+Appending rather than repacking means every pre-existing `AT` coordinate still
+addresses the same pixels — rows 0–13 are byte-identical — so nothing else had
+to move. Unlike the 2026-07 pass this one is reproducible:
+`tools/splice-cliffs.py` copies the cells out of
+`assets/punyworld-overworld-tileset.png` (still never loaded at runtime) and is
+safe to re-run, since it rebuilds rows 14+ from scratch each time. The cliff art
+is greyish-olive (hue 70–80°) plus desaturated greys, and `shiftHue` only
+rotates hues in the warm band with saturation > 0.15, so **no cliff pixel is
+touched by the per-faction recolor** — mesas stay neutral terrain for every
+nation. Only 13 of the 17 are drawn: the eight outer rim pieces, the plateau
+top, and the four ramp pieces. The set's four concave-corner tiles are spliced
+and catalogued but unused, because the 4-connected rim rule means a rim tile
+always has an open side (see Map & terrain); they are there so the next person
+does not have to go rediscover them in the reference sheet.

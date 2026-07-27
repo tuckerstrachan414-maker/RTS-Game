@@ -509,6 +509,29 @@ rebuilding if you touch the renderer or the HUD layout:
   `imageSmoothingEnabled = false` before screenshotting. Screenshotting the
   canvas directly at zoom 4 is not enough to judge a one-pixel seam.
 
+A third harness came with the plateaus, and is the one to rebuild if you touch
+map generation:
+
+- **Generation invariants over many seeds.** `js/map.js` has no browser
+  dependency beyond `AT`, so it can be loaded straight into node with
+  `new Function('AT', src + 'return {GameMap, findPath}')` and a `Proxy` standing
+  in for the atlas. Build a few hundred maps and assert the properties the
+  generator claims rather than eyeballing one: no cliff/ramp/high tile inside a
+  start zone's clearing, every start zone still floods to `MIN_START_REGION`,
+  every start zone paths to every other, no walkable region made only of plateau
+  top (i.e. no mesa you cannot get off), every cliff impassable and every ramp
+  passable, and every ramp with footing below and top above. Flood with
+  `passable()`, not `openAt()` — a wood on top of a mesa is walkable ground that
+  `openAt` deliberately does not count. This is what caught both the cave sealing
+  a plateau and the `carveShortestLink` hang (BUGS #29); neither showed up in a
+  single-seed screenshot.
+- **Synthetic terrain for judging autotiles.** For rim artwork, flatten the map
+  in `page.evaluate`, stamp a shape you chose (an L is the useful one — it puts a
+  concave corner in shot), set the rim/top/ramp tiles by hand, then dump an ASCII
+  grid of what `cliffTile` picked alongside the magnified blit. The ASCII tells
+  you the *decision* and the blit tells you whether the art lines up; a
+  screenshot of generated terrain confounds the two.
+
 Things worth re-checking after any change in this area:
 - Stack several units on one tile, tick a few seconds, assert pairwise
   distances exceed `SEP_RADIUS`.

@@ -34,7 +34,8 @@ the code; stale docs are treated as bugs.
 ## Code layout
 
 - `js/assets.js` — atlas coords, animation auto-detection, faction palette swap
-- `js/map.js` — seeded generation, water autotiling, A* (`findPath`)
+- `js/map.js` — seeded generation, water + cliff autotiling, plateaus/ramps, A*
+  (`findPath`)
 - `js/buildings.js` — building defs, placement, castle upgrades, production
 - `js/economy.js` — Nation sim; `res` is a Proxy over per-building `store`s
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
@@ -67,6 +68,15 @@ the code; stale docs are treated as bugs.
 - `trainUnit` / `startCastleUpgrade` return error *strings*, not exceptions.
 - Bridges live in `map.bridge`, not `map.buildingAt` — they're terrain, not
   targetable buildings.
+- Plateau tops are ordinary terrain with `map.high[i] === 1`; the wall around
+  them is `T_CLIFF` (impassable, and the only terrain with no way through at
+  all) and the way up is `T_RAMP`. `generatePlateaus` guarantees every top tile
+  is walkable from a stair — anything added after it that can make a tile
+  impassable (caves are the existing case) must not land on a top or a ramp's
+  foot, or it strands ground.
+- `assets/tileset16x16_1.png` is 8×17 now, not 8×14. Rows 14-16 are the cliff
+  set; re-splice with `tools/splice-cliffs.py` rather than editing pixels by
+  hand. Appending kept every older `AT` coordinate valid — don't repack it.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
 - New HUD elements need the `.hud` class to be hidden by Hide UI, and an
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.

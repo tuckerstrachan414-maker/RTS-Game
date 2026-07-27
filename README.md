@@ -97,12 +97,23 @@ east–west one, not a thinner fence.
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
 cross a forest tile and 1.9× a rocky one. Roads still speed you up. Only deep
-water without a bridge, cave mouths, walls and keeps stop a unit outright.
+water without a bridge, cave mouths, cliffs, walls and keeps stop a unit
+outright.
+
+**Take the high ground.** Every map raises a few plateaus — flat-topped mesas
+ringed by a rock face no one can climb, bridge, or cut through. The only ways up
+are the stairs cut into their southern faces, one to three per plateau, and
+climbing one is a little slower than walking on the flat. That makes a plateau
+two things at once: a wall that armies have to march around, and a piece of
+ground worth holding, because whoever owns the stairs owns everything on top.
+The top itself is ordinary country — you can farm it, log it, quarry it and
+build on it exactly as you would down in the valley.
 
 **You can build on forest and rock.** Place a Wall, House, or anything else
 (except a Bridge, which needs water) right on top of trees or boulders and
 the footprint clears them to make room — so a wall ring closes all the way
-around a wooded camp instead of stopping at the treeline. While placing, the
+around a wooded camp instead of stopping at the treeline. Cliffs and stairs are
+the exception: nothing can be built on either. While placing, the
 ghost washes the tile **white** when the spot is legal and **red** when it
 isn't, and any tree under the footprint fades so you can see the tile beneath
 it.
@@ -260,7 +271,8 @@ Plain `<script>` modules, no build step:
 
 - `js/assets.js` — atlas coordinates, animation auto-detection, faction palette-swap
   (the blue Minifolks art and orange roofs are hue-shifted per nation at load)
-- `js/map.js` — seeded map generation, water autotiling, A* pathfinding
+- `js/map.js` — seeded map generation, water and cliff autotiling, plateaus and
+  their stairs, A* pathfinding
 - `js/buildings.js` — building defs/placement, incl. physical storage buildings
 - `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
 - `js/market.js` — supply/demand commodity pricing, buy/sell, barter
@@ -292,6 +304,7 @@ Plain `<script>` modules, no build step:
 - **Minifolks: Humans** unit sprites by LYASeeK
 - 16×16 overworld tileset as provided in this repository, with trees, rocks,
   the cave/mine-shaft tile, the Well, and the Town Hall/House/Market buildings
-  replaced with art from the **PUNY_WORLD_v1** tileset pack (same 16×16 grid,
-  spliced tile-for-tile into `assets/tileset16x16_1.png` — see
-  `docs/FEATURES.md` → Rendering & assets)
+  replaced with art from the **PUNY_WORLD_v1** tileset pack, and the cliff,
+  plateau and stair set appended from the same pack (same 16×16 grid, spliced
+  tile-for-tile into `assets/tileset16x16_1.png` by `tools/splice-cliffs.py` —
+  see `docs/FEATURES.md` → Rendering & assets)

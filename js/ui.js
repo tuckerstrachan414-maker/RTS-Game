@@ -1070,7 +1070,10 @@ class UI {
       for (let x = x0; x <= x1; x++) {
         const i = map.idx(x, y);
         const t = map.terrain[i];
-        this.tile(AT.GRASS, x, y);
+        // Plateau tops get their own darker turf as the base coat; the rim pieces
+        // are transparent past the rock, so those still go over ordinary grass and
+        // let the low ground they overlook show through underneath.
+        this.tile(map.high[i] ? AT.CLIFF_TOP : AT.GRASS, x, y);
         if (t === T_GRASS) {
           if (map.road[i]) this.tile(AT.PATH_DOT, x, y);
           else if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
@@ -1083,7 +1086,14 @@ class UI {
           if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
         } else if (t === T_CAVE) {
           this.tile(AT.CAVE, x, y);
+        } else if (t === T_CLIFF) {
+          this.tile(map.cliffTile(x, y), x, y);
+        } else if (t === T_RAMP) {
+          this.tile(AT.RAMP, x, y);
         }
+        // The stair's top step belongs to the tile above it — that is plateau
+        // ground, already painted, so the step is laid over it.
+        if (map.high[i] && map.terrain[map.idx2(x, y + 1)] === T_RAMP) this.tile(AT.RAMP_TOP, x, y);
       }
     }
     // …then boulders, which spill past their own tile. Stamped dead centre they lined up
@@ -1653,6 +1663,7 @@ class UI {
     const colors = {
       [T_GRASS]: [116, 196, 80], [T_WATER]: [64, 120, 200],
       [T_TREE]: [40, 120, 50], [T_ROCK]: [130, 130, 130], [T_CAVE]: [80, 70, 70],
+      [T_CLIFF]: [96, 104, 74], [T_RAMP]: [150, 156, 128],
     };
     // territory tint: claimed tiles blend toward their owner's color
     const ownerCols = game.factions.map(f => [
@@ -1662,6 +1673,9 @@ class UI {
     ]);
     for (let i = 0; i < MAP_W * MAP_H; i++) {
       let c = colors[map.terrain[i]];
+      // Ground on top of a plateau keeps its own terrain colour but a shade
+      // deeper, so a mesa reads as one mass rather than as a ring of grey.
+      if (map.high[i]) c = [c[0] * 0.72, c[1] * 0.78, c[2] * 0.66];
       if (map.road[i]) c = [200, 180, 120];
       const own = game.territory ? game.territory.owner[i] : -1;
       if (own >= 0) {

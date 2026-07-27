@@ -127,6 +127,19 @@ heuristic.
 - **Day/night indicator is an emoji** — `☀`/`🌙` in the topbar, the only glyphs
   left outside the `icons16x16.png` sprite sheet, because the sheet has no
   sun or moon. Renders differently per platform.
+- **A cliff can be breached, but only by the map generator** — `T_CLIFF` is
+  impassable to everything in the game, and `lineCost` refuses a track through
+  one outright. `carveShortestLink` is the exception: it is the pass that *has*
+  to succeed in linking every start zone into one landmass, so a cliff costs it
+  9 (against grass 0.1, water 6) rather than being refused. It goes round in
+  essentially every case, but on a seed where a mesa genuinely walls the map in
+  two it will cut through, clearing `high` along the carved tiles. The result is
+  a gap in a rock face with no stair drawn in it. Rare, always passable, and
+  preferable to the alternative of a nation nobody can ever reach.
+- **Plateau tops have no grass tufts** — `generatePlateaus` clears `decor` on
+  raised grass. The `GRASS_VARS` tuft tiles have low-ground turf baked into
+  them, so leaving them on would punch patches of valley colour into the darker
+  plateau surface. Trees and boulders on top are kept; only the tufts go.
 - **There is no way to win** — a 2026-07 design change. Prosperity (Grand
   Castle), Conquest (all rivals eliminated) and Diplomatic (every survivor
   allied) victories were removed from `Game.checkDefeat` (formerly
@@ -140,6 +153,21 @@ heuristic.
 
 ## Fixed
 
+- **#29 `carveShortestLink` could hang the whole game on load** —
+  `js/map.js`. The link pass stored distances in a `Float32Array` while computing
+  each candidate distance in double precision. Storing rounds, and when it rounds
+  *up* the guard `nd < dist[j]` is still true on the next visit, so the node is
+  pushed again with a distance it never actually improves on — an infinite loop,
+  not a slow one. Grass's 0.1 step hits it readily (`nd` 1.6000002384185792
+  against a stored 1.600000262260437); one seed reached 36M pushes on a
+  9216-tile grid before being killed. Latent for as long as the function has
+  existed and almost never reached, because it only runs when start zones land on
+  separate landmasses; adding plateaus fragments the map, so it started running
+  on ordinary seeds and the game hung at startup. Fixed by moving `dist` to
+  `Float64Array` (the comparison is now exact) and adding a `settled` guard so
+  each node is expanded once — with non-negative costs a node's distance is final
+  the first time it is popped, which is both correct and what stops stale heap
+  entries from re-relaxing the graph. Verified across 400 seeds.
 - **#19 Trees, units and buildings drew in fixed passes, not by depth** —
   `render` (`js/ui.js`) ran forest → buildings → walls → units as separate
   passes, so a tree standing *in front* of a building was painted over by it
