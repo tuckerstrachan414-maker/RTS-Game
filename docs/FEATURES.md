@@ -245,12 +245,43 @@ load-bearing for the whole damage-type system, not flavour.
 
 ## Formations & crowd separation — Deep
 
-`js/units.js` (`formationMove`, `separateUnits`). Group orders arrange units in
-rotated ranks facing travel direction — melee/tanky front, ranged/mages rear —
-one unique destination tile per unit via spiral search. Every tick, a spatial
-hash pushes overlapping units apart (0.45-tile radius, capped nudge,
-golden-angle split for perfectly stacked pairs), with an escape hatch for units
-stranded on impassable tiles. Full detail in `docs/formations-tiers-ui.md`.
+`js/units.js` (`formationMove`, `formationSlots`, `separateUnits`), `js/main.js`
+(persistence), `js/ui.js` (the panel). Group orders arrange units in rotated
+ranks facing travel direction, one unique destination tile per unit via spiral
+search — and both halves of that arrangement are now **player-configurable**
+from Menu → Formations:
+
+- **Shape** — `diamond` (default: a point that widens to a middle rank and
+  narrows again; a group of n fits inside a diamond `ceil(sqrt(n))` ranks wide,
+  and a group too small to fill it marches as the leading wedge) or
+  `rectangle` (the old block, up to 6 columns wide).
+- **Marching order** — a drag-reorderable list of all nine unit types, front of
+  the formation first. It replaces the old hardcoded melee-then-ranged sort;
+  that sort survives as the default order. Units of a type not in the list fall
+  to the back, and the sort is stable, so identical orders always produce
+  identical ranks.
+- **Group pace** — a formation now marches at the speed of its *slowest*
+  member (`Unit.formSpeed`, cleared by any non-formation order and on arrival),
+  so cavalry no longer arrives alone several seconds ahead of the shield wall.
+  Measured over a 26-tile march, a Cavalier and a Swordsman end up 1.2 tiles
+  apart with the cap and 8.1 without.
+
+Settings are saved to `localStorage` under `nations_formation_<nation name>`
+and reloaded by the `Game` constructor, so a doctrine persists across
+playthroughs. Loading is defensive (`sanitizeFormations` in `js/main.js`): an
+unknown shape falls back to the default, and unit keys that no longer exist —
+a save written before the roster was cut to nine — are dropped, deduplicated,
+and any newly added type is appended.
+
+The pace cap applies to every nation (it is formation integrity, not taste),
+but the shape and order preference applies to **the player's groups only** —
+AI waves call the same `formationMove` and form up on the defaults, because a
+toggle in the player's menu should not reshape enemy armies.
+
+Every tick, a spatial hash pushes overlapping units apart (0.45-tile radius,
+capped nudge, golden-angle split for perfectly stacked pairs), with an escape
+hatch for units stranded on impassable tiles. Full detail in
+`docs/formations-tiers-ui.md`.
 
 ## Castle tiers — Moderate
 

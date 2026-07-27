@@ -153,6 +153,16 @@ heuristic.
 
 ## Fixed
 
+- **#32 The pause menu was taller than a landscape phone and clipped its own
+  buttons** — `index.html`. `#pause-menu .menu-box` had no `max-height` and no
+  `overflow`, so on an 852×393 viewport its 467px button stack ran off both
+  ends of the screen with no way to scroll to what was cut off. Found while
+  adding the Formations entry, which made it 52px worse — but it was already
+  74px over before that. Fixed with `max-height: 94vh; overflow-y: auto` (plus
+  `flex-shrink: 0` on the children, or the flex column would compress the
+  buttons instead of scrolling). Measured after the fix: box 369px on a 393px
+  viewport, scrollable.
+
 - **#29 `carveShortestLink` could hang the whole game on load** —
   `js/map.js`. The link pass stored distances in a `Float32Array` while computing
   each candidate distance in double precision. Storing rounds, and when it rounds

@@ -180,8 +180,19 @@ Buy the **Garrison** upgrade to unlock the Halberdier and Cavalier, then the
 unlocks them — and AI nations climb the same tiers.
 
 **Armies march in formation.** Group move orders arrange your troops into ranks
-facing the direction of travel — melee up front, ranged and mages behind — and
-units physically push apart so they never stand inside each other.
+facing the direction of travel, and units physically push apart so they never
+stand inside each other. A formation also marches at the pace of its **slowest**
+member, so your Cavaliers no longer arrive alone, ten seconds ahead of the
+shield wall.
+
+**You decide how they march (Menu → Formations).**
+- **Shape:** a **Diamond** (a point that widens and narrows again — covers the
+  flanks) or a **Rectangle** (a solid block, up to six wide).
+- **Marching order:** drag the nine troop types into the order you want them to
+  hold the line. Whoever is at the top takes the point; whoever is at the bottom
+  brings up the rear. Put Halberdiers first to soak the charge, or Archers first
+  if you want them shooting before your infantry closes.
+- Both settings are **remembered between games**, so you set your doctrine once.
 
 **Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.

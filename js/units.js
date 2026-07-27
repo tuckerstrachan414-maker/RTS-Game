@@ -53,6 +53,7 @@ class Unit {
     this.repathT = 0;
     this.carry = { food: 0, wood: 0, stone: 0, gold: 0 };  // plunder being hauled
     this.carryCap = this.type.carry || 0;
+    this.formSpeed = 0;        // >0 while marching in formation: the group's pace
   }
 
   get tileX() { return Math.floor(this.x); }
@@ -60,9 +61,13 @@ class Unit {
   get alive() { return !this.dead; }
   carryTotal() { return this.carry.food + this.carry.wood + this.carry.stone + this.carry.gold; }
 
-  orderMove(tx, ty) {
+  // formSpeed caps the unit's pace for the length of this order so a formation
+  // arrives together; any order that isn't a formation march clears it, which is
+  // why every caller that isn't `formationMove` can ignore the argument.
+  orderMove(tx, ty, formSpeed = 0) {
     this.target = null;
     this.dest = [tx, ty];
+    this.formSpeed = formSpeed;
     this.path = findPath(game.map, this.tileX, this.tileY, tx, ty, this.faction);
   }
 
@@ -70,6 +75,7 @@ class Unit {
     this.mission = null;
     this.target = target;
     this.dest = null;
+    this.formSpeed = 0;
   }
 
   // send a robber to steal from an enemy storage building, then flee home
@@ -77,6 +83,7 @@ class Unit {
     this.mission = { kind: 'rob', target: building };
     this.target = null; this.dest = null; this.path = [];
     this.aggressive = false;
+    this.formSpeed = 0;
   }
 
   nearestStorage() {
@@ -217,8 +224,11 @@ class Unit {
     const dx = gx - this.x, dy = gy - this.y;
     const d = Math.hypot(dx, dy);
     // Terrain under the unit sets the pace: roads speed it up, forest and rocky
-    // ground drag it down (js/map.js moveCost) without ever blocking it.
-    let speed = this.type.speed / game.map.moveCost(this.tileX, this.tileY);
+    // ground drag it down (js/map.js moveCost) without ever blocking it. A unit
+    // marching in formation walks at the group's pace instead of its own, so the
+    // Cavaliers don't arrive a rank of Swordsmen ahead of the shield wall.
+    const base = this.formSpeed > 0 ? Math.min(this.formSpeed, this.type.speed) : this.type.speed;
+    let speed = base / game.map.moveCost(this.tileX, this.tileY);
     if (game.map.road[game.map.idx(this.tileX, this.tileY)]) speed *= 1.3;
     const step = speed * dt;
     if (Math.abs(dx) > 0.05) this.facing = dx > 0 ? 1 : -1;
@@ -226,7 +236,7 @@ class Unit {
     if (d <= step) {
       this.x = gx; this.y = gy;
       this.path.shift();
-      if (this.path.length === 0) { this.dest = null; this.setAnim('idle'); }
+      if (this.path.length === 0) { this.dest = null; this.formSpeed = 0; this.setAnim('idle'); }
     } else {
       this.x += dx / d * step;
       this.y += dy / d * step;
@@ -405,29 +415,77 @@ function nudgeUnit(u, mx, my) {
 }
 
 // ---------- formation movement ----------
-// Arrange a group into ranks facing the direction of travel: melee up front,
-// ranged behind, one destination tile per unit.
+// Arrange a group into ranks facing the direction of travel. Both the *shape*
+// of those ranks and *which unit types take the front* are player settings
+// (game.formations, js/main.js — set from the Formations panel and remembered
+// in localStorage), so this reads them rather than hardcoding a doctrine.
+//
+// Both player and AI march through here, but the *preference* is the player's
+// alone: an AI wave forms up on the defaults, because a toggle in the player's
+// menu has no business reshaping enemy armies. The pace cap below is not a
+// preference and applies to everyone.
+//
+// The default order is still the old melee-first, ranged-behind sort, and the
+// sort stays stable so a group's internal ordering does not shuffle between
+// identical orders.
+const FORMATION_SHAPES = ['diamond', 'rectangle'];
+const DEFAULT_FORMATION_ORDER = ['sword', 'spear', 'halberd', 'cavalier', 'king', 'archer', 'mage', 'bandit', 'prince'];
+
+// Rank offsets in formation space: +lateral is right of the line of march,
+// -depth is behind the leading point. One slot per unit, index 0 at the front.
+//   rectangle — a block `cols` wide, ranks stacked behind it
+//   diamond   — a point that widens to a middle rank and narrows again, so the
+//               front-of-order units lead and the flanks are covered
+function formationSlots(n, shape) {
+  const slots = [];
+  if (shape === 'diamond') {
+    // A diamond W ranks wide holds exactly W² units (1+2+…+W+…+2+1), so
+    // W = ceil(sqrt(n)) always has room; a group too small to fill it just
+    // stops partway and marches as the leading wedge.
+    const W = Math.max(1, Math.ceil(Math.sqrt(n)));
+    const widths = [];
+    for (let w = 1; w <= W; w++) widths.push(w);
+    for (let w = W - 1; w >= 1; w--) widths.push(w);
+    for (let rank = 0; rank < widths.length && slots.length < n; rank++) {
+      const w = widths[rank];
+      for (let i = 0; i < w && slots.length < n; i++) slots.push([-rank, i - (w - 1) / 2]);
+    }
+  } else {
+    const cols = Math.min(6, Math.max(2, Math.ceil(Math.sqrt(n * 1.7))));
+    for (let i = 0; i < n; i++) slots.push([-Math.floor(i / cols), (i % cols) - (cols - 1) / 2]);
+  }
+  return slots;
+}
+
 function formationMove(units, tx, ty) {
   const movers = units.filter(u => u.alive && !u.mission && !u.type.envoy);
   if (movers.length === 0) return;
+  const cfg = (movers[0].faction === 0 && game && game.formations)
+    || { shape: 'diamond', order: DEFAULT_FORMATION_ORDER };
+  // The group marches at the pace of its slowest member, so it arrives as a
+  // formation instead of trickling in fastest-first.
+  const pace = Math.min(...movers.map(u => u.type.speed));
   if (movers.length === 1) return movers[0].orderMove(tx, ty);
   let cx = 0, cy = 0;
   for (const u of movers) { cx += u.x; cy += u.y; }
   cx /= movers.length; cy /= movers.length;
   const ang = Math.atan2(ty + 0.5 - cy, tx + 0.5 - cx);
   const cosA = Math.cos(ang), sinA = Math.sin(ang);
-  const cols = Math.min(6, Math.max(2, Math.ceil(Math.sqrt(movers.length * 1.7))));
-  const sorted = [...movers].sort((a, b) =>
-    (a.type.range > 1.5 ? 1 : 0) - (b.type.range > 1.5 ? 1 : 0) || b.type.hp - a.type.hp);
+  // Rank by the player's order list; anything not in it falls to the back.
+  const rankOf = u => {
+    const i = cfg.order.indexOf(u.type.key);
+    return i < 0 ? cfg.order.length : i;
+  };
+  const sorted = [...movers].sort((a, b) => rankOf(a) - rankOf(b));
+  const slots = formationSlots(sorted.length, cfg.shape);
   const taken = new Set();
   sorted.forEach((u, i) => {
-    const depth = -Math.floor(i / cols);            // ranks stack behind the point
-    const lateral = (i % cols) - (cols - 1) / 2;    // spread across the front
+    const [depth, lateral] = slots[i];
     const gx = Math.round(tx + depth * cosA - lateral * sinA);
     const gy = Math.round(ty + depth * sinA + lateral * cosA);
     const spot = freeSpotNear(gx, gy, u.faction, taken) || freeSpotNear(tx, ty, u.faction, taken);
-    if (spot) { taken.add(spot[0] + spot[1] * 4096); u.orderMove(spot[0], spot[1]); }
-    else u.orderMove(tx, ty);
+    if (spot) { taken.add(spot[0] + spot[1] * 4096); u.orderMove(spot[0], spot[1], pace); }
+    else u.orderMove(tx, ty, pace);
   });
 }
 

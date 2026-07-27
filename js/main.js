@@ -57,6 +57,9 @@ class Game {
     }
     this.diplomacy = new Diplomacy(4);
     this.territory = new Territory(4);
+    // Marching doctrine: shape of the ranks and which unit types take the front.
+    // Player-set (Menu → Formations) and remembered across games.
+    this.formations = loadFormations(this.factions[0].name);
     // found each nation at its start zone
     this.map.startZones.forEach((z, i) => {
       const th = placeBuilding(this, 'townhall', z.x - 1, z.y - 1, i);
@@ -207,6 +210,39 @@ class Game {
     el.querySelector('h1').innerHTML = '<span class="icon icon-skull"></span> Defeat';
     el.querySelector('p').textContent = text;
   }
+}
+
+// ---------- formation settings ----------
+// Stored per nation name (the player is always Azuria today, but keying by name
+// means a future "pick your nation" screen keeps a doctrine per nation for free)
+// and validated on the way in — a stale save from an older roster must not be
+// able to smuggle a removed unit key into formationMove's ordering.
+const FORMATION_KEY = name => `nations_formation_${name}`;
+
+function defaultFormations() {
+  return { shape: 'diamond', order: DEFAULT_FORMATION_ORDER.slice() };
+}
+
+function sanitizeFormations(raw) {
+  const out = defaultFormations();
+  if (!raw || typeof raw !== 'object') return out;
+  if (FORMATION_SHAPES.includes(raw.shape)) out.shape = raw.shape;
+  if (Array.isArray(raw.order)) {
+    // keep the saved order of keys that still exist, then append anything new
+    const kept = raw.order.filter((k, i) => UNIT_TYPES[k] && raw.order.indexOf(k) === i);
+    out.order = kept.concat(out.order.filter(k => !kept.includes(k)));
+  }
+  return out;
+}
+
+function loadFormations(name) {
+  try {
+    return sanitizeFormations(JSON.parse(localStorage.getItem(FORMATION_KEY(name))));
+  } catch (e) { return defaultFormations(); }   // storage blocked or corrupt JSON
+}
+
+function saveFormations(name, cfg) {
+  try { localStorage.setItem(FORMATION_KEY(name), JSON.stringify(cfg)); } catch (e) { /* storage may be blocked */ }
 }
 
 function onUnitDeath(unit, attacker) {

@@ -218,9 +218,13 @@
   #pause-menu { display: none; position: absolute; inset: 0; background: rgba(8,10,14,0.55);
     align-items: center; justify-content: center; z-index: 20; touch-action: none; }
   #pause-menu.open { display: flex; }
+  /* max-height/overflow because a landscape phone is ~390px tall and the button
+     stack is taller than that — without it the top and bottom entries were simply
+     clipped off-screen with no way to reach them (BUGS #32). */
   #pause-menu .menu-box { background: rgba(22,26,32,0.98); border: 1px solid #46536a; border-radius: 10px;
     padding: 20px 22px; display: flex; flex-direction: column; gap: 8px; min-width: 240px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
+    max-height: 94vh; overflow-y: auto; box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
+  #pause-menu .menu-box > * { flex-shrink: 0; }
   #pause-menu h2 { font-size: 22px; text-align: center; }
   #pause-menu .menu-sub { text-align: center; color: #89a; font-size: 12px; letter-spacing: 2px;
     text-transform: uppercase; margin-bottom: 6px; }
@@ -229,6 +233,46 @@
   #pause-menu button:hover { background: #3a4658; }
   #resume-btn { background: #35507a; border-color: #4d6da0; }
   #resume-btn:hover { background: #416394; }
+
+  /* Formations panel: opens over the pause menu, same frozen-battlefield backdrop. */
+  #formation-panel { display: none; position: absolute; inset: 0; background: rgba(8,10,14,0.65);
+    align-items: center; justify-content: center; z-index: 22; touch-action: none; }
+  #formation-panel.open { display: flex; }
+  #formation-panel .menu-box { background: rgba(22,26,32,0.98); border: 1px solid #46536a;
+    border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 6px;
+    width: min(94vw, 340px); max-height: 88vh; overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
+  #formation-panel h2 { font-size: 20px; text-align: center; }
+  #formation-panel .menu-sub { text-align: center; color: #89a; font-size: 11px; letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 4px; }
+  .form-section { color: #9ab; font-size: 12px; margin-top: 8px; }
+  .form-hint { color: #789; font-size: 11px; margin-bottom: 2px; }
+  .form-shapes { display: flex; gap: 6px; }
+  .form-shapes button { flex: 1; background: #2c3442; color: #cde; border: 1px solid #46536a;
+    border-radius: 6px; padding: 8px; cursor: pointer; font-size: 13px; text-align: center;
+    touch-action: manipulation; }
+  .form-shapes button.on { background: #35507a; border-color: #6f8fc4; color: #fff; }
+  .form-shapes button pre { font-size: 9px; line-height: 1.05; color: #9ab; margin-top: 4px; }
+  .form-shapes button.on pre { color: #cfe2ff; }
+  .form-order { list-style: none; display: flex; flex-direction: column; gap: 3px; }
+  .form-order li { display: flex; align-items: center; gap: 6px; background: #232b36;
+    border: 1px solid #3a4658; border-radius: 5px; padding: 5px 7px; font-size: 12px;
+    cursor: grab; touch-action: manipulation; }
+  .form-order li.drag { opacity: 0.4; }
+  .form-order li.over { border-color: #6f8fc4; }
+  .form-order li .grip { color: #667; }
+  .form-order li .rank { color: #789; font-size: 10px; min-width: 14px; }
+  .form-order li .nm { flex: 1; }
+  .form-order li button { background: #2c3442; color: #cde; border: 1px solid #46536a;
+    border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 12px; line-height: 1.4;
+    touch-action: manipulation; }
+  .form-order li button:hover { background: #3a4658; }
+  .form-row { display: flex; gap: 6px; margin-top: 12px; }
+  .form-row button { flex: 1; background: #2c3442; color: #cde; border: 1px solid #46536a;
+    border-radius: 6px; padding: 10px; cursor: pointer; font-size: 14px; touch-action: manipulation; }
+  .form-row button:hover { background: #3a4658; }
+  .form-row button.primary { background: #35507a; border-color: #4d6da0; }
+  .form-row button.primary:hover { background: #416394; }
 
   /* Pre-game difficulty screen: shown before the Game is even constructed. Not .hud —
      it exists outside the running game, like #gameover. */
@@ -274,6 +318,10 @@
     .collapse-btn { padding: 6px 9px; min-height: 32px; min-width: 32px; }
     #menu-btn { padding: 10px 12px; font-size: 14px; min-height: 40px; }
     #pause-menu button { padding: 13px 16px; min-height: 44px; }
+    .form-shapes button { min-height: 52px; }
+    .form-order li { padding: 6px 7px; }
+    .form-order li button { padding: 5px 11px; min-height: 32px; }
+    .form-row button { min-height: 44px; }
     #minimap { width: 120px; height: 120px; }
     #panel { width: min(280px, 62vw); font-size: 12px; }
     #panel button, .tbtn { padding: 6px 9px; min-height: 32px; }
@@ -406,9 +454,28 @@
     <button id="resume-btn"><span class="icon icon-show"></span> Resume</button>
     <button id="pm-diplo"><span class="icon icon-dove"></span> Diplomacy</button>
     <button id="pm-army"><span class="icon icon-shield"></span> Select Army</button>
+    <button id="pm-formations"><span class="icon icon-sword"></span> Formations</button>
     <button id="pm-speed"><span class="icon icon-speed"></span> Speed: <span id="speed-val">1x</span></button>
     <button id="pm-hide"><span class="icon icon-hide"></span> Hide UI</button>
     <button id="pm-restart" title="Abandon this game and start a new one">↺ New Game</button>
+  </div>
+</div>
+
+<!-- Formations: marching doctrine. Same overlay pattern as the pause menu (it
+     opens over it, and the sim stays frozen underneath). Settings persist. -->
+<div id="formation-panel">
+  <div class="menu-box">
+    <h2><span class="icon icon-sword"></span> Formations</h2>
+    <div class="menu-sub">How your armies march</div>
+    <div class="form-section">Shape</div>
+    <div id="form-shapes" class="form-shapes"></div>
+    <div class="form-section">Marching order — front of the formation first</div>
+    <div class="form-hint">Drag to reorder, or use the arrows.</div>
+    <ul id="form-order" class="form-order"></ul>
+    <div class="form-row">
+      <button id="form-reset" title="Back to the default shape and order">↺ Defaults</button>
+      <button id="form-close" class="primary">Done</button>
+    </div>
   </div>
 </div>
 

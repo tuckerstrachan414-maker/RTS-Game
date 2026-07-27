@@ -19,13 +19,30 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
 1. Filters to movable units (alive, no active mission, not an envoy/Prince).
 2. Computes the group's centroid and the travel angle (`atan2` from centroid
    to target).
-3. Sorts units so melee (`range <= 1.5`) comes before ranged, and within each
-   bucket higher-HP units come first — melee/tanky units end up in the front
-   ranks.
-4. Lays units out in a rotated grid (`cols` scales with group size, capped at
-   6): `depth` = which rank back from the point, `lateral` = position across
-   that rank, both rotated by the travel angle so the formation always faces
-   where it's going.
+3. Sorts units by the *player's* marching order (`game.formations.order`, an
+   array of unit keys, front first). A type not in the list sorts to the back.
+   `Array.prototype.sort` is stable, so units of the same type keep their
+   relative order between identical commands. The default order is the old
+   hardcoded rule spelled out as data — melee, then ranged, tankiest first:
+   `sword, spear, halberd, cavalier, king, archer, mage, bandit, prince`.
+4. Asks `formationSlots(n, shape)` for `n` `[depth, lateral]` offsets in
+   formation space (`-depth` = ranks back from the point, `lateral` = across),
+   then rotates each by the travel angle so the formation always faces where
+   it's going. Two shapes:
+   - `rectangle` — the original block. `cols = clamp(ceil(sqrt(n * 1.7)), 2, 6)`,
+     ranks stacked behind it.
+   - `diamond` (default) — rank widths `1,2,…,W,…,2,1` where `W = ceil(sqrt(n))`.
+     That sequence sums to exactly `W²  >= n`, so there is always room; a group
+     too small to reach the wide rank just stops partway and marches as a wedge.
+     Slots are filled front-to-back, so the head of the marching order takes the
+     point.
+4b. Caps every unit's speed to the group's slowest member (`Unit.formSpeed`,
+   read in `followPath` *before* the terrain `moveCost` divisor, so roads and
+   forest still modulate the capped pace). `formSpeed` is cleared on arrival and
+   by `orderAttack`/`orderRob`/any plain `orderMove`, so it never leaks into a
+   unit's next order. Without this a Cavalier (speed 3.2) reached a target 26
+   tiles away 8.1 tiles ahead of a Swordsman (2.2) it set out beside; with it,
+   1.2.
 5. Each unit's ideal tile is resolved through `freeSpotNear` (spiral search,
    radius 0–2) against a `taken` set so no two units in the same order ever
    get the same destination tile. Falls back to the raw target tile if no
@@ -63,9 +80,46 @@ check relative to a unit that "shouldn't" be there. This was a real bug hit
 during testing (see Testing section) — six units stacked directly on the town
 hall footprint stayed frozen at distance 0 until this clause was added.
 
-If you touch formation logic, keep the melee-in-front sort stable — the AI
-and the player both rely on `formationMove` for group orders, so a formation
-that puts archers in the front line is a regression, not a style choice.
+If you touch formation logic, keep the sort stable — the AI and the player
+both rely on `formationMove` for group orders. The melee-in-front rule is now
+a *default*, not a law: the player can deliberately put archers in the front
+line from the Formations panel, and that is a choice, not a regression. What
+would be a regression is the default order changing, or the sort becoming
+unstable so a group reshuffles between identical commands.
+
+**The preference is the player's, the pace cap is everyone's.** `formationMove`
+only reads `game.formations` when `movers[0].faction === 0`; AI waves fall
+through to the defaults. The speed cap has no such guard — an AI wave arriving
+together is formation integrity, not the player's taste leaking into enemy
+doctrine.
+
+### The Formations panel — `index.html`, `js/ui.js`, `js/main.js`
+
+`#formation-panel` is a second modal overlay layered above `#pause-menu`
+(z-index 22 vs 20), opened from the `#pm-formations` button. It follows the
+pause menu's pattern exactly: `.open` class toggles `display`, a click on the
+backdrop closes it, and `ui.paused` stays true the whole time so the sim is
+frozen underneath. Escape closes the innermost overlay first — the keydown
+handler checks `#formation-panel.open` before `this.paused`, and
+`closeFormations` restores `paused` from whether the pause menu is still open,
+so Escape-Escape gets you back to the game.
+
+- `UI.refreshFormations()` rebuilds both controls from `game.formations`;
+  every edit goes through `UI.moveFormationRank(from, to)` or a shape button
+  and then `UI.commitFormations()`, which writes to `localStorage` immediately.
+  Nothing is buffered until "Done", so a closed tab never loses a setting.
+- Reordering is available two ways on purpose: HTML5 `draggable` for mouse,
+  and ▲/▼ buttons for touch, where drag events never fire at all. If you
+  replace the drag implementation, keep the buttons.
+- Persistence lives in `js/main.js`, not the UI: `loadFormations(name)` /
+  `saveFormations(name, cfg)` / `sanitizeFormations(raw)`, keyed
+  `nations_formation_<nation name>`. **Sanitize on load, always** — a save
+  written against an older roster still names units that no longer exist, and
+  an unknown key in `order` would silently sink every real unit's rank by one.
+  `sanitizeFormations` drops unknown keys, de-duplicates, appends any unit type
+  the save predates, and falls back to `diamond` for an unrecognized shape.
+  It is also the reason `localStorage` access is inside a `try` — storage can
+  be blocked outright, and the game must still boot.
 
 ## Castle-tier troop unlocks — `js/buildings.js`, `js/factions.js`, `js/ui.js`
 

@@ -48,6 +48,7 @@ class UI {
     this.paint = null;              // active click-drag "draw a line of walls/bridges" state: {anchor,line,horizontal}
     this.copyBuffer = null;         // {parts:[{key,dx,dy}...]} while a copied building group awaits Paste
     this.paused = false;            // pause menu open → sim frozen
+    this.dragRank = null;           // index being dragged in the Formations order list
     this.keys = {};
     this.minimapT = 0;
     this.minimap = document.getElementById('minimap');
@@ -96,6 +97,8 @@ class UI {
     window.addEventListener('keydown', e => {
       this.keys[e.key.toLowerCase()] = true;
       if (e.key === 'Escape') {
+        // innermost overlay first: Formations sits on top of the pause menu
+        if (document.getElementById('formation-panel').classList.contains('open')) { this.closeFormations(); return; }
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
         if (this.placing) { this.placing = null; return; }
@@ -552,6 +555,73 @@ class UI {
     document.getElementById('pause-menu').classList.remove('open');
   }
 
+  // ---------- formations panel ----------
+  // Opens over the pause menu with the sim still frozen. Every change writes
+  // straight through to game.formations and localStorage, so closing the panel
+  // (or the tab) never loses a setting.
+  openFormations() {
+    this.paused = true;
+    document.getElementById('formation-panel').classList.add('open');
+    this.refreshFormations();
+  }
+
+  closeFormations() {
+    document.getElementById('formation-panel').classList.remove('open');
+    // hand control back to the pause menu if that's where we came from
+    this.paused = document.getElementById('pause-menu').classList.contains('open');
+  }
+
+  commitFormations() {
+    saveFormations(game.factions[0].name, game.formations);
+    this.refreshFormations();
+  }
+
+  refreshFormations() {
+    const cfg = game.formations;
+    const shapes = document.getElementById('form-shapes');
+    // a tiny ASCII sketch of each shape so the choice reads at a glance
+    const art = { diamond: ' ▲\n▲▲▲\n ▲', rectangle: '▲▲▲\n▲▲▲' };
+    shapes.innerHTML = FORMATION_SHAPES.map(s =>
+      `<button data-shape="${s}" class="${cfg.shape === s ? 'on' : ''}">`
+      + `${s[0].toUpperCase() + s.slice(1)}<pre>${art[s]}</pre></button>`).join('');
+    shapes.querySelectorAll('button[data-shape]').forEach(btn => {
+      btn.onclick = () => { game.formations.shape = btn.dataset.shape; this.commitFormations(); };
+    });
+
+    const list = document.getElementById('form-order');
+    list.innerHTML = cfg.order.map((k, i) => {
+      const t = UNIT_TYPES[k];
+      return `<li draggable="true" data-i="${i}" title="${t.desc}">`
+        + `<span class="grip">⠿</span><span class="rank">${i + 1}</span>`
+        + `<span class="nm">${t.name}</span>`
+        + `<button data-up="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>`
+        + `<button data-down="${i}" ${i === cfg.order.length - 1 ? 'disabled' : ''}>▼</button></li>`;
+    }).join('');
+    list.querySelectorAll('button[data-up]').forEach(b =>
+      b.onclick = () => this.moveFormationRank(+b.dataset.up, +b.dataset.up - 1));
+    list.querySelectorAll('button[data-down]').forEach(b =>
+      b.onclick = () => this.moveFormationRank(+b.dataset.down, +b.dataset.down + 1));
+    // Drag to reorder (mouse/desktop). The ▲▼ buttons are the same edit for
+    // touch, where HTML5 drag events never fire.
+    list.querySelectorAll('li').forEach(li => {
+      li.ondragstart = e => { this.dragRank = +li.dataset.i; li.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; };
+      li.ondragend = () => { this.dragRank = null; list.querySelectorAll('li').forEach(x => x.classList.remove('drag', 'over')); };
+      li.ondragover = e => { e.preventDefault(); li.classList.add('over'); };
+      li.ondragleave = () => li.classList.remove('over');
+      li.ondrop = e => {
+        e.preventDefault();
+        if (this.dragRank !== null && this.dragRank !== undefined) this.moveFormationRank(this.dragRank, +li.dataset.i);
+      };
+    });
+  }
+
+  moveFormationRank(from, to) {
+    const order = game.formations.order;
+    if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    this.commitFormations();
+  }
+
   // ---------- demolish ----------
   demolishSelected() {
     const b = this.selection.building;
@@ -645,6 +715,13 @@ class UI {
     document.getElementById('resume-btn').onclick = () => this.closePause();
     document.getElementById('pm-diplo').onclick = () => { this.closePause(); this.toggleDiplomacy(); };
     document.getElementById('pm-army').onclick = () => { this.closePause(); this.selectArmy(); };
+    document.getElementById('pm-formations').onclick = () => this.openFormations();
+    document.getElementById('formation-panel').onclick = e => { if (e.target.id === 'formation-panel') this.closeFormations(); };
+    document.getElementById('form-close').onclick = () => this.closeFormations();
+    document.getElementById('form-reset').onclick = () => {
+      game.formations = defaultFormations();
+      this.commitFormations();
+    };
     document.getElementById('pm-hide').onclick = () => { this.closePause(); document.body.classList.add('ui-hidden'); };
     document.getElementById('pm-restart').onclick = () => { if (confirm('Abandon this game and start a new one?')) location.reload(); };
     document.getElementById('ui-show').onclick = () => document.body.classList.remove('ui-hidden');
