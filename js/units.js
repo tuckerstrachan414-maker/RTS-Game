@@ -49,6 +49,23 @@ const TARGET_PRIORITIES = [
 ];
 const TARGET_PRIORITY_KEYS = TARGET_PRIORITIES.map(p => p.key);
 
+// ---------- group roles ----------
+// A group can be given a standing posture. `offensive` is the historical
+// default behaviour spelled out: no self-directed movement at all, free to go
+// anywhere it is sent. `defensive` garrisons the tile it was assigned on
+// (`defensivePost`), patrols its nation's own territory around it, engages
+// anything hostile that comes near the post — and, crucially, will not be
+// drawn off it. `null` behaves exactly as `offensive`; it is the un-assigned
+// state, kept distinct so the panel can show "no role" honestly.
+const GROUP_ROLES = [
+  { key: '',          label: 'None',      hint: 'No standing orders. Holds position and fights what comes to it.' },
+  { key: 'offensive', label: 'Offensive', hint: 'Never moves on its own. Goes wherever you send it, however far.' },
+  { key: 'defensive', label: 'Defensive', hint: 'Patrols your territory around its post and engages intruders — but never chases far.' },
+];
+// How far from its post a garrison will look for trouble, and follow it. Also
+// the patrol radius. Roughly the reach of one town's worth of ground.
+const DEFENSE_LEASH = 10;
+
 function matchesPriority(priority, t) {
   if (!priority || priority === 'any') return true;
   const isBuilding = t instanceof Building;
@@ -80,6 +97,9 @@ class Unit {
     this.carryCap = this.type.carry || 0;
     this.formSpeed = 0;        // >0 while marching in formation: the group's pace
     this.targetPriority = 'any';   // what this unit hunts on its own (TARGET_PRIORITIES)
+    this.groupRole = null;         // null | 'offensive' | 'defensive' (GROUP_ROLES)
+    this.defensivePost = null;     // [tx, ty] a defensive unit garrisons and returns to
+    this.patrolT = 0;              // countdown to the next patrol leg
   }
 
   get tileX() { return Math.floor(this.x); }
@@ -146,11 +166,21 @@ class Unit {
       game.diplomacy.tickMission(this, dt);  // caravan / envoy
     }
 
-    // auto-acquire enemies in range
+    // auto-acquire enemies in range. A garrison sweeps from its post instead of
+    // from itself, so its reach is fixed to the ground it is holding and does
+    // not creep forward every time it takes a step toward something.
     if (!this.target && this.aggressive && !this.type.envoy && !this.mission) {
-      this.target = findEnemyNear(this, 5);
+      this.target = this.garrisoned()
+        ? findEnemyNear(this, DEFENSE_LEASH, this.defensivePost[0] + 0.5, this.defensivePost[1] + 0.5)
+        : findEnemyNear(this, 5);
     }
     if (this.target && (targetDead(this.target) || !game.diplomacy.hostile(this.faction, targetFaction(this.target)))) {
+      this.target = null;
+    }
+    // …and drops anything that runs beyond the leash rather than giving chase.
+    // The +1 is hysteresis: without it a target hovering on the boundary gets
+    // picked up and dropped on alternating ticks.
+    if (this.target && this.garrisoned() && this.postDist(...targetCenter(this.target)) > DEFENSE_LEASH + 1) {
       this.target = null;
     }
 
@@ -171,8 +201,46 @@ class Unit {
       this.followPath(dt);
     } else if (this.carryTotal() > 0 && !this.type.envoy) {
       this.startHaul();   // idle with plunder → carry it home
+    } else if (this.garrisoned()) {
+      this.tickPatrol(dt);
     } else {
       this.setAnim('idle');
+    }
+  }
+
+  garrisoned() { return this.groupRole === 'defensive' && !!this.defensivePost && !this.mission; }
+
+  postDist(x, y) {
+    return Math.hypot(x - (this.defensivePost[0] + 0.5), y - (this.defensivePost[1] + 0.5));
+  }
+
+  // Idle garrison duty: walk back if it has drifted off its ground, otherwise
+  // wander its own nation's territory around the post on a slow cycle. Both
+  // legs go through orderMove, so the unit still paths and still stops to fight
+  // anything the sweep above picks up.
+  tickPatrol(dt) {
+    this.patrolT -= dt;
+    if (this.postDist(this.x, this.y) > DEFENSE_LEASH) {
+      this.patrolT = 4;
+      return this.orderMove(this.defensivePost[0], this.defensivePost[1]);
+    }
+    if (this.patrolT > 0) { this.setAnim('idle'); return; }
+    this.patrolT = 5 + game.rng() * 6;
+    const spot = patrolTileNear(this.faction, this.defensivePost[0] + 0.5, this.defensivePost[1] + 0.5, DEFENSE_LEASH * 0.7);
+    if (spot) this.orderMove(spot[0], spot[1]);
+    else this.setAnim('idle');   // post is outside our own claim: just hold it
+  }
+
+  // Assign a posture. Taking up a defensive role plants the post where the unit
+  // is standing now, which is what makes "select a group, mark it Defensive"
+  // read as "hold this ground".
+  setGroupRole(role) {
+    this.groupRole = role || null;
+    if (this.groupRole === 'defensive') {
+      this.defensivePost = [this.tileX, this.tileY];
+      this.patrolT = game.rng() * 4;   // de-phase so a whole squad doesn't step off together
+    } else {
+      this.defensivePost = null;
     }
   }
 
@@ -537,7 +605,10 @@ function freeSpotNear(x, y, fid, taken) {
 // Proactive target acquisition, filtered by the unit's targeting priority
 // (TARGET_PRIORITIES above). A priority that matches nothing in range simply
 // finds nothing — that is the whole point of "Buildings only".
-function findEnemyNear(unit, radius) {
+//
+// `ox`/`oy` default to the unit's own position; a defensive garrison passes its
+// post instead, so the circle it watches is anchored to the ground it holds.
+function findEnemyNear(unit, radius, ox = unit.x, oy = unit.y) {
   const pr = unit.targetPriority || 'any';
   const wantsUnits = pr === 'any' || pr === 'units';
   const wantsBuildings = pr !== 'units';
@@ -547,7 +618,7 @@ function findEnemyNear(unit, radius) {
     if (wantsUnits) {
       for (const u of f.units) {
         if (!u.alive) continue;
-        const d = Math.hypot(u.x - unit.x, u.y - unit.y);
+        const d = Math.hypot(u.x - ox, u.y - oy);
         if (d < bestD) { best = u; bestD = d; }
       }
     }
@@ -558,7 +629,7 @@ function findEnemyNear(unit, radius) {
       for (const b of f.buildings) {
         if (b.hp <= 0 || b.type.key === 'bridge') continue;
         if (!matchesPriority(pr, b)) continue;
-        const d = Math.hypot(b.cx - unit.x, b.cy - unit.y);
+        const d = Math.hypot(b.cx - ox, b.cy - oy);
         if (d < bestD * bias) { best = b; bestD = d; }
       }
     }

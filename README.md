@@ -206,6 +206,25 @@ hits what you aimed it at, and troops standing idle still fight back when
 they're attacked. It tells them what to *look for*, not what they're allowed to
 hit.
 
+**Give a group a standing role.** The same panel has **Group role**:
+- **Offensive** — never moves on its own. It waits for your orders and then goes
+  wherever you send it, however far.
+- **Defensive** — the troops take up a **post** on the ground they're standing on
+  and garrison it. They patrol your territory around it, attack anything hostile
+  that comes near — and **won't be lured away**. Bait them and they'll break off
+  and walk back. Order a defensive group to move and they re-post where they
+  arrive, so it means "defend *there* instead".
+- **None** — no standing orders, same as Offensive.
+
+Selected garrisons draw a dashed line to the post they're holding, so you can
+see what each group is guarding.
+
+**Split Group** peels part of a selection into a group of its own: press it, tap
+the troops you want to move out, then confirm. The troops you picked become the
+new selection, ready for their own role and targeting priority — so you can
+leave half your army home on **Defensive** and march the other half out on
+**Offensive** in a few taps.
+
 **Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.
 - 🐎 **Trade pacts** need a Market on both sides and a **Prince** envoy (trained at

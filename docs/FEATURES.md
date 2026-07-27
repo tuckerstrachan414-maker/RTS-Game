@@ -271,6 +271,48 @@ and one that goes straight for the granaries. Set on units, not on the
 selection, so it survives deselecting and reselecting. AI units leave it at
 `any`.
 
+### Group roles — offensive & defensive
+
+`Unit.groupRole` / `defensivePost` / `setGroupRole` / `tickPatrol` and
+`GROUP_ROLES` in `js/units.js`; `Territory.controls` and `patrolTileNear` in
+`js/territory.js`; the radio row and Split Group flow in `js/ui.js`. A selected
+group can be given a standing posture:
+
+- **Offensive** — never moves on its own; goes where it is sent, however far.
+  This is the historical default behaviour written down, not new behaviour.
+- **Defensive** — plants a `defensivePost` on the tile each unit is standing on
+  when the role is assigned, then garrisons it. An idle garrison patrols on a
+  5–11s cycle (de-phased per unit so a squad doesn't step off in lockstep) to a
+  random open tile inside **its own nation's territory** within 7 tiles of the
+  post, and walks straight back the moment it is more than `DEFENSE_LEASH` (10)
+  tiles out.
+- **None** — the un-assigned state. Behaves exactly like offensive; kept
+  distinct so the panel can say "no role" honestly.
+
+A garrison sweeps for targets **from its post rather than from itself**
+(`findEnemyNear`'s `ox`/`oy` arguments), so its reach is pinned to the ground it
+holds instead of creeping forward every time it takes a step toward something,
+and it drops any target that gets more than `DEFENSE_LEASH + 1` tiles from the
+post rather than giving chase. That +1 is hysteresis — without it a target
+hovering on the boundary is acquired and dropped on alternating ticks. The
+result is a garrison that cannot be baited: in a headless test a 4000 HP decoy
+retreating one tile per second out to 42 tiles from the post never pulled the
+garrison past 10.7 tiles.
+
+Ordering a defensive group to move **re-posts it** at the destination
+(`UI.rightClick`) — "defend there instead", rather than marching over and then
+walking all the way home again.
+
+**Split Group** (panel button, shown for selections of 2+ fighters) peels part
+of a selection into a group of its own: it opens a chip list of the selected
+troops, you toggle the ones to move, and confirming makes the picked troops the
+new selection — so the role and priority controls that reappear act on the new
+group alone. Map clicks are inert while the mode is open, so a stray tap cannot
+silently discard the pick. Selected garrisons draw a dashed tether to their post
+on the map, so "Defensive" has somewhere to point at outside the panel.
+
+Roles are player-facing only; AI units never set one.
+
 ## Formations & crowd separation — Deep
 
 `js/units.js` (`formationMove`, `formationSlots`, `separateUnits`), `js/main.js`
@@ -435,8 +477,16 @@ and spark **border disputes**; so does completing a building on another
 nation's claim. Player disputes arrive as event cards (Concede / Negotiate
 40g / Stand firm — ignoring one is worse); AI–AI disputes resolve from
 strength, ambition and relations, and can harden into wars or soften into
-trade pacts. Gaps: territory has no direct economic effect (no tile tribute),
-walls don't project claims far.
+trade pacts. Two helpers hang off the same field for defensive garrisons
+(see "Group roles" above): `Territory.controls(fid, x, y)` is the bounds-safe
+"is this tile inside that nation's claim?" (`ownerAt` alone reads off the end
+of the array on an off-map tile), and `patrolTileNear(fid, cx, cy, radius)`
+draws a patrol leg — a random open tile inside the nation's own claim within
+`radius` of the post, from `game.rng` so a seed replays the same routes. It
+returns null when the post sits outside its own territory, and a garrison
+posted on foreign ground then simply holds position rather than wandering off
+looking for friendly soil. Gaps: territory has no direct economic effect (no
+tile tribute), walls don't project claims far.
 
 ## Event cards — Moderate
 

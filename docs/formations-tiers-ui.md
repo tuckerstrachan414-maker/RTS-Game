@@ -156,6 +156,74 @@ Two smaller things worth knowing:
   added to that panel needs the same treatment (or `sel.blur()` before an
   explicit refresh, which is what the change handler does).
 
+## Group roles — `js/units.js`, `js/territory.js`, `js/ui.js`
+
+`Unit.groupRole` is `null | 'offensive' | 'defensive'`. Only `defensive` has
+behaviour of its own; `offensive` and `null` are both "the way units have always
+worked", kept as separate values so the panel can distinguish *set to
+offensive* from *never assigned*.
+
+`setGroupRole(role)` is the only place `defensivePost` is written on
+assignment, and it plants the post on the tile the unit is standing on right
+then — that is what makes "select a group, mark it Defensive" read as "hold this
+ground" rather than needing a second click to say where.
+
+Three separate mechanisms keep a garrison on its post, and all three are load
+bearing — remove any one and it wanders:
+
+1. **Acquisition is anchored to the post, not the unit.** `findEnemyNear` grew
+   optional `ox`/`oy` origin arguments; a garrison passes its post. Sweeping
+   from the unit instead would let the watched circle creep forward one step at
+   a time as the unit walks toward whatever it found — a garrison would inch
+   across the map behind a retreating enemy without ever technically chasing.
+2. **The leash drops targets.** Anything more than `DEFENSE_LEASH + 1` (11)
+   tiles from the post is released rather than pursued. The `+ 1` is
+   hysteresis; without it a target sitting exactly on the boundary is acquired
+   and dropped on alternating ticks, and the unit judders in place.
+3. **Patrol pulls it home.** `tickPatrol` runs only when the unit is idle with
+   no target and no path (the last `else if` in `Unit.tick`, ahead of the plain
+   idle case). Past the leash it walks straight back to the post; inside it, it
+   takes a new patrol leg every 5–11s. `setGroupRole` seeds `patrolT` from
+   `game.rng()` so a squad assigned together does not step off in lockstep.
+
+Verified by lure test rather than by reading: a 4000 HP decoy retreating one
+tile per second out to 42 tiles from the post never pulled the garrison past
+10.7 tiles, and tick-by-tick sampling over 90s found a patrolling garrison
+outside its own claim on 0% of ticks.
+
+Patrol legs come from `patrolTileNear` in `js/territory.js` (next to
+`Territory.controls`, the bounds-safe claim test) — territory knowledge belongs
+with territory. It draws from `game.rng`, not `Math.random`, so seeds replay;
+it filters to open ground (`moveCost === 1`) as well as passable, same reason
+`freeSpotNear` does; and it returns null rather than falling back to any
+passable tile, so a garrison posted outside its own claim holds position
+instead of hunting for friendly soil.
+
+`UI.rightClick` re-posts a defensive group at its move destination. Without
+that, ordering a garrison to move produces a unit that walks there, goes idle,
+notices it is past the leash, and walks all the way back — which looks exactly
+like a bug.
+
+### Split Group — `js/ui.js`
+
+`ui.splitMode` is `null` or `{picked: Set<unitId>}`. When set, `refreshPanel`
+renders the chip list (`splitHTML`/`wireSplit`) instead of the normal unit
+panel, and `clickSelect`, `boxSelect` and `rightClick` all return early — the
+chips are the only input, so a stray tap on the map cannot silently discard a
+half-finished pick. `clearSelection` clears the mode, since the selection the
+pick refers to is gone.
+
+Confirming replaces `selection.units` with the picked troops, which is the whole
+point: the role and priority controls that reappear then act on the new group
+alone. Confirm is disabled at 0 picks and at all of them — neither is a split.
+The chip list is capped at `34vh` with `overflow-y: auto`, because a
+select-army on a large army puts 30+ chips in a panel that already has to fit
+above the build bar on a landscape phone.
+
+Note the chips are rebuilt on every click (the whole panel is `innerHTML`), so
+anything holding a reference to a chip element across a click is holding a
+detached node — it caught the test harness before it caught a user.
+
 ## Castle-tier troop unlocks — `js/buildings.js`, `js/factions.js`, `js/ui.js`
 
 Simple gated-progression system, not a tech tree — there are only two
@@ -666,6 +734,21 @@ Things worth re-checking after any change in this area:
   distances exceed `SEP_RADIUS`.
 - Send a mixed-composition group on a formation move, assert every unit gets
   a unique `dest` tile and melee units land closer to the target than ranged.
+- **Start a formation march from open ground, not from the town hall tile.**
+  Teleporting a test squad to `[round(th.cx), round(th.cy)]` puts it inside the
+  Town Hall footprint, where `findPath` starts on an impassable tile — a third
+  of the group then never arrives and the run looks like a formation bug. Use
+  `Faction.spawnPointNear(th)` and spread the units over passable tiles.
+  Two separate formation "failures" were this and nothing else.
+- Compare capped against uncapped pace on *two units with different speeds over
+  a long march* (a Cavalier and a Swordsman, 25+ tiles), measuring the distance
+  between them. Whole-group spread measured from a scattered start is dominated
+  by the starting scatter and by formation depth, and shows nothing.
+- For a defensive garrison, sample the post distance **every tick**, not once at
+  the end — an end-state reading catches the unit mid-patrol-leg and says
+  nothing about whether the leash held. And bait it: a high-HP decoy that
+  retreats a tile per second is the test that actually exercises the leash,
+  because a stationary enemy inside it never asks the question.
 - Train a locked unit (expect a rejection string), buy the upgrade, tick past
   its `time`, train again (expect success); repeat for tier 3.
 - Simulate a tap, then a second tap at the same point within 350ms, assert
