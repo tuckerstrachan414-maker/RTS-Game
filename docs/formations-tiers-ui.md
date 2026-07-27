@@ -121,6 +121,41 @@ so Escape-Escape gets you back to the game.
   It is also the reason `localStorage` access is inside a `try` — storage can
   be blocked outright, and the game must still boot.
 
+## Targeting priorities — `js/units.js`, `js/ui.js`
+
+`Unit.targetPriority` (default `'any'`) names one of `TARGET_PRIORITIES`, and
+`matchesPriority(priority, target)` is the single predicate — `units`,
+`structures`, or a literal `BUILDING_TYPES` key (`townhall`, `storehouse`,
+`farm`, `house`). Adding a new priority is one entry in that array plus, for a
+building type, nothing at all: the fallthrough case compares `t.type.key`.
+
+**The filter belongs in `findEnemyNear` and nowhere else.** That is the design,
+not an oversight, and there are three separate paths that could each have taken
+the filter and deliberately do not:
+
+- `Unit.orderAttack` — a direct order from the player. Standing orders never
+  override a specific one.
+- `Unit.takeDamage`'s fight-back clause. It only fires when the unit has no
+  target at all, so a group already busy on a building is not diverted by
+  taking fire, but a genuinely idle unit is never a statue. Both halves of that
+  matter: filter it and a Storehouses-only group stands and dies; drop the
+  `!this.target` guard and "Buildings only" stops working as a siege order.
+- The AI. `f.brain.combat` never sets a priority, so AI units sit at `any` and
+  behave exactly as before.
+
+Two smaller things worth knowing:
+
+- The 0.8 distance bias that leans acquisition toward troops over buildings
+  only applies when `priority === 'any'`. With buildings the sole eligible
+  target there is nothing to lean away from, and leaving the bias in made a
+  Storehouses-only group refuse targets it was standing next to.
+- `refreshPanel` runs twice a second off the frame loop and rebuilds the panel's
+  `innerHTML`, which would tear an open `<select>` out from under the player
+  mid-choice — and on touch, dismiss the OS picker. It now returns early while a
+  `<select>` inside `#panel` holds focus. Anything else interactive and stateful
+  added to that panel needs the same treatment (or `sel.blur()` before an
+  explicit refresh, which is what the change handler does).
+
 ## Castle-tier troop unlocks — `js/buildings.js`, `js/factions.js`, `js/ui.js`
 
 Simple gated-progression system, not a tech tree — there are only two

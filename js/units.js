@@ -32,6 +32,31 @@ for (const k in UNIT_TYPES) UNIT_TYPES[k].tier = UNIT_TIERS[k] || 1;
 
 const TRAIN_MENU = ['sword', 'spear', 'archer', 'bandit', 'prince', 'halberd', 'cavalier', 'mage', 'king'];
 
+// ---------- targeting priorities ----------
+// What a group goes looking for a fight with on its own. This filters
+// `findEnemyNear` — i.e. *proactive* target acquisition — and nothing else, so
+// a direct attack order from the player always lands whatever it was aimed at,
+// and a unit that is standing idle when something shoots it still fights back
+// (`takeDamage`). A unit already busy on a target is never diverted by either.
+const TARGET_PRIORITIES = [
+  { key: 'any',        label: 'Anything (default)', hint: 'Attack whatever comes into range.' },
+  { key: 'units',      label: 'Troops only',        hint: 'Ignore buildings; only pick fights with enemy soldiers.' },
+  { key: 'structures', label: 'Buildings only',     hint: 'Walk past enemy troops and put everything into razing their works.' },
+  { key: 'townhall',   label: 'Town Halls',         hint: 'Go for the throat — the seat of government, and nothing else.' },
+  { key: 'storehouse', label: 'Storehouses',        hint: 'Burn the stockpiles. Razing one spills its goods as loot.' },
+  { key: 'farm',       label: 'Farms',              hint: 'Starve them out.' },
+  { key: 'house',      label: 'Houses',             hint: 'Level the housing and choke their population growth.' },
+];
+const TARGET_PRIORITY_KEYS = TARGET_PRIORITIES.map(p => p.key);
+
+function matchesPriority(priority, t) {
+  if (!priority || priority === 'any') return true;
+  const isBuilding = t instanceof Building;
+  if (priority === 'units') return !isBuilding;
+  if (priority === 'structures') return isBuilding;
+  return isBuilding && t.type.key === priority;   // a specific building type
+}
+
 let nextUnitId = 1;
 
 class Unit {
@@ -54,6 +79,7 @@ class Unit {
     this.carry = { food: 0, wood: 0, stone: 0, gold: 0 };  // plunder being hauled
     this.carryCap = this.type.carry || 0;
     this.formSpeed = 0;        // >0 while marching in formation: the group's pace
+    this.targetPriority = 'any';   // what this unit hunts on its own (TARGET_PRIORITIES)
   }
 
   get tileX() { return Math.floor(this.x); }
@@ -508,19 +534,33 @@ function freeSpotNear(x, y, fid, taken) {
   return rough;
 }
 
+// Proactive target acquisition, filtered by the unit's targeting priority
+// (TARGET_PRIORITIES above). A priority that matches nothing in range simply
+// finds nothing — that is the whole point of "Buildings only".
 function findEnemyNear(unit, radius) {
+  const pr = unit.targetPriority || 'any';
+  const wantsUnits = pr === 'any' || pr === 'units';
+  const wantsBuildings = pr !== 'units';
   let best = null, bestD = radius;
   for (const f of game.factions) {
     if (!game.diplomacy.hostile(unit.faction, f.id)) continue;
-    for (const u of f.units) {
-      if (!u.alive) continue;
-      const d = Math.hypot(u.x - unit.x, u.y - unit.y);
-      if (d < bestD) { best = u; bestD = d; }
+    if (wantsUnits) {
+      for (const u of f.units) {
+        if (!u.alive) continue;
+        const d = Math.hypot(u.x - unit.x, u.y - unit.y);
+        if (d < bestD) { best = u; bestD = d; }
+      }
     }
-    for (const b of f.buildings) {
-      if (b.hp <= 0 || b.type.key === 'bridge') continue;
-      const d = Math.hypot(b.cx - unit.x, b.cy - unit.y);
-      if (d < bestD * 0.8) { best = b; bestD = d; }   // slight preference for units
+    if (wantsBuildings) {
+      // The 0.8 tie-break leans toward troops when both are on the table; with
+      // buildings the only eligible target there is nothing to lean away from.
+      const bias = pr === 'any' ? 0.8 : 1;
+      for (const b of f.buildings) {
+        if (b.hp <= 0 || b.type.key === 'bridge') continue;
+        if (!matchesPriority(pr, b)) continue;
+        const d = Math.hypot(b.cx - unit.x, b.cy - unit.y);
+        if (d < bestD * bias) { best = b; bestD = d; }
+      }
     }
   }
   return best;

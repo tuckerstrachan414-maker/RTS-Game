@@ -194,6 +194,18 @@ shield wall.
   if you want them shooting before your infantry closes.
 - Both settings are **remembered between games**, so you set your doctrine once.
 
+**Tell a group what to hunt.** Select troops and use the **Targeting priority**
+dropdown on their panel: *Anything* (the default), *Troops only*, *Buildings
+only*, or one specific target — *Town Halls*, *Storehouses*, *Farms*, *Houses*.
+A siege group set to **Buildings only** walks past the defenders and puts
+everything into razing their works instead of getting bogged down in a brawl;
+set it to **Farms** and you starve a nation out instead of fighting it.
+
+Two things the priority does *not* do, on purpose: a direct attack order always
+hits what you aimed it at, and troops standing idle still fight back when
+they're attacked. It tells them what to *look for*, not what they're allowed to
+hit.
+
 **Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
 - 🎁 **Gifts** buy goodwill.
 - 🐎 **Trade pacts** need a Market on both sides and a **Prince** envoy (trained at

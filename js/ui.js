@@ -778,6 +778,12 @@ class UI {
 
   refreshPanel() {
     const p = document.getElementById('panel');
+    // The frame loop refreshes this panel twice a second by replacing its
+    // innerHTML. That would yank an open <select> out from under the player
+    // mid-choice (and on touch, close the OS picker), so hold off while one has
+    // focus — the panel is live data, but not so live it can't wait a beat.
+    if (document.activeElement && document.activeElement.tagName === 'SELECT'
+        && p.contains(document.activeElement)) return;
     const b = this.selection.building;
     const us = this.selection.units.filter(u => u.alive);
     const bs = this.selection.buildings;
@@ -907,11 +913,39 @@ class UI {
       for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
       if (hauling) html += `<div class="good">Hauling plunder: ${icon('food')}${Math.floor(carried.food)} ${icon('wood')}${Math.floor(carried.wood)} ${icon('stone')}${Math.floor(carried.stone)} ${icon('gold')}${Math.floor(carried.gold)}</div>`;
       if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
+      const fighters = us.filter(u => !u.type.envoy);
+      if (fighters.length) html += this.targetPriorityHTML(fighters);
       html += this.isTouch
         ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
         : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
       p.innerHTML = html;
+      const sel = document.getElementById('target-priority');
+      if (sel) sel.onchange = () => {
+        for (const u of fighters) u.targetPriority = sel.value;
+        const label = TARGET_PRIORITIES.find(t => t.key === sel.value);
+        game.log(`${fighters.length} troop${fighters.length > 1 ? 's' : ''} will seek out: ${label.label.replace(' (default)', '')}.`);
+        sel.blur();          // else the guard at the top of refreshPanel skips the redraw
+        this.refreshPanel();
+      };
     }
+  }
+
+  // The group's targeting priority. A selection whose members disagree shows a
+  // "Mixed" entry that is not itself selectable — picking anything else applies
+  // it to the whole selection.
+  targetPriorityHTML(fighters) {
+    const vals = new Set(fighters.map(u => u.targetPriority || 'any'));
+    const mixed = vals.size > 1;
+    const cur = mixed ? '' : [...vals][0];
+    const hint = mixed ? 'These troops are hunting different things.'
+      : TARGET_PRIORITIES.find(t => t.key === cur).hint;
+    return `<div class="priority">Targeting priority`
+      + `<select id="target-priority" title="What these troops go looking for a fight with on their own. Direct attack orders always override it.">`
+      + (mixed ? `<option value="" selected>— Mixed —</option>` : '')
+      + TARGET_PRIORITIES.map(t =>
+          `<option value="${t.key}"${t.key === cur ? ' selected' : ''}>${t.label}</option>`).join('')
+      + `</select></div>`
+      + `<div class="dim">${hint}</div>`;
   }
 
   // ---------- topbar info tooltips ----------

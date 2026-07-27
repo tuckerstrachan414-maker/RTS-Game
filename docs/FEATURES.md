@@ -243,6 +243,34 @@ Note that armor is what gives the three damage types their teeth — magic
 ignores it, melee and pierce do not — so the Halberdier carrying armor is
 load-bearing for the whole damage-type system, not flavour.
 
+### Targeting priorities
+
+`Unit.targetPriority`, `TARGET_PRIORITIES` and `matchesPriority` in
+`js/units.js`; the dropdown in `UI.targetPriorityHTML` (`js/ui.js`). Every
+selected group can be told what to go looking for a fight with: **Anything**
+(default), **Troops only**, **Buildings only**, or one specific building type —
+Town Halls, Storehouses, Farms, Houses. Set it on the unit selection panel and
+it applies to every non-envoy unit in the selection; a selection whose members
+disagree shows a non-selectable "Mixed" entry until one is chosen for all.
+
+The priority filters **proactive acquisition only** — `findEnemyNear`, the
+5-tile auto-target sweep — and deliberately nothing else:
+
+- A direct attack order from the player always lands whatever it was aimed at.
+  The priority is standing orders, not a restraining order.
+- A unit that is *idle* when something hits it still fights back
+  (`Unit.takeDamage`), so a Storehouses-only group is never a row of statues
+  being shot to pieces.
+- A unit that already has a target is not diverted by either mechanism, which
+  is what makes "Buildings only" work as a siege order: the group walks past
+  the defenders, latches onto the works, and stays on them.
+
+A priority that matches nothing within 5 tiles finds nothing, which is the
+point — that is the difference between a group that grinds through the garrison
+and one that goes straight for the granaries. Set on units, not on the
+selection, so it survives deselecting and reselecting. AI units leave it at
+`any`.
+
 ## Formations & crowd separation — Deep
 
 `js/units.js` (`formationMove`, `formationSlots`, `separateUnits`), `js/main.js`
