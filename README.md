@@ -274,4 +274,8 @@ Plain `<script>` modules, no build step:
 ## Credits
 
 - **Minifolks: Humans** unit sprites by LYASeeK
-- 16×16 overworld tileset as provided in this repository
+- 16×16 overworld tileset as provided in this repository, with trees, rocks,
+  the cave/mine-shaft tile, the Well, and the Town Hall/House/Market buildings
+  replaced with art from the **PUNY_WORLD_v1** tileset pack (same 16×16 grid,
+  spliced tile-for-tile into `assets/tileset16x16_1.png` — see
+  `docs/FEATURES.md` → Rendering & assets)
