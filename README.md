@@ -290,7 +290,12 @@ you face in the late game may not be the one you started on. But it's only
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
 while it's up. From there: Diplomacy, Select Army (grabs your whole standing
-army), game **Speed** (1x/2x/3x), Hide UI, and New Game.
+army), Formations, game **Speed** (1x/2x/3x), Hide UI, **Dev Mode**, and New Game.
+
+**Dev Mode** (Menu → Dev Mode) is a cheat for testing: your resources never run
+out and training is never blocked by cost or population. A red **DEV** badge
+stays on the topbar the whole time it's on so it's never left running by
+accident, and it resets to off on a new game.
 
 **Controls (desktop):** WASD/arrows pan (Shift = faster) · wheel zooms ·
 left-click/drag selects an army, or buildings if the box has no units in it ·

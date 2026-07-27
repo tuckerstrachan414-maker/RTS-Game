@@ -29,12 +29,20 @@ const DAY_LENGTH = 150;
 const NIGHT_LENGTH = 150;
 const DAY_NIGHT_CYCLE = DAY_LENGTH + NIGHT_LENGTH;
 
+// Dev-mode cheat: floor the player's Town Hall reserves at this level every
+// tick (see Game.devTopOff) so resources never run out. Written directly to
+// the building's store, bypassing storage capacity — a deliberate cheat, not
+// a change to how storage normally works. Comfortably above every cost in the
+// game (the priciest single thing, the King, is food 100 / gold 100).
+const DEV_RESOURCE_FLOOR = 9999;
+
 let game = null;
 
 class Game {
   constructor(seed, diffKey = 'ramped') {
     this.diffKey = DIFFICULTIES[diffKey] ? diffKey : 'ramped';
     this.diff = DIFFICULTIES[this.diffKey];
+    this.devMode = false;   // cheat toggle: infinite resources + free/unlimited training for the player
     this.map = new GameMap(seed);
     this.factions = [];
     this.projectiles = [];
@@ -117,6 +125,7 @@ class Game {
     for (const f of this.factions) {
       if (f.eliminated) continue;
       f.nation.tick(dt);
+      if (this.devMode && f.isPlayer) this.devTopOff(f.nation);
       f.tickTraining(dt);
       if (!f.isPlayer) aiTick(f, dt);
       for (const u of f.units) u.tick(dt);
@@ -198,6 +207,23 @@ class Game {
       }
     }
     if (this.factions[0].eliminated) this.end('Your Town Hall lies in ruins. The nation is lost.');
+  }
+
+  // Refills the player's Town Hall directly, bypassing normal storage capacity —
+  // the Town Hall always exists while the nation is alive, so this can't no-op
+  // the way depositing into a full Storehouse would. Runs every tick devMode is
+  // on, so consumption (eating, upkeep, spending) never drains it for long.
+  devTopOff(nation) {
+    const th = nation.faction.buildings.find(b => b.type.key === 'townhall');
+    if (!th) return;
+    for (const r of RES_KEYS) if (th.store[r] < DEV_RESOURCE_FLOOR) th.store[r] = DEV_RESOURCE_FLOOR;
+  }
+
+  toggleDevMode() {
+    this.devMode = !this.devMode;
+    this.log(this.devMode ? 'Dev mode ON — infinite resources, unlimited training.' : 'Dev mode off.',
+      this.devMode ? 'good' : '');
+    return this.devMode;
   }
 
   // Freeze the sim and show the end screen. There is only one road here — the

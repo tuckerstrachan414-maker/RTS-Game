@@ -732,6 +732,12 @@ class UI {
       this.commitFormations();
     };
     document.getElementById('pm-hide').onclick = () => { this.closePause(); document.body.classList.add('ui-hidden'); };
+    document.getElementById('pm-devmode').onclick = () => {
+      const on = game.toggleDevMode();
+      document.getElementById('devmode-val').textContent = on ? 'ON' : 'OFF';
+      document.getElementById('pm-devmode').classList.toggle('on', on);
+      document.getElementById('dev-badge').style.display = on ? '' : 'none';
+    };
     document.getElementById('pm-restart').onclick = () => { if (confirm('Abandon this game and start a new one?')) location.reload(); };
     document.getElementById('ui-show').onclick = () => document.body.classList.remove('ui-hidden');
     document.getElementById('pm-speed').onclick = () => {

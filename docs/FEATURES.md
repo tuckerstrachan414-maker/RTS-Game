@@ -536,6 +536,35 @@ one giant empire, or the player can outlast every rival and simply keep ruling
 alone; neither stops the sim. No score screen or stats beyond lifetime trade
 gold.
 
+## Dev mode — Basic
+
+`game.devMode` (`js/main.js`), `Game.devTopOff`/`Game.toggleDevMode`; the
+"Dev Mode" toggle in the pause menu (`js/ui.js`, `index.html`). A cheat for
+testing, player-only:
+
+- **Infinite resources.** Every tick while devMode is on, `devTopOff` writes
+  `DEV_RESOURCE_FLOOR` (9999) directly into the player's Town Hall's `store`
+  for each resource if it's below that — bypassing normal storage capacity
+  (`capacityFor`) entirely, since the Town Hall's declared caps (300 food/
+  wood/stone) are far below the floor. This is a deliberate bypass, not a
+  change to how storage capacity normally works for anyone else, including
+  AI nations. It runs every tick rather than once on toggle, so ordinary
+  consumption (eating, upkeep, training/building costs) never drains it for
+  more than an instant.
+- **Unlimited troops.** `Faction.trainUnit` skips the "No free citizens"
+  population gate and the cost/pay step entirely when `this.isPlayer &&
+  game.devMode` — necessary because, unlike resources, population is never
+  topped off, so training would still consume it and eventually hit the gate
+  even with infinite gold sitting in the bank.
+- Castle-tier locks, the one-King rule, and the Grand Castle's population/
+  happiness gates are untouched — those are progression rules, not resource
+  constraints, and stay in effect even in dev mode. (Costs for the castle
+  upgrades and the Grand Castle are trivially affordable once resources are
+  topped off, so tier progression is still fast — just not instant.)
+- A red "DEV" badge appears in the topbar the whole time it's on, so it's
+  never accidentally left running unnoticed. Not persisted — resets to off on
+  reload/new game, since it's a debug aid, not a game setting.
+
 ## Desktop UI/HUD — Deep
 
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom

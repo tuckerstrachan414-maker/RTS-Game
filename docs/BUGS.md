@@ -110,6 +110,12 @@ heuristic.
 
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
 
+- **Dev mode writes past storage capacity on purpose** — `Game.devTopOff`
+  (`js/main.js`) sets the player's Town Hall `store` values directly to
+  `DEV_RESOURCE_FLOOR` (9999), which is well past the Town Hall's declared
+  caps (300 food/wood/stone). `capacityFor`/`deposit` are deliberately not
+  involved — this is a cheat, not a storage-system change, and it only ever
+  touches the player's own Town Hall.
 - **Training always leaves 1 citizen free** — `trainUnit` requires
   `pop > workersAssigned + 1`, so the last two citizens can never both become
   soldiers. Prevents pop-0 soft locks.
