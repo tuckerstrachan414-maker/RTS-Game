@@ -765,7 +765,7 @@ class UI {
           ? `<div class="dim">Double-tap the map to set a rally point.</div>`
           : `<div class="dim">Right-click the map to set a rally point.</div>`;
         if (!b.grand && b.grandProgress === 0) {
-          html += `<button id="grand" title="Prosperity victory: requires 50 population and 70% happiness.\nCosts 300 gold, 200 wood, 200 stone.">${icon('crown')} Build Grand Castle</button>`;
+          html += `<button id="grand" title="A monument to your nation's prosperity: requires 50 population and 70% happiness.\nCosts 300 gold, 200 wood, 200 stone.">${icon('crown')} Build Grand Castle</button>`;
         } else if (!b.grand) {
           html += `<div class="good">Grand Castle rising… ${Math.round(b.grandProgress / 30 * 100)}%</div>`;
         } else {
@@ -1004,7 +1004,7 @@ class UI {
       }
       html += `</div>`;
     }
-    html += `<div class="dim" style="margin-top:8px">Trade pacts need a Market on both sides and a Prince envoy to deliver the offer.<br>Allies join wars in each other's defense. Peace is always a path: gift, trade, ally — and win by prosperity.</div>`;
+    html += `<div class="dim" style="margin-top:8px">Trade pacts need a Market on both sides and a Prince envoy to deliver the offer.<br>Allies join wars in each other's defense. Peace is always a path: gift, trade, ally.</div>`;
     d.innerHTML = html;
     document.getElementById('dip-close').onclick = () => this.closeDiplomacy();
     d.querySelectorAll('button[data-act]').forEach(btn => {

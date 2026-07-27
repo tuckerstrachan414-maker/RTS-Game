@@ -184,11 +184,12 @@ restore button) needs to be added to the exclusion list explicitly, not just
 left unclassed, since default CSS specificity won't save you.
 
 `#gameover` is the same kind of exception as `#difficulty`: not `.hud`, because
-it belongs to the frame around the game rather than the game's HUD. Its buttons
-now live in a `.go-btns` flex row — **Keep playing** (`#keep-playing`, styled as
-the primary action and shown only on a win) and Play again. `Game.end` toggles
-the button's visibility and binds its handler; `Game.resume` hides the overlay
-and unfreezes the sim. See "Victory & defeat" in `docs/FEATURES.md`.
+it belongs to the frame around the game rather than the game's HUD. There is
+no way to win, so its `.go-btns` row holds one button — Play again — and
+`Game.end` always renders the skull icon and "Defeat"; there used to be a won
+branch (trophy icon, a *Keep playing* button, a `Game.resume` that unfroze the
+sim past a banked win) but nothing in the game can reach it any more. See
+"Defeat" in `docs/FEATURES.md`.
 
 ## HUD layout & stacking — `index.html`
 
@@ -527,4 +528,5 @@ Things worth re-checking after any change in this area:
   row of 13 build buttons has to fit a landscape phone.
 - Run several sim-minutes of `game.tick` with AI factions funded, confirm at
   least one climbs past tier 1 without the game crashing (`game.over` stays
-  false unless an actual win/loss condition was met).
+  false unless the player's Town Hall actually fell — the only thing that can
+  set it).

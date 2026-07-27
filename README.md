@@ -11,8 +11,10 @@ walled-up trader in the next. Each pursues its own **evolving ambition** — one
 may drill a conquering army, another chase riches and its own Grand Castle,
 another wall itself in or weave alliances — and those ambitions shift as the
 world changes.
-You never *have* to fight: trade, gifts and alliances are a complete path to
-victory. But the world won't wait for you.
+There is no way to win. You never *have* to fight — trade, gifts and alliances
+are a complete way to keep the peace — but the world won't wait for you, and
+the only way the game ends is if it stops waiting for good: your Town Hall
+falls.
 
 ## Run it
 
@@ -195,18 +197,12 @@ sparks disputes that can be talked out or fought over. Watch for rumors in the
 event log ("soldiers drilling…", "masons quarrying…") and for armies massing
 at your border: ambitions are never announced outright, but they always show.
 
-**Winning:**
-- 👑 **Prosperity** — 50 population, 70% happiness, then build the Grand Castle
-  upgrade (300🪙 200🪵 200🪨) at your Castle. The peaceful win.
-- 🤝 **Diplomatic** — every surviving nation allied with you.
-- ⚔️ **Conquest** — every rival Town Hall destroyed.
-
-**You don't have to stop.** The victory screen offers **Keep playing** next to
-Play again. Take it and the game picks up exactly where it paused, with the win
-already banked — it won't pop up again, but the *other* win conditions still
-can, so you can take the Grand Castle and then go conquer the continent as well.
-Playing on, a rival finishing its own Grand Castle is just news in the log
-rather than a defeat; losing your Town Hall still ends the run.
+**There is no way to win.** No score to chase, no crown that ends the match —
+you play to keep your nation standing for as long as you want to. Build a
+Grand Castle (👑 300🪙 200🪵 200🪨 at your Castle, once you have 50 population
+and 70% happiness) if you want the prestige of it; conquer every rival if you
+want the whole continent; ally with everyone if you'd rather keep the peace.
+None of it ends the game — it's just what kind of nation you choose to build.
 
 **Conquest means annexation.** Destroy a nation's Town Hall and its surviving
 farms, mines, markets and storehouses — goods and all — become **yours**, at
@@ -214,12 +210,14 @@ reduced health and unstaffed until you assign workers. Walls and the ruined Town
 Hall come down. This cuts both ways: a rival that overruns you inherits your
 whole economy, and the continent consolidates into real empires.
 
-**Losing:** your Town Hall falls — or a **rival finishes its own Grand
-Castle**. Prosperous AI nations race for it too (you'll be warned when
-construction starts), and conquerors can swallow the whole map if nobody
-stops them. AI nations fight, bridge rivers to reach each other, and eliminate
-one another — the continent you face in the late game may not be the one you
-started on.
+**Losing:** your Town Hall falls. That's the only way the game ends — a
+rival's Grand Castle, a rival's conquest of the rest of the map, none of it
+touches you. Prosperous AI nations still race to raise their own Grand Castle
+(you'll be warned when construction starts, purely as news), and conquerors
+can still swallow the rest of the map if nobody stops them — AI nations fight,
+bridge rivers to reach each other, and eliminate one another, so the continent
+you face in the late game may not be the one you started on. But it's only
+*your* Town Hall that can end your run.
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
 while it's up. From there: Diplomacy, Select Army (grabs your whole standing
