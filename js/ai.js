@@ -184,14 +184,15 @@ function aiBuildWishesScored(f, counts) {
   return scored.slice(0, 3);
 }
 
-// Prosperity nations race for the Grand Castle — and win the game if it stands.
+// Prosperity nations race for the Grand Castle as a prestige monument — it does
+// not end the game, for them or for the player.
 function aiPursueGrand(f) {
   const n = f.nation;
   const c = f.buildings.find(b => b.type.key === 'castle' && b.done && b.hp > 0 && !b.grand && b.grandProgress === 0);
   if (!c || n.pop < 50 || n.happiness < 70 || !n.canAfford(GRAND_CASTLE_COST)) return;
   n.pay(GRAND_CASTLE_COST);
   c.grandProgress = 0.01;
-  game.log(`${f.name} has begun raising a GRAND CASTLE — a bid to eclipse every other nation!`, 'bad');
+  game.log(`${f.name} has begun raising a GRAND CASTLE — a monument to eclipse every other nation!`, 'bad');
 }
 
 // ---------- per-tick strategy ----------

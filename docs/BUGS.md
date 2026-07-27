@@ -127,6 +127,16 @@ heuristic.
 - **Day/night indicator is an emoji** — `☀`/`🌙` in the topbar, the only glyphs
   left outside the `icons16x16.png` sprite sheet, because the sheet has no
   sun or moon. Renders differently per platform.
+- **There is no way to win** — a 2026-07 design change. Prosperity (Grand
+  Castle), Conquest (all rivals eliminated) and Diplomatic (every survivor
+  allied) victories were removed from `Game.checkDefeat` (formerly
+  `checkVictory`); the only end state left is the player's own Town Hall
+  falling. The Grand Castle upgrade is unchanged mechanically — AI nations
+  with `pursuesGrand` still race for one, the player can still build one — it
+  is now a prestige monument with no effect on whether the game continues,
+  for either side. Everything downstream of "a won game can be continued" went
+  with it: `Game.resume`, `wonText`, `endless`, `claimed`, and the *Keep
+  playing* button.
 
 ## Fixed
 

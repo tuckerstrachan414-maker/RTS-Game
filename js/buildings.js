@@ -75,7 +75,7 @@ const BUILDING_TYPES = {
   castle: {
     key: 'castle', name: 'Castle', art: null, size: 2,
     cost: { wood: 40, stone: 60 }, hp: 600, buildTime: 16, slots: 0, solid: true,
-    desc: 'Trains your army and envoys. Upgrade to Grand Castle for prosperity victory.',
+    desc: 'Trains your army and envoys. Upgrade to a Grand Castle — a monument to your prosperity.',
   },
   wall: {
     key: 'wall', name: 'Wall', art: AT.WALL, size: 1,
@@ -97,8 +97,9 @@ const BUILDING_TYPES = {
 
 const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
 
-// Grand Castle: the prosperity endgame. Any nation (player or AI) that completes
-// one wins the game. Requirements checked at start: 50 pop, 70% happiness.
+// Grand Castle: a prestige monument, not a win condition — the game does not end.
+// Any nation (player or AI) can raise one once it clears the gate below.
+// Requirements checked at start: 50 pop, 70% happiness.
 const GRAND_CASTLE_COST = { gold: 300, wood: 200, stone: 200 };
 
 // Castle upgrade tiers: each unlocks new troops at every castle of that nation.

@@ -195,8 +195,10 @@ a lock icon and unlock hint. The AI buys upgrades under threat/doctrine/
 population triggers (conquest and prosperity upgrade eagerly) and filters its
 training pool by tier. Data-driven — a tier 4 needs only data entries. The
 separate Grand Castle upgrade (`GRAND_CASTLE_COST` in `js/buildings.js`:
-300g/200w/200s, 50 pop + 70% happiness gates) is the prosperity victory
-condition — for the player and for prosperity-doctrine AI nations alike.
+300g/200w/200s, 50 pop + 70% happiness gates) is a prestige monument, not a win
+condition — prosperity-doctrine AI nations race for one same as before, but
+completing it (yours or a rival's) has no effect on whether the game continues.
+See "Defeat" below.
 
 ## Diplomacy — Deep
 
@@ -336,28 +338,28 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 `ultimatums`, `consolidation`, `coalitions`, `armyMul`, `playerGrace`,
 `provokedOnly`.
 
-## Victory & defeat — Moderate
+## Defeat — Moderate
 
-`js/main.js`. Three win paths — Prosperity (Grand Castle), Conquest (all rival
-Town Halls destroyed), Diplomatic (every survivor allied, after 60s) — and
-defeat on losing your Town Hall **or when a rival completes its own Grand
-Castle** (prosperity doctrine AIs pursue it; construction start is announced).
-**A win can be played on**: the end screen offers *Keep playing* beside *Play
-again*, which unfreezes the sim exactly where it stopped (`Game.resume`) and
-sets `endless`. Each victory is banked in `Game.claimed` and fires only once, so
-the condition you just met can't re-trigger next tick while the *other* win
-paths stay live — conquer the map after a Prosperity win and Conquest Victory
-still fires. In an endless game a rival's Grand Castle is logged as news instead
-of ending the run (you already have your crown), but losing your own Town Hall
-still ends it; defeat never offers *Keep playing*.
-Elimination kills a faction's units and cancels its routes, but its buildings
-are **annexed** by whoever felled the Town Hall (`conqueredBy` →
-`annexBuildings`) rather than erased — so taking a rival's mining town is worth
-more than burning it, and the map consolidates into real empires. Every survivor
-rethinks its ambition; on paced difficulties the victor
-rests (consolidation) before its next war, and the map can consolidate without
-the player — you might face one giant empire late. No score screen or stats
-beyond lifetime trade gold.
+`js/main.js` (`Game.checkDefeat`/`Game.end`). **There is no way to win.**
+Rival nations can be conquered, eliminate each other, race a Grand Castle, or
+end up allied with every survivor — none of it ends the game, for the player
+or for them. The only end state is the player's own Town Hall falling
+(`Your Town Hall lies in ruins. The nation is lost.`), which freezes the sim
+and shows the end screen (skull icon, "Defeat", *Play again*). There is no
+"keep playing" — defeat is the only way to arrive at the end screen, so there
+is nothing to play on past.
+
+Elimination (any nation's, not just the player's) still kills the faction's
+units and cancels its trade routes, and its buildings are **annexed** by
+whoever felled its Town Hall (`conqueredBy` → `annexBuildings`) rather than
+erased — so taking a rival's mining town is worth more than burning it, and the
+map consolidates into real empires either way. Every survivor rethinks its
+ambition on any nation's fall; on paced difficulties the victor rests
+(consolidation) before its next war. The map keeps consolidating with or
+without the player watching — an unwatched corner of the continent can end up
+one giant empire, or the player can outlast every rival and simply keep ruling
+alone; neither stops the sim. No score screen or stats beyond lifetime trade
+gold.
 
 ## Desktop UI/HUD — Deep
 
