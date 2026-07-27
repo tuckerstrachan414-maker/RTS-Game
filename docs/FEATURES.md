@@ -418,3 +418,27 @@ animation table detection by scanning sheet rows for non-empty frames
 replacing emoji throughout the HUD. Gaps: bandits reuse the horseman sprite
 (distinguished only by behavior), farms/walls are procedurally drawn rather
 than sprite art.
+
+**Tileset is a spliced composite, not a single source.** `assets/tileset16x16_1.png`
+is still one 8×14-cell, 16px-grid PNG at the same coordinates `AT` has always
+pointed at — but a 2026-07 pass overwrote specific cells in place with art from
+the **PUNY_WORLD_v1** pack (a separate 27-column Tiled tileset supplied as a
+reference sheet, never loaded at runtime itself): `AT.TREES` (all 3), `AT.SAPLING`,
+`AT.ROCKS` (all 5, currently a single boulder tile repeated — the pack had only
+one clean standalone rock icon), `AT.CAVE` (now a wood-framed mine-shaft
+opening), `AT.WELL`, and both pair-slots of `AT.TOWNHALL`/`AT.HOUSE`/`AT.MARKET`
+(a log-cabin set; player and AI pre-recolor art are now identical tiles — same
+as every non-pair building already worked, see below). Because every replaced
+building tile's dominant hue sampled into the existing warm recolor band
+(`recolor(tileset, hue, 'warm')`, [8°,42°]), per-faction roof recoloring still
+works unmodified. Deliberately **left untouched**: water (the full 9-slice +
+strip autotile set), Wall/Gate/rampart art (`bakeRamparts` hardcodes pixel
+offsets against the original wall sprite's geometry — swapping it needs a
+rework, not a splice), Bridge (`bakeTile`'s seamless mid-tile replication is
+similarly geometry-specific), Castle, Church, Quarry, Mine, Lumber Camp/
+Storehouse, and base grass/crop tiles (shared coordinates with `CROP_VARS`,
+and swapping the grass hue risks a visible seam against water art's baked-in
+shoreline-over-grass blend). No code changed — `js/assets.js`, `js/ui.js`, and
+`js/buildings.js` are untouched; this was purely `assets/tileset16x16_1.png`
+pixels at existing `AT` coordinates. A backup of the pre-splice original is not
+kept in-repo (recoverable via git history).
