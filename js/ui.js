@@ -714,7 +714,7 @@ class UI {
       html += '<div>' + Object.entries(byType).map(([n, c]) => `${c}× ${n}`).join(', ') + '</div>';
       if (own.length) {
         html += `<div style="margin-top:8px">`
-          + `<button id="copy-buildings" title="Copy these buildings — pan the map and click Paste to place a copy">📋 Copy</button> `
+          + `<button id="copy-buildings" title="Copy these buildings — pan the map and click Paste to place a copy">Copy</button> `
           + `<button id="delete-buildings" title="Tear these down and reclaim 75% of each one's cost">Delete All</button>`
           + `</div>`;
       }
@@ -776,7 +776,7 @@ class UI {
         const refund = Object.entries(b.type.cost || {}).filter(([, v]) => v > 0)
           .map(([r, v]) => `${icon(r)}${Math.ceil(v * 0.75)}`).join(' ');
         html += `<div style="margin-top:8px">`
-          + `<button id="copy-buildings" title="Copy this building — pan the map and click Paste to place a copy">📋 Copy</button> `
+          + `<button id="copy-buildings" title="Copy this building — pan the map and click Paste to place a copy">Copy</button> `
           + `<button id="demolish" title="Tear this down and reclaim 75% of its cost">Demolish${refund ? ` (+ ${refund})` : ''}</button>`
           + `</div>`;
       }

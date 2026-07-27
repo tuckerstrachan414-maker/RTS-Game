@@ -476,7 +476,8 @@ Note the church is baked from the *untouched* atlas and tinted afterwards:
 `strip` matches exact hexes, and on the recoloured faction sheet the caps'
 pinks have already moved. Gaps: bandits reuse the horseman sprite
 (distinguished only by behavior); the day/night indicator in the topbar is
-still an emoji glyph (no sun/moon in `icons16x16.png`); multi-tile buildings
+still an emoji glyph (no sun/moon in `icons16x16.png`) — the last one, now that
+the Copy/Paste buttons have dropped their clipboard; multi-tile buildings
 scale one 16×16 cell up to their footprint, so a 2×2 Castle has visibly
 chunkier pixels than a 1×1 House.
 
