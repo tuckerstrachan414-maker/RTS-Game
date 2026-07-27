@@ -224,8 +224,8 @@ function estimateIncome(f, res) {
 
 // Read-only twin of the tree search in buildingProduction (js/buildings.js).
 function lumberHasForest(map, b) {
-  for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
+  for (let dy = -LUMBER_RADIUS; dy <= LUMBER_RADIUS; dy++) {
+    for (let dx = -LUMBER_RADIUS; dx <= LUMBER_RADIUS; dx++) {
       const tx = b.x + dx, ty = b.y + dy;
       if (map.t(tx, ty) === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) return true;
     }

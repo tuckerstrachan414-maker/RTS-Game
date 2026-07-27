@@ -80,6 +80,7 @@ class GameMap {
     this.high = new Uint8Array(MAP_W * MAP_H);            // 1 = walkable plateau top (see T_CLIFF)
     this.rampDir = new Uint8Array(MAP_W * MAP_H).fill(255); // index into RAMP_DIRS for T_RAMP tiles
     this.bridge = new Uint8Array(MAP_W * MAP_H);          // 1=horizontal 2=vertical
+    this.bridgeAt = new Array(MAP_W * MAP_H).fill(null);  // Building ref per bridge tile (bridges aren't in buildingAt)
     this.road = new Uint8Array(MAP_W * MAP_H);            // trade-route path marker
     this.buildingAt = new Array(MAP_W * MAP_H).fill(null);
     this.treeWood = new Float32Array(MAP_W * MAP_H);      // remaining wood in tree tiles
@@ -736,6 +737,13 @@ function findPath(map, sx, sy, tx, ty, faction, maxIter = 6000) {
       const nx = x + dx, ny = y + dy;
       const isGoal = nx === tx && ny === ty;
       if (!map.inBounds(nx, ny)) continue;
+      // A bridge only runs one way: a horizontal span (orient 1) can only be
+      // entered moving east/west, a vertical one (orient 2) only north/south.
+      // Two bridges are never allowed to physically join (see canPlace), but
+      // this is what actually stops a unit from turning off one span onto a
+      // perpendicular one if they ever end up touching regardless.
+      const brOrient = map.bridge[map.idx(nx, ny)];
+      if (brOrient && ((brOrient === 1 && dy !== 0) || (brOrient === 2 && dx !== 0))) continue;
       if (!isGoal && !map.passable(nx, ny, faction)) continue;
       if (isGoal && !map.passable(nx, ny, faction)) {
         // allow ending adjacent to an impassable goal (attack/harvest target)

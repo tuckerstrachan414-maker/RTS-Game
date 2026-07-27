@@ -312,8 +312,19 @@ function dropLoot(b) {
 function onBuildingDestroyed(b, attacker) {
   // razing a storehouse scatters its goods on the ground to be carried off
   if (b.type.storage) dropLoot(b);
-  removeBuilding(game, b);
-  if (b.faction === 0) game.log(`Your ${b.type.name} was destroyed!`, 'bad');
+  if (b.type.key === 'bridge') {
+    // a single tile going down brings the whole straight span with it
+    collapseBridgeSpan(game, b);
+    if (b.faction === 0) game.log('Your bridge collapses into the water!', 'bad');
+    else {
+      const relevant = game.diplomacy.hostile(0, b.faction)
+        || game.factions[0].units.some(u => u.alive && Math.hypot(u.x - b.cx, u.y - b.cy) < 20);
+      if (relevant) game.log(`${game.factions[b.faction].name}'s bridge collapses into the water!`, 'good');
+    }
+  } else {
+    removeBuilding(game, b);
+    if (b.faction === 0) game.log(`Your ${b.type.name} was destroyed!`, 'bad');
+  }
   if (attacker) {
     game.diplomacy.addRel(b.faction, attacker.faction, -8);
     game.diplomacy.lastBlood[b.faction][attacker.faction] = game.time;

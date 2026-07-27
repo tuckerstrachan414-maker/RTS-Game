@@ -763,28 +763,49 @@ function aiReachInfo(f, o) {
   return { reachable: false, crossing: aiFindCrossing(end, [bx, by]) };
 }
 
-// L-shaped survey from the closest reachable shore toward the target: collect
-// the water tiles to bridge (orient 1 = horizontal leg, 2 = vertical leg).
+// Bridges run straight and never bend or meet at a junction (see canPlace),
+// so the only legal crossing shape is a single-axis run. Sweep rows near the
+// shore looking for a horizontal span first, then columns for a vertical one,
+// and keep whichever candidate sits closest to the reachable shore point.
 function aiFindCrossing(from, to) {
-  const survey = legs => {
-    const tiles = [];
-    for (const [x0, y0, x1, y1, orient] of legs) {
-      const sx = Math.sign(x1 - x0), sy = Math.sign(y1 - y0);
-      let x = x0, y = y0;
-      while (x !== x1 || y !== y1) {
-        x += sx; y += sy;
-        if (!game.map.inBounds(x, y)) return null;
-        const i = game.map.idx(x, y);
-        if (game.map.terrain[i] === T_WATER && !game.map.bridge[i]) {
-          tiles.push([x, y, orient]);
-          if (tiles.length > 16) return null;   // too wide to bridge
+  return straightCrossingSearch(1, from, to) || straightCrossingSearch(2, from, to);
+}
+
+function straightCrossingSearch(orient, from, to) {
+  const maxWidth = 16, band = 20;
+  const fp = orient === 1 ? from[1] : from[0];        // shore's row/column
+  const fs = orient === 1 ? from[0] : from[1];
+  const secLo = Math.min(from[orient === 1 ? 0 : 1], to[orient === 1 ? 0 : 1]) - 2;
+  const secHi = Math.max(from[orient === 1 ? 0 : 1], to[orient === 1 ? 0 : 1]) + 2;
+  let best = null;
+  for (let p = fp - band; p <= fp + band; p++) {
+    let runStart = -1;
+    for (let s = secLo; s <= secHi + 1; s++) {
+      const [x, y] = orient === 1 ? [s, p] : [p, s];
+      const inWater = game.map.inBounds(x, y) && game.map.terrain[game.map.idx(x, y)] === T_WATER
+        && !game.map.bridge[game.map.idx(x, y)];
+      if (inWater) { if (runStart < 0) runStart = s; continue; }
+      if (runStart >= 0) {
+        const runEnd = s - 1, width = runEnd - runStart + 1;
+        if (width > 0 && width <= maxWidth) {
+          const [lx, ly] = orient === 1 ? [runStart - 1, p] : [p, runStart - 1];
+          const [rx, ry] = orient === 1 ? [runEnd + 1, p] : [p, runEnd + 1];
+          const leftOpen = game.map.inBounds(lx, ly) && game.map.terrain[game.map.idx(lx, ly)] !== T_WATER;
+          const rightOpen = game.map.inBounds(rx, ry) && game.map.terrain[game.map.idx(rx, ry)] !== T_WATER;
+          if (leftOpen && rightOpen) {
+            const dist = Math.abs(p - fp) + Math.min(Math.abs(runStart - fs), Math.abs(runEnd - fs));
+            if (!best || dist < best.dist) {
+              const tiles = [];
+              for (let k = runStart; k <= runEnd; k++) tiles.push(orient === 1 ? [k, p, orient] : [p, k, orient]);
+              best = { dist, tiles };
+            }
+          }
         }
+        runStart = -1;
       }
     }
-    return tiles.length ? tiles : null;
-  };
-  return survey([[from[0], from[1], to[0], from[1], 1], [to[0], from[1], to[0], to[1], 2]])
-      || survey([[from[0], from[1], from[0], to[1], 2], [from[0], to[1], to[0], to[1], 1]]);
+  }
+  return best ? best.tiles : null;
 }
 
 // Lay one affordable bridge segment per AI tick from the surveyed plan.
@@ -795,7 +816,7 @@ function aiBuildBridges(f) {
   const [x, y, orient] = bp.tiles[bp.i];
   const i = game.map.idx(x, y);
   if (game.map.bridge[i] || game.map.terrain[i] !== T_WATER
-      || !canPlace(game.map, 'bridge', x, y, f.id)) { bp.i++; return; }
+      || !canPlace(game.map, 'bridge', x, y, f.id, orient)) { bp.i++; return; }
   if (!f.nation.canAfford(BUILDING_TYPES.bridge.cost)) return;   // wait for wood
   f.nation.pay(BUILDING_TYPES.bridge.cost);
   placeBuilding(game, 'bridge', x, y, f.id, orient);
