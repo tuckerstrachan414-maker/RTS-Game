@@ -7,6 +7,10 @@
 // flat: the building's art lies on the ground (crop fields), so it is painted with the
 //      terrain rather than in the depth-sorted pass (js/ui.js).
 // size: tiles per side (art is scaled up for larger buildings).
+// How far (in tiles, each direction — a 51×51 square) a Lumber Camp's workers
+// will range to find a tree to chop. Shared with economy.js's estimateIncome,
+// which re-implements this search read-only — keep both in sync (see BUGS #6).
+const LUMBER_RADIUS = 25;
 const BUILDING_TYPES = {
   townhall: {
     key: 'townhall', name: 'Town Hall', art: AT.TOWNHALL, pair: true, size: 2,
@@ -92,6 +96,7 @@ const BUILDING_TYPES = {
     cost: { wood: 20 }, hp: 120, buildTime: 5, slots: 0, line: true,
     desc: 'Cross rivers and lakes. Drag to lay a span; press R (or the rotate button) to turn it.',
     waterOnly: true,
+    reqText: "must be open water, and can't touch a bridge running the other way",
   },
 };
 
@@ -141,7 +146,9 @@ class Building {
   }
 }
 
-function canPlace(map, typeKey, x, y, factionId) {
+// orient (bridges only): 1 = horizontal, 2 = vertical — checked against
+// neighboring bridge tiles below so two spans can never physically join.
+function canPlace(map, typeKey, x, y, factionId, orient = 1) {
   const type = BUILDING_TYPES[typeKey];
   for (let dy = 0; dy < type.size; dy++) {
     for (let dx = 0; dx < type.size; dx++) {
@@ -155,6 +162,16 @@ function canPlace(map, typeKey, x, y, factionId) {
       // forest and rock are buildable, same as they're now walkable (js/map.js).
       // Caves stay off-limits; they're a resource mouth, not ground to build on.
       else if (t !== T_GRASS && t !== T_TREE && t !== T_ROCK) return false;
+      // Bridges run straight, one axis at a time, and never meet at a junction:
+      // a tile touching a perpendicular span (or ending flush against one) is refused.
+      if (type.key === 'bridge') {
+        for (const [ndx, ndy] of ORTH) {
+          const nx = tx + ndx, ny = ty + ndy;
+          if (!map.inBounds(nx, ny)) continue;
+          const nOrient = map.bridge[map.idx(nx, ny)];
+          if (nOrient && nOrient !== orient) return false;
+        }
+      }
     }
   }
   if (type.placeReq && !type.placeReq(map, x, y)) return false;
@@ -166,7 +183,7 @@ function placeBuilding(game, typeKey, x, y, factionId, orient = 1) {
   const b = new Building(typeKey, factionId, x, y);
   for (const [tx, ty] of b.footprint()) {
     const i = game.map.idx(tx, ty);
-    if (b.type.key === 'bridge') game.map.bridge[i] = orient;
+    if (b.type.key === 'bridge') { game.map.bridge[i] = orient; game.map.bridgeAt[i] = b; }
     else {
       game.map.buildingAt[i] = b;
       // A footprint claims the ground outright: any tree or rock under it is
@@ -187,12 +204,37 @@ function placeBuilding(game, typeKey, x, y, factionId, orient = 1) {
 function removeBuilding(game, b) {
   for (const [tx, ty] of b.footprint()) {
     const i = game.map.idx(tx, ty);
-    if (b.type.key === 'bridge') { if (game.map.bridge[i]) game.map.bridge[i] = 0; }
+    if (b.type.key === 'bridge') {
+      if (game.map.bridge[i]) game.map.bridge[i] = 0;
+      if (game.map.bridgeAt[i] === b) game.map.bridgeAt[i] = null;
+    }
     else if (game.map.buildingAt[i] === b) game.map.buildingAt[i] = null;
   }
   const arr = game.factions[b.faction].buildings;
   const at = arr.indexOf(b);
   if (at >= 0) arr.splice(at, 1);
+}
+
+// A bridge is one Building per tile, but a span reads as a single crossing:
+// knock out any tile along it and the whole straight run comes down, not just
+// that one square. Walked along the tile's own orientation only, since two
+// spans can never physically join (see canPlace).
+function collapseBridgeSpan(game, b) {
+  const map = game.map;
+  const orient = map.bridge[map.idx(b.x, b.y)];
+  if (!orient) return;
+  const [dx, dy] = orient === 1 ? [1, 0] : [0, 1];
+  const span = [b];
+  for (const [sx, sy] of [[dx, dy], [-dx, -dy]]) {
+    let x = b.x + sx, y = b.y + sy;
+    while (map.inBounds(x, y) && map.bridge[map.idx(x, y)] === orient) {
+      const nb = map.bridgeAt[map.idx(x, y)];
+      if (nb) span.push(nb);
+      x += sx; y += sy;
+    }
+  }
+  for (const seg of span) removeBuilding(game, seg);
+  return span.length;
 }
 
 // Fraction of max HP a building is left with when it changes hands.
@@ -264,10 +306,11 @@ function buildingProduction(map, b, dt) {
     rate *= bonus;
   }
   if (type.key === 'lumber') {
-    // consume wood from nearby tree tiles; camp idles if forest exhausted
+    // consume wood from tree tiles anywhere in a 25-tile square; camp idles
+    // once every tree in that whole reach is exhausted
     let tree = null;
-    outer: for (let dy = -2; dy <= 2; dy++)
-      for (let dx = -2; dx <= 2; dx++) {
+    outer: for (let dy = -LUMBER_RADIUS; dy <= LUMBER_RADIUS; dy++)
+      for (let dx = -LUMBER_RADIUS; dx <= LUMBER_RADIUS; dx++) {
         const tx = b.x + dx, ty = b.y + dy;
         if (map.t(tx, ty) === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) { tree = map.idx(tx, ty); break outer; }
       }

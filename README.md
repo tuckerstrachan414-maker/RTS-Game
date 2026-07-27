@@ -56,7 +56,7 @@ rather than snapping. The top bar shows the day count and whether it's day
 | Resource | Comes from | Via |
 |---|---|---|
 | 🍞 Food | crop fields (bonus next to water/wells) | Farm workers |
-| 🪵 Wood | tree tiles (they deplete!) | Lumber Camp workers |
+| 🪵 Wood | tree tiles within 25 tiles of the camp (they deplete!) | Lumber Camp workers |
 | 🪨 Stone | rock tiles | Quarry workers |
 | 🪙 Gold | cave tiles, taxes, trade, plunder | Gold Mine, Market |
 
@@ -99,6 +99,13 @@ troops push through both — but the going is slow: roughly 2.4× as long to
 cross a forest tile and 1.9× a rocky one. Roads still speed you up. Only deep
 water without a bridge, cave mouths, cliffs, walls and keeps stop a unit
 outright.
+
+**Bridges run straight, and they can be brought down.** A span only ever goes
+horizontal or vertical, never both — two bridges can't touch or join at a
+corner, and troops crossing one can't turn onto a perpendicular span partway
+across. Attack either end of an enemy bridge and the whole crossing collapses
+into the water at once, not just the tile you hit; a damaged span shows the
+same green health bar as any other building so you can see it about to give.
 
 **Take the high ground.** Every map raises a few plateaus — flat-topped mesas
 ringed by a rock face no one can climb, bridge, or cut through. The only ways up

@@ -20,7 +20,14 @@ guaranteed trees/rocks/a cave within reach. Water autotiling picks from a
 9-slice + strip set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
 iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
 onto trade roads; per-faction passability (gates open for owner + allies,
-walls/keeps solid, other buildings walkable). **Forest and rock are rough
+walls/keeps solid, other buildings walkable). **A bridge tile only admits
+movement along its own axis** — `findPath` refuses to enter a horizontal
+(orient 1) span except moving east/west, and a vertical (orient 2) one except
+north/south — so a unit can never turn from one span onto a perpendicular one,
+even where two independently-built bridges happen to touch. `canPlace`
+(`js/buildings.js`) backs this up at build time: a bridge tile that would sit
+next to a differently-oriented bridge tile is refused outright, so two spans
+can never physically join into a junction in the first place. **Forest and rock are rough
 ground, not walls**: troops push through both, at `TREE_MOVE_COST` 2.4× / 
 `ROCK_MOVE_COST` 1.9× the time (`map.moveCost`, which divides unit speed in
 `followPath` and multiplies the A* step cost), so the pathfinder skirts a wood
@@ -149,10 +156,13 @@ or spillable as loot. This underpins the entire raiding design.
 
 `js/buildings.js`. 13 types: Town Hall, Storehouse, House, Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
-tiles; idles when forest exhausted), Quarry, Gold Mine (needs a cave), Market,
+tiles anywhere in a 25-tile square — up/down/left/right — around it; idles only
+once that whole reach is exhausted), Quarry, Gold Mine (needs a cave), Market,
 Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
 rendered as one connected structure in both axes — see the renderer entry),
-Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile).
+Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile;
+straight runs only — a horizontal and a vertical bridge can never touch or
+join, see Map & terrain and Units & combat).
 Placement validation with per-type requirements, construction time, HP/damage,
 demolish with 75% refund (except Town Hall). **Any non-water building can be
 placed on forest or rock** — the footprint clears it, same as cutting a track
@@ -190,9 +200,13 @@ desktop. And **capture**
 buildings and bridges change hands with their stored goods intact, at 40% HP,
 unstaffed and with queues cleared, while walls, gates and the fallen Town Hall
 come down. AI nations now build walls/gates
-(turtle doctrine rings) and bridges (war-route engineering) too. Gaps: no
-building upgrades outside the Castle, no repair, bridges can't be removed once
-placed (see BUGS), and pasted layouts don't rotate/mirror.
+(turtle doctrine rings) and bridges — always a straight single-axis span now,
+never the old L-shaped dogleg, since a bend would touch two orientations at
+the corner and `canPlace` would refuse it (`aiFindCrossing`/
+`straightCrossingSearch`, `js/ai.js`) — for war-route engineering too. Gaps: no
+building upgrades outside the Castle, no repair, and pasted layouts don't
+rotate/mirror (a copied bridge always pastes horizontal, regardless of the
+orientation it was copied from — see BUGS).
 
 ## Market & commodity trading — Deep
 
@@ -238,6 +252,19 @@ Shieldman's armor at 2) and Cavalier (shock cavalry, promoted down from tier
 within 5 tiles, fight-back when hit, periodic repathing toward moving targets,
 building attack/destruction. Training consumes a citizen (requires 2 free) and
 runs through a per-castle queue with rally points.
+
+**Bridges are destructible, and one hit takes the whole span.** A bridge is
+never picked up by passive auto-acquire (`findEnemyNear` explicitly skips
+`type.key === 'bridge'`, same as territory scoring and AI perception) — the
+only way to hit one is a deliberate right-click attack order, which now
+resolves against `map.bridgeAt` as well as `map.buildingAt` (`UI.rightClick`,
+`js/ui.js`). Each tile of a span is its own `Building` with its own HP, but
+knocking any one tile's HP to 0 collapses every tile of the straight run it
+belongs to (`collapseBridgeSpan`, `js/buildings.js`) — a unit standing on
+either bank, within range of the nearest end tile, brings the whole crossing
+down without ever having to fight its way onto the water. A damaged-but-not-
+yet-destroyed span shows the ordinary green HP bar over the tile under
+attack (`render`, `js/ui.js`), same as any other building.
 
 Note that armor is what gives the three damage types their teeth — magic
 ignores it, melee and pierce do not — so the Halberdier carrying armor is

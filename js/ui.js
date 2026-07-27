@@ -455,7 +455,7 @@ class UI {
       }
     }
     if (!target) {
-      const b = game.map.buildingAt[game.map.idx(tx, ty)];
+      const b = game.map.buildingAt[game.map.idx(tx, ty)] || game.map.bridgeAt[game.map.idx(tx, ty)];
       if (b && game.diplomacy.hostile(0, b.faction)) target = b;
       else if (b && b.faction !== 0 && !game.diplomacy.hostile(0, b.faction)) {
         game.log(`You are not at war with ${game.factions[b.faction].name}. Declare war first (Diplomacy).`);
@@ -486,13 +486,14 @@ class UI {
     const type = BUILDING_TYPES[key];
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
     const nation = game.factions[0].nation;
-    if (!canPlace(game.map, key, tx, ty, 0)) {
+    const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
+    if (!canPlace(game.map, key, tx, ty, 0, orient)) {
       game.log(`Cannot build here${type.reqText ? ' — ' + type.reqText : ''}.`, 'bad');
       return;
     }
     if (!nation.canAfford(type.cost)) { game.log('Not enough resources.', 'bad'); return; }
     nation.pay(type.cost);
-    placeBuilding(game, key, tx, ty, 0, this.placeVertical ? 2 : 1);
+    placeBuilding(game, key, tx, ty, 0, orient);
     if (!this.keys['shift']) this.placing = null;
   }
 
@@ -541,11 +542,11 @@ class UI {
       const key = this.placing;
       const type = BUILDING_TYPES[key];
       const nation = game.factions[0].nation;
+      const orient = key === 'bridge' ? (this.paint.horizontal ? 1 : 2) : 1;
       for (const [x, y] of this.paint.line) {
-        if (!canPlace(game.map, key, x, y, 0)) continue;
+        if (!canPlace(game.map, key, x, y, 0, orient)) continue;
         if (!nation.canAfford(type.cost)) break;
         nation.pay(type.cost);
-        const orient = key === 'bridge' ? (this.paint.horizontal ? 1 : 2) : 1;
         placeBuilding(game, key, x, y, 0, orient);
       }
     }
@@ -1408,6 +1409,14 @@ class UI {
           this.tile(map.waterTile(x, y), x, y);
           if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
           else if (map.bridge[i]) this.tile(AT.BRIDGE_H, x, y);
+          // damaged span, one tile from collapse: show it same as any other building
+          if (map.bridge[i]) {
+            const br = map.bridgeAt[i];
+            if (br && br.hp < br.type.hp) {
+              const [bsx, bsy] = this.worldToScreen(x, y);
+              this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.type.hp), '#5c5');
+            }
+          }
         } else if (t === T_TREE) {
           // canopy is drawn in the depth pass below so it can overlap neighbours
           if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
@@ -1955,8 +1964,9 @@ class UI {
     const nation = game.factions[0].nation;
     if (this.paint) {
       const spent = {};
+      const orient = key === 'bridge' ? (this.paint.horizontal ? 1 : 2) : 1;
       for (const [x, y] of this.paint.line) {
-        const placeable = canPlace(game.map, key, x, y, 0);
+        const placeable = canPlace(game.map, key, x, y, 0, orient);
         let afford = true;
         for (const [r, v] of Object.entries(type.cost || {})) {
           spent[r] = (spent[r] || 0) + v;
@@ -1967,7 +1977,8 @@ class UI {
       return;
     }
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
-    const ok = canPlace(game.map, key, tx, ty, 0) && nation.canAfford(type.cost);
+    const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
+    const ok = canPlace(game.map, key, tx, ty, 0, orient) && nation.canAfford(type.cost);
     this.drawGhostTile(key, tx, ty, ok, this.placeVertical);
   }
 

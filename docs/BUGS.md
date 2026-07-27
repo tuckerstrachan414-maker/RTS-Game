@@ -97,6 +97,18 @@ card up more or less permanently if the player never answers. Mostly cosmetic;
 expiry consequences (relations drops) do apply.
 **Plan:** TBD
 
+### 33. Pasting a copied bridge always lays it horizontal
+`js/ui.js:672` — `copySelected` records only `{key, dx, dy}` per building, so a
+copied bridge's orientation (`map.bridge[i]`, 1 or 2) is thrown away.
+`pasteBuffer` (`js/ui.js:690`) then calls `placeBuilding` with no `orient`
+argument, which defaults to 1 (horizontal) regardless of what was copied.
+Pasting a copied vertical span silently lays a horizontal one instead — and,
+since bridges can no longer touch a perpendicular span (`canPlace`), that
+wrong-orientation tile can now also fail to place at all next to the rest of
+a vertical run it was meant to extend, where before this change it would
+merely have looked wrong.
+**Plan:** TBD
+
 ### 28. The Archer's attack animation is the wrong row on its sheet
 `describeSheet` (`js/assets.js`) picks `attack` as `rows - 3`, which is right
 for the 6-row sheets (Swordsman, Spearman, Halberdier, Prince) and lands on a
