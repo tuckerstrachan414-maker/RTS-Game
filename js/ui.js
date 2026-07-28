@@ -1408,7 +1408,7 @@ class UI {
         } else if (t === T_WATER) {
           this.tile(map.waterTile(x, y), x, y);
           if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
-          else if (map.bridge[i]) this.tile(AT.BRIDGE_H, x, y);
+          else if (map.bridge[i]) this.drawTileCanvas(Assets.bridgeH, x, y);
           // damaged span, one tile from collapse: show it same as any other building
           if (map.bridge[i]) {
             const br = map.bridgeAt[i];
@@ -1663,10 +1663,12 @@ class UI {
 
   // One building's sprite at a screen rect. Prefers the composited art baked at load
   // time (`bakeBuildings`, js/assets.js) and falls back to the faction's tileset for
-  // the types whose atlas cell was already right.
+  // the types whose atlas cell was already right. A baked canvas is read at its own
+  // size, not assumed to be 16x16: the Town Hall's is 32x32, so a 2x2 building can be
+  // 2x2 tiles of actual art rather than one cell blown up.
   buildingSprite(key, faction, dx, dy, size) {
     const baked = Assets.buildingArt[faction][key];
-    if (baked) { this.ctx.drawImage(baked, 0, 0, TILE, TILE, dx, dy, size, size); return; }
+    if (baked) { this.ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy, size, size); return; }
     const type = BUILDING_TYPES[key];
     let art = type.art;
     if (type.pair) art = faction === 0 ? art[1] : art[0];
@@ -1939,7 +1941,7 @@ class UI {
       this.drawTileCanvas(Assets.rampart[0].gateH, tx, ty);
     } else if (key === 'bridge') {
       if (vertical) this.drawTileCanvas(Assets.bridgeVmid, tx, ty);
-      else this.tile(AT.BRIDGE_H, tx, ty);
+      else this.drawTileCanvas(Assets.bridgeH, tx, ty);
     } else {
       this.buildingSprite(key, 0, Math.floor(sx), Math.floor(sy), Math.ceil(s * type.size));
     }

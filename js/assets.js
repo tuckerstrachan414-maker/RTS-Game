@@ -19,12 +19,9 @@ const AT = {
   BRIDGE_H: [6, 4],
   BRIDGE_V: [7, 4],
   PATH_DOT: [7, 13],
-  // Rampart set. The art is a side elevation: WALL is a pillar (cols 4-11) with
-  // a parapet band running off its left edge (rows 3-11), WALL_V is that same
-  // wall seen end-on as a plain column (cols 5-10, full height — it is exactly
-  // the foot WALL_TOWER already trails downward), and GATE is a full-width
-  // parapet with an arch punched through it. All three share the same band rows,
-  // which is what lets `bakeRamparts` join them seamlessly.
+  // Rampart set. Superseded — walls, gates and the bridge now come out of the
+  // punyworld sheet (see PUNY below); these four cells are the old side-elevation
+  // art and are no longer drawn.
   WALL: [6, 2],
   WALL_V: [1, 3],
   WALL_TOWER: [7, 1],
@@ -79,11 +76,40 @@ const AT = {
 //  SAPLING     — there is no tree regrowth (see docs/BUGS.md, design quirks)
 //  POND_DECOR  — decorative pond, never placed by the generator
 //  WELL        — a green mound with a doorway, all but identical to CAVE; the Well
-//                is composited in `bakeBuildings` instead
-//  WALL_V      — a 6px column; `bakeRamparts` takes its vertical run off WALL_TOWER
+//                is a punyworld wellhead now (PUNY.WELL)
+//  WALL/WALL_V/WALL_TOWER/GATE, BRIDGE_H/BRIDGE_V, TOWNHALL, LUMBER, MINE
+//              — replaced wholesale by the punyworld set below
 // (the concave CLIFF_IN_* corners were once in this list, on the theory that 4-connected
 // rim membership made them unnecessary — that was wrong, and left visible holes wherever a
 // plateau's edge ran diagonally. They are all four drawn now; see `plateauTopTile`.)
+
+// Coordinates into `assets/punyworld-overworld-tileset.png` — a second sheet on the
+// same 16px grid, 27 cols x 65 rows (art only reaches row 37). It was already in the
+// repo as the reference the cliff set was spliced out of; it is loaded at runtime now
+// so the rampart, bridge and four building sprites can come straight off it instead of
+// being hand-composited pixel by pixel.
+//
+// The rampart pieces are all one cell of the pack's castle-wall set (rows 26-29), picked
+// so a run tiles with no seam: WALL_H is the full-width crenellated parapet (no end
+// pillars, so segment butts onto segment), WALL_V is the same wall seen end-on (a column
+// that repeats down), WALL_TOWER is the pillared bastion used at every corner/T/end, and
+// GATE is WALL_H's neighbour with a timber gate punched through the base. The vertical
+// gate is still composed — the pack never drew one — by dropping GATE's door block onto
+// WALL_V. BRIDGE is a plank deck that tiles in BOTH axes, so the east-west span is the
+// same cell turned a quarter turn rather than a second sprite that would never quite
+// match it at a corner.
+const PUNY = {
+  WALL_H: [19, 28],
+  WALL_V: [18, 27],
+  WALL_TOWER: [16, 26],
+  GATE: [18, 29],
+  GATE_DOOR: { sx: 4, sy: 12, w: 8, h: 4 },   // the door itself, for the vertical gate
+  BRIDGE: [10, 31],
+  TOWNHALL: [12, 28],   // 2x2: a tiered stone keep with turret roofs and an arch
+  LUMBER: [4, 27],      // log-walled cabin
+  MINE: [6, 26],        // mossy mound with a timber-framed adit
+  WELL: [4, 30],        // roofed wellhead
+};
 
 // Unit spritesheets. Rows: 0=idle, 1=walk, rows-3=attack, rows-2=hurt, rows-1=death.
 const UNIT_SHEETS = {
@@ -118,14 +144,16 @@ const Assets = {
   unitSheets: [],        // [factionIdx][unitKey] -> {canvas, rows, frames[row]}
   projectiles: null,
   rampart: [],           // [factionIdx] -> {wallH, wallV, tower, gateH, gateV}, see bakeRamparts
-  buildingArt: [],       // [factionIdx][typeKey] -> 16x16 canvas, see bakeBuildings
-  bridgeVmid: null,      // seamless vertical bridge (caps replaced by the plank middle)
+  buildingArt: [],       // [factionIdx][typeKey] -> canvas (16x16, or 32x32 for a 2x2), see bakeBuildings
+  bridgeVmid: null,      // north-south bridge deck (tiles seamlessly down a span)
+  bridgeH: null,         // the same deck turned a quarter turn, for an east-west span
   tilled: null,          // farm field under construction (bare furrows)
   crop: null,            // finished farm field (furrows in crop)
   loaded: false,
 
   async load() {
     const tileset = await loadImage('assets/tileset16x16_1.png');
+    const puny = await loadImage('assets/punyworld-overworld-tileset.png');
     this.projectiles = await loadImage('assets/units/HumansProjectiles.png');
     const rawUnits = {};
     for (const [key, file] of Object.entries(UNIT_SHEETS)) {
@@ -134,16 +162,22 @@ const Assets = {
     for (let f = 0; f < FACTION_COLORS.length; f++) {
       const { hue, roofHue } = FACTION_COLORS[f];
       this.factionTilesets[f] = roofHue === null ? tileset : recolor(tileset, roofHue, 'warm');
+      // The punyworld art takes the same warm recolor — its roofs, timber and planking
+      // all sit in the band. Its castle STONE does not (pale green, barely saturated),
+      // so the pieces cut out of it get an explicit `stoneHue` pass; see bakePuny.
+      const punySheet = roofHue === null ? toCanvas(puny) : recolor(puny, roofHue, 'warm');
       this.unitSheets[f] = {};
       for (const [key, img] of Object.entries(rawUnits)) {
         const canvas = hue === null ? toCanvas(img) : recolor(img, hue, 'cool');
         this.unitSheets[f][key] = describeSheet(canvas);
       }
-      this.rampart[f] = bakeRamparts(this.factionTilesets[f]);
-      this.buildingArt[f] = bakeBuildings(tileset, this.factionTilesets[f], roofHue);
+      this.rampart[f] = bakeRamparts(punySheet, roofHue);
+      this.buildingArt[f] = bakeBuildings(tileset, this.factionTilesets[f], roofHue, punySheet);
     }
     this.tileset = tileset;
-    this.bridgeVmid = bakeTile(tileset, AT.BRIDGE_V, { replicateMid: [1, 13] });
+    // Bridges are terrain, not a faction's building — baked off the plain sheet.
+    this.bridgeVmid = bakePuny(puny, PUNY.BRIDGE);
+    this.bridgeH = bakePuny(puny, PUNY.BRIDGE, { rotate: true });
     this.tilled = bakeFarmland(false);
     this.crop = bakeFarmland(true);
     this.loaded = true;
@@ -151,36 +185,25 @@ const Assets = {
 };
 
 // The five pieces a wall run is assembled from (see `drawRampart` in js/ui.js).
-// The atlas art was drawn as standalone tiles with grass baked into the margins,
-// so a straight run left visible gaps between segments and a north-south run had
-// no art at all. Each piece below is the SAME sprite, edited only enough that its
-// tile edges match its neighbours' exactly:
+// Four of them are now one punyworld cell each, taken as-is: the pack's castle-wall
+// set was drawn to tile, so a straight run butts together with no seam in either
+// axis and needs none of the edge-repair the old atlas art did. Only `gateV` is
+// composed — the pack has no north-south gate — by dropping the horizontal gate's
+// door block into the middle of the vertical wall.
 //
-//  wallH  AT.WALL with the grass margin (cols 12-15) refilled from the parapet
-//         band at col 1, so the band now runs edge to edge and consecutive tiles
-//         butt together. The pillar in the middle is untouched.
-//  wallV  AT.WALL_TOWER's own body row (row 10) repeated down the tile. It used to
-//         come from AT.WALL_V flattened, which is a 6px-wide column (cols 5-10) —
-//         two pixels narrower than the tower it runs into and with none of its
-//         shading, so a north-south run read as a line of fence posts beside the
-//         chunky east-west parapet, and stepped in and out at every tower. Taking
-//         the row straight off the tower makes the two identical by construction.
-//  tower  AT.WALL_TOWER, grass stripped, with its empty top row filled from the
-//         crenellation below it — otherwise a wall coming down from the tile above
-//         met a one-pixel transparent seam at the tower's crown.
-//  gateH  AT.GATE, grass stripped. Its parapet already spans the full tile width
-//         on the same rows as wallH's band, so it drops into a run untouched.
-//  gateV  wallV with GATE's own arch (a 6x6 block) composited into the middle —
-//         the vertical gate the tileset never had.
-function bakeRamparts(sheet) {
-  const vertical = { stripGreen: true, replicateMid: [10, 10] };
+// `stoneHue` is what keeps walls faction-coloured. The pack's masonry is a pale
+// desaturated green (hue ~70-90, saturation 0.1-0.3), so the warm recolor that
+// handles every other building's roof steps straight over it and all four nations
+// would have shared one grey wall.
+function bakeRamparts(sheet, roofHue) {
+  const d = PUNY.GATE_DOOR;
   return {
-    wallH: bakeTile(sheet, AT.WALL, { stripGreen: true, fillCols: [12, 15, 1] }),
-    wallV: bakeTile(sheet, AT.WALL_TOWER, vertical),
-    tower: bakeTile(sheet, AT.WALL_TOWER, { stripGreen: true, fillRows: [0, 0, 1] }),
-    gateH: bakeTile(sheet, AT.GATE, { stripGreen: true }),
-    gateV: bakeTile(sheet, AT.WALL_TOWER, { ...vertical,
-      overlay: { at: AT.GATE, sx: 5, sy: 6, w: 6, h: 6, dx: 5, dy: 5 } }),
+    wallH: bakePuny(sheet, PUNY.WALL_H, { stoneHue: roofHue }),
+    wallV: bakePuny(sheet, PUNY.WALL_V, { stoneHue: roofHue }),
+    tower: bakePuny(sheet, PUNY.WALL_TOWER, { stoneHue: roofHue }),
+    gateH: bakePuny(sheet, PUNY.GATE, { stoneHue: roofHue }),
+    gateV: bakePuny(sheet, PUNY.WALL_V, { stoneHue: roofHue,
+      overlay: { at: PUNY.GATE, ...d, dx: d.sx, dy: (TILE - d.h) / 2 } }),
   };
 }
 
@@ -194,9 +217,6 @@ function bakeRamparts(sheet) {
 //              little door replaced by barn doors and sacks piled outside.
 //  quarry      [0,11] is a cottage with a red roof: it read as a second House, not
 //              as a stone works. Replaced with a cut rock face and stacked blocks.
-//  well        [7,3] is a green mound with a doorway — all but identical to the
-//              CAVE terrain tile ([3,0]), so a Well looked like a mine mouth.
-//              Replaced with an actual wellhead: stone rim, water, roof on posts.
 //  church      [4,0] is a stone hut wearing two pink mushroom caps. The caps are
 //              lifted off and the two halves become a belfry (spire + cross) and
 //              a gabled nave with a lit window — the stonework underneath is the
@@ -204,11 +224,19 @@ function bakeRamparts(sheet) {
 //  castle      [5,0] is violet, and `recolor`'s warm range never touched it, so
 //              every nation's castle came out the same purple. Its stonework is
 //              shifted to the faction's colour here instead.
-function bakeBuildings(plain, sheet, roofHue) {
+//
+// Four more come off the punyworld sheet whole rather than being drawn here — the
+// Town Hall (a 2x2 keep, so it fills its footprint at native resolution instead of
+// one 16x16 cell blown up 2x), the Lumber Camp, the Gold Mine and the Well.
+function bakeBuildings(plain, sheet, roofHue, puny) {
   const STONE = { lit: '#cfc6b8', mid: '#a0938e', dim: '#7d7071', dark: '#5a5353' };
   const SLATE = { lit: '#8b93a0', mid: '#666e7a', dark: '#474e58' };
   const WOOD = { lit: '#e2ad6e', mid: '#af834c', dim: '#93674d', dark: '#704d38' };
   return {
+    townhall: bakePuny(puny, PUNY.TOWNHALL, { w: 2, h: 2, stoneHue: roofHue }),
+    lumber: bakePuny(puny, PUNY.LUMBER),
+    mine: bakePuny(puny, PUNY.MINE),
+    well: bakePuny(puny, PUNY.WELL),
     storehouse: bakeArt({ sheet, at: AT.HOUSE[1] }, px => {
       px('#3a2a12', 4, 12, 8, 4);                       // barn doorway
       px('#67512a', 4, 11, 8, 1);                       // lintel
@@ -229,16 +257,6 @@ function bakeBuildings(plain, sheet, roofHue) {
       };
       block(10, 5, 5); block(10, 9, 5); block(1, 11, 5); block(7, 11, 6);
       px(WOOD.dark, 12, 1, 1, 4); px(STONE.mid, 11, 1, 3, 1);  // pick left against the stack
-    }),
-    well: bakeArt(null, px => {
-      px(WOOD.dark, 3, 3, 1, 7); px(WOOD.dark, 12, 3, 1, 7);   // posts
-      px(WOOD.dim, 2, 2, 12, 1); px(WOOD.mid, 3, 1, 10, 1); px(WOOD.lit, 5, 0, 6, 1);
-      px(WOOD.dark, 4, 4, 8, 1);                        // winding bar
-      px(WOOD.dim, 8, 5, 1, 3);
-      px(STONE.dim, 3, 9, 10, 5);                       // rim
-      px(STONE.mid, 3, 9, 10, 1); px(STONE.lit, 4, 10, 8, 1); px(STONE.dark, 3, 13, 10, 1);
-      px('#1d2a44', 5, 10, 6, 3); px('#2f4a7a', 5, 11, 6, 1);  // water
-      px(WOOD.lit, 7, 7, 3, 3); px(WOOD.mid, 7, 7, 3, 1);      // bucket on the bar
     }),
     // Baked off the UNTOUCHED atlas: `strip` matches exact hexes, and on the recolored
     // faction sheet the caps' pinks have already moved. Tinted afterwards with the same
@@ -307,18 +325,21 @@ function bakeArt(base, draw) {
   return c;
 }
 
-// Rotate a hue band of an already-drawn 16x16 tile onto `targetHue`, keeping its
-// saturation and lightness. `test` is a predicate on the hue; `WARM` reuses the exact
-// band `recolor` applies to the whole tileset, so a tile baked from the *untouched*
-// atlas still ends up matching its faction's other buildings.
+// Rotate a hue band of an already-drawn tile onto `targetHue`, keeping its saturation
+// and lightness. `test` is a predicate on the hue; `WARM` reuses the exact band
+// `recolor` applies to the whole tileset, so a tile baked from the *untouched* atlas
+// still ends up matching its faction's other buildings. `minSat` guards against
+// tinting near-greys — it has to drop well below the default for STONE, whose whole
+// range is barely saturated.
 const WARM = h => h >= 345 || h <= 42;
 const VIOLET = h => h >= 250 && h <= 320;
-function shiftHue(g, test, targetHue) {
-  const d = g.getImageData(0, 0, TILE, TILE), p = d.data;
+const STONE = h => h >= 55 && h <= 105;
+function shiftHue(g, test, targetHue, minSat = 0.15, w = TILE, h = TILE) {
+  const d = g.getImageData(0, 0, w, h), p = d.data;
   for (let i = 0; i < p.length; i += 4) {
     if (!p[i + 3]) continue;
-    const [h, s, l] = rgbToHsl(p[i], p[i + 1], p[i + 2]);
-    if (s > 0.15 && test(h)) {
+    const [hue, s, l] = rgbToHsl(p[i], p[i + 1], p[i + 2]);
+    if (s > minSat && test(hue)) {
       const [r, gg, b] = hslToRgb(targetHue, s, l);
       p[i] = r; p[i + 1] = gg; p[i + 2] = b;
     }
@@ -326,54 +347,29 @@ function shiftHue(g, test, targetHue) {
   g.putImageData(d, 0, 0);
 }
 
-// Extract one 16x16 atlas tile into its own canvas, cleaned up so structures tile without seams.
-//  stripGreen  — knock out the grass baked into a sprite's corners (turns opaque grass transparent)
-//  replicateMid[a,b] — rebuild every row from the clamped [a..b] band, erasing top/bottom end-caps
-//  fillCols[x0,x1,src] — overwrite columns x0..x1 with a copy of column `src`, so a band that
-//                        stopped short of the tile edge now reaches it (left/right end-caps)
-//  fillRows[y0,y1,src] — the same for rows (top/bottom end-caps)
-//  overlay{at,sx,sy,w,h,dx,dy} — composite a rect from another atlas tile on top
-function bakeTile(tileset, at, opts = {}) {
+// Cut a block out of the punyworld sheet into its own canvas. The pack's art already
+// tiles, so unlike the old `bakeTile` there is nothing to repair — the options here are
+// only about fitting it to a job the pack didn't draw:
+//  w,h       block size in TILES (default 1x1; the Town Hall is 2x2)
+//  rotate    quarter turn clockwise — makes the east-west bridge deck out of the
+//            north-south one, so the two spans match exactly where they meet
+//  stoneHue  rotate the pack's pale castle masonry onto a faction hue (see shiftHue);
+//            applied before `overlay` so a composited timber door keeps its own colour
+//  overlay{at,sx,sy,w,h,dx,dy} — composite a rect from another cell on top
+function bakePuny(sheet, at, opts = {}) {
+  const sw = (opts.w || 1) * TILE, sh = (opts.h || 1) * TILE;
   const c = document.createElement('canvas');
-  c.width = TILE; c.height = TILE;
+  c.width = opts.rotate ? sh : sw;
+  c.height = opts.rotate ? sw : sh;
   const g = c.getContext('2d', { willReadFrequently: true });
   g.imageSmoothingEnabled = false;
-  g.drawImage(tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, 0, 0, TILE, TILE);
-  const d = g.getImageData(0, 0, TILE, TILE), p = d.data;
-  const A = i => p[i + 3];
-  if (opts.stripGreen) {
-    for (let i = 0; i < p.length; i += 4) {
-      if (A(i) > 30 && p[i + 1] > p[i] + 18 && p[i + 1] > p[i + 2] + 18) p[i + 3] = 0;
-    }
-  }
-  if (opts.replicateMid) {
-    const [a, b] = opts.replicateMid, src = p.slice();
-    for (let y = 0; y < TILE; y++) {
-      const sy = Math.min(b, Math.max(a, y));
-      for (let x = 0; x < TILE; x++) {
-        const di = (y * TILE + x) * 4, si = (sy * TILE + x) * 4;
-        p[di] = src[si]; p[di + 1] = src[si + 1]; p[di + 2] = src[si + 2]; p[di + 3] = src[si + 3];
-      }
-    }
-  }
-  if (opts.fillCols) {
-    const [x0, x1, src] = opts.fillCols, from = p.slice();
-    for (let y = 0; y < TILE; y++) for (let x = x0; x <= x1; x++) {
-      const di = (y * TILE + x) * 4, si = (y * TILE + src) * 4;
-      p[di] = from[si]; p[di + 1] = from[si + 1]; p[di + 2] = from[si + 2]; p[di + 3] = from[si + 3];
-    }
-  }
-  if (opts.fillRows) {
-    const [y0, y1, src] = opts.fillRows, from = p.slice();
-    for (let y = y0; y <= y1; y++) for (let x = 0; x < TILE; x++) {
-      const di = (y * TILE + x) * 4, si = (src * TILE + x) * 4;
-      p[di] = from[si]; p[di + 1] = from[si + 1]; p[di + 2] = from[si + 2]; p[di + 3] = from[si + 3];
-    }
-  }
-  g.putImageData(d, 0, 0);
+  if (opts.rotate) { g.translate(c.width, 0); g.rotate(Math.PI / 2); }
+  g.drawImage(sheet, at[0] * TILE, at[1] * TILE, sw, sh, 0, 0, sw, sh);
+  if (opts.rotate) g.setTransform(1, 0, 0, 1, 0, 0);
+  if (opts.stoneHue != null) shiftHue(g, STONE, opts.stoneHue, 0.06, c.width, c.height);
   if (opts.overlay) {
     const o = opts.overlay;
-    g.drawImage(tileset, o.at[0] * TILE + o.sx, o.at[1] * TILE + o.sy, o.w, o.h, o.dx, o.dy, o.w, o.h);
+    g.drawImage(sheet, o.at[0] * TILE + o.sx, o.at[1] * TILE + o.sy, o.w, o.h, o.dx, o.dy, o.w, o.h);
   }
   return c;
 }

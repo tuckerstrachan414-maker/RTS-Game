@@ -281,7 +281,10 @@ heuristic.
   wall and tower match by construction. The tower's empty top row (a 1px
   transparent seam against a wall above it) is filled from the crenellation
   below via a new `fillRows` bake option. The owner marker also stopped being
-  drawn on every tile.
+  drawn on every tile. *(Superseded: the whole rampart set now comes off
+  `assets/punyworld-overworld-tileset.png`, whose wall art was drawn to tile —
+  `bakeTile` and its `fillRows`/`replicateMid`/`fillCols`/`stripGreen` options
+  are gone with it. See `docs/formations-tiers-ui.md`.)*
 - **#22 Sprites that did not match their building** — Storehouse and Lumber
   Camp shared one cell; the Quarry was a cottage; the Well was a green mound
   near-identical to the CAVE terrain tile; the Church wore two pink mushroom
@@ -290,7 +293,9 @@ heuristic.
   invisible against grass, with no construction feedback since
   `b.done ? Assets.tileset : null` fell through to the same sheet either way).
   All six are composited at load time now (`bakeBuildings`/`bakeFarmland`,
-  `js/assets.js`) from the existing atlas — no new image assets.
+  `js/assets.js`) from the existing atlas — no new image assets. *(The Well has
+  since been replaced again, by a roofed wellhead taken whole off the punyworld
+  sheet; the hand-drawn one is gone.)*
 - **#23 Azuria's buildings were orange while every rival's matched its banner**
   — `FACTION_COLORS[0].hue` was `null`, which is right for the unit sheets (the
   art is already blue) but also skipped the tileset recolor. Split into `hue`
