@@ -33,7 +33,8 @@ the code; stale docs are treated as bugs.
 
 ## Code layout
 
-- `js/assets.js` — atlas coords, animation auto-detection, faction palette swap
+- `js/assets.js` — atlas coords for both tilesets (`AT`, `PUNY`), animation
+  auto-detection, faction palette swap
 - `js/map.js` — seeded generation, water + cliff autotiling, plateaus/ramps, A*
   (`findPath`)
 - `js/buildings.js` — building defs, placement, castle upgrades, production
@@ -84,6 +85,14 @@ the code; stale docs are treated as bugs.
 - `assets/tileset16x16_1.png` is 8×18 now, not 8×14. Rows 14-17 are the cliff
   set; re-splice with `tools/splice-cliffs.py` rather than editing pixels by
   hand. Appending kept every older `AT` coordinate valid — don't repack it.
+- **There are two runtime tilesets.** `assets/punyworld-overworld-tileset.png`
+  (27×65 cells, art only to row 37) is loaded alongside the atlas; `PUNY`
+  addresses it the way `AT` addresses the atlas. Walls, gates, both bridge
+  decks and the Town Hall / Lumber Camp / Gold Mine / Well come off it via
+  `bakePuny`. Its castle masonry is too desaturated for the warm faction
+  recolor to see, so those pieces take an explicit `stoneHue` pass — drop it
+  and every nation shares one grey wall. `AT.WALL*`/`AT.GATE`/`AT.BRIDGE_*`/
+  `AT.TOWNHALL`/`AT.LUMBER`/`AT.MINE`/`AT.WELL` are dead coordinates now.
 - Plateau rim art has one rule: **raised turf must never touch low grass** —
   rock goes between, always. `high` being 4-connected is a movement rule, not a
   drawing one, so a top tile can still touch open ground at a corner and needs a

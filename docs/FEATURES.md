@@ -160,8 +160,8 @@ tiles anywhere in a 25-tile square — up/down/left/right — around it; idles o
 once that whole reach is exhausted), Quarry, Gold Mine (needs a cave), Market,
 Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
 rendered as one connected structure in both axes — see the renderer entry),
-Bridge (water-only, rotatable, drag to lay a span, seamless vertical mid-tile;
-straight runs only — a horizontal and a vertical bridge can never touch or
+Bridge (water-only, rotatable, drag to lay a span, one plank-deck sprite that
+tiles seamlessly in both axes; straight runs only — a horizontal and a vertical bridge can never touch or
 join, see Map & terrain and Units & combat).
 Placement validation with per-type requirements, construction time, HP/damage,
 demolish with 75% refund (except Town Hall). **Any non-water building can be
@@ -169,13 +169,17 @@ placed on forest or rock** — the footprint clears it, same as cutting a track
 (caves are still off-limits); the placement ghost fills the tile white when
 legal and red when blocked, and a tree inside the footprint fades so the wash
 doesn't have to fight a solid canopy (`drawGhost`/`collectDepthLayers`,
-`js/ui.js`). **Every building reads as what it does.** Five types whose atlas
-cell said the wrong thing are composited at load time instead
-(`bakeBuildings`, `js/assets.js`): the Storehouse no longer shares the Lumber
-Camp's log cabin, the Quarry is a worked rock face rather than a cottage, the
-Well is a wellhead rather than a green mound near-identical to the CAVE terrain
-tile, the Church has a belfry and cross in place of two pink mushroom caps, and
-the Castle takes its nation's colour instead of staying violet for everyone.
+`js/ui.js`). **Every building reads as what it does.** No building is a raw
+atlas lookup any more: four come whole off the punyworld sheet
+(`bakePuny`) — the Town Hall (a 2×2 stone keep, so it fills its footprint at
+native resolution instead of one 16×16 cell blown up 2×), the Lumber Camp
+(log cabin), the Gold Mine (a mossy mound with a timber-framed adit) and the
+Well (a roofed wellhead) — and four more whose atlas cell said the wrong thing
+are composited at load time (`bakeBuildings`, `js/assets.js`): the Storehouse
+no longer shares the Lumber Camp's log cabin, the Quarry is a worked rock face
+rather than a cottage, the Church has a belfry and cross in place of two pink
+mushroom caps, and the Castle takes its nation's colour instead of staying
+violet for everyone.
 Farms had no art at all — they drew as two grass-tuft tiles, i.e. invisible —
 and now draw ploughed soil while under construction and a crop field once
 finished (`bakeFarmland`; `type.flat` marks them as ground art, painted with
@@ -627,12 +631,13 @@ runs join seamlessly **horizontally and vertically** and gates sit inside a run
 instead of interrupting it. Straight runs draw the connector whole; corners,
 junctions, ends, lone posts and diagonals draw a half connector toward each
 neighbour they actually have and a tower over the join. Gates pick a vertical
-arch when the run through them is north–south. Each piece is the tileset's own
-art with the minimum edit needed to make its tile edges match (grass margins
-stripped, one band extended to the tile edge, the vertical run and the tower
-sharing one body row so they cannot disagree on width, the tower's crown closed
-so a wall above it leaves no seam, and `GATE`'s arch composited into the column
-to make the vertical gate the tileset lacked). The owner marker goes on towers,
+arch when the run through them is north–south. Four of the five pieces are one
+punyworld cell taken as-is — that pack's castle-wall set was drawn to tile, so
+none of the edge repair the old atlas art needed applies; only `gateV` is
+composed, by dropping the horizontal gate's door into the vertical wall. The
+pack's masonry is too desaturated for the warm faction recolor to see, so the
+rampart pieces (and the Town Hall keep) take an explicit `stoneHue` pass —
+without it every nation would share one grey wall. The owner marker goes on towers,
 gates and every third plain segment rather than every tile, so a long wall is
 not a dotted line of coloured squares. **Depth pass** (`collectDepthLayers` +
 one sort in `render`): everything with height — tree canopies, buildings,
@@ -707,15 +712,18 @@ Lumber Camp's timber — which straddles that seam and so half-recoloured —
 takes the nation's colour cleanly along with everything else.
 
 **Composited building art (`bakeBuildings`, `bakeFarmland`, `bakeArt`).** Same
-approach as `bakeRamparts`: no new image assets, just the atlas plus a few
-pixel ops per tile, baked once per faction at load. Covers the Storehouse
-(barn doors and sacks on the house silhouette — it shared the Lumber Camp's
-cell), the Quarry (a rock face and dressed blocks — the cell was a cottage),
-the Well (a wellhead — the cell was a green mound all but identical to the CAVE
-terrain tile), the Church (mushroom caps `strip`ped off, belfry/spire/cross and
-a gabled nave drawn on), the Castle (`shiftHue` moves its violet stonework onto
-the faction colour) and the two farmland tiles. `drawBuilding` prefers a baked
-canvas over the atlas lookup, so `BUILDING_TYPES.art` is `null` for those types.
+no new image assets, just the atlas plus a few pixel ops per tile, baked once
+per faction at load. Covers the Storehouse (barn doors and sacks on the house
+silhouette — it shared the Lumber Camp's cell), the Quarry (a rock face and
+dressed blocks — the cell was a cottage), the Church (mushroom caps `strip`ped
+off, belfry/spire/cross and a gabled nave drawn on), the Castle (`shiftHue`
+moves its violet stonework onto the faction colour) and the two farmland tiles.
+The Town Hall, Lumber Camp, Gold Mine and Well are baked too but not *drawn*
+here — they are whole punyworld cells (`bakePuny`), the Well having previously
+been a hand-drawn wellhead put there because its atlas cell was a green mound
+all but identical to the CAVE terrain tile. `drawBuilding` prefers a baked
+canvas over the atlas lookup, so `BUILDING_TYPES.art` is `null` for every type
+that has one — which is now every building except the House and the Market.
 Note the church is baked from the *untouched* atlas and tinted afterwards:
 `strip` matches exact hexes, and on the recoloured faction sheet the caps'
 pinks have already moved. Gaps: bandits and trade caravans both ride the
@@ -723,15 +731,17 @@ horseman sheet, which is no longer any unit type's own art — it survives in
 `UNIT_SHEETS` purely as the Bandit's `spriteKey` (and the caravan's, since
 caravans spawn as Bandits with `carryCap` zeroed); the day/night indicator in the topbar is
 still an emoji glyph (no sun/moon in `icons16x16.png`) — the last one, now that
-the Copy/Paste buttons have dropped their clipboard; multi-tile buildings
-scale one 16×16 cell up to their footprint, so a 2×2 Castle has visibly
-chunkier pixels than a 1×1 House.
+the Copy/Paste buttons have dropped their clipboard; the Castle and the Church
+still scale one 16×16 cell up to their 2×2 footprint, so they have visibly
+chunkier pixels than a 1×1 House — `buildingSprite` reads a baked canvas at its
+own size now, so closing that gap is a matter of art, not code (the Town Hall
+already has it).
 
 **Tileset is a spliced composite, not a single source.** `assets/tileset16x16_1.png`
 is one 8×**17**-cell, 16px-grid PNG at the same coordinates `AT` has always
 pointed at — but a 2026-07 pass overwrote specific cells in place with art from
-the **PUNY_WORLD_v1** pack (a separate 27-column Tiled tileset supplied as a
-reference sheet, never loaded at runtime itself): `AT.TREES` (all 3), `AT.SAPLING`,
+the **PUNY_WORLD_v1** pack (a separate 27-column Tiled tileset, at that point
+supplied only as a reference sheet): `AT.TREES` (all 3), `AT.SAPLING`,
 `AT.ROCKS` (all 5, currently a single boulder tile repeated — the pack had only
 one clean standalone rock icon), `AT.CAVE` (now a wood-framed mine-shaft
 opening), `AT.WELL`, and both pair-slots of `AT.TOWNHALL`/`AT.HOUSE`/`AT.MARKET`
@@ -740,18 +750,32 @@ as every non-pair building already worked, see below). Because every replaced
 building tile's dominant hue sampled into the existing warm recolor band
 (`recolor(tileset, hue, 'warm')`, [8°,42°]), per-faction roof recoloring still
 works unmodified. Deliberately **left untouched**: water (the full 9-slice +
-strip autotile set), Wall/Gate/rampart art (`bakeRamparts` hardcodes pixel
-offsets against the original wall sprite's geometry — swapping it needs a
-rework, not a splice), Bridge (`bakeTile`'s seamless mid-tile replication is
-similarly geometry-specific), Castle, Church, Quarry, Mine, Lumber Camp/
-Storehouse, and base grass tiles (swapping the grass hue risks a visible seam
-against water art's baked-in shoreline-over-grass blend). `AT.CROP_VARS` is
-gone (farms have their own baked field tiles now) and so is `AT.QUARRY`;
-`AT.WELL` and `AT.WALL_V` are still catalogued but no longer drawn, along with
-the long-unused `AT.SAPLING` and `AT.POND_DECOR` — there is a note listing all
-four under the `AT` table in `js/assets.js`. That pass changed no code — it was
+strip autotile set), Castle, Church, Quarry, Storehouse, and base grass tiles
+(swapping the grass hue risks a visible seam against water art's baked-in
+shoreline-over-grass blend). `AT.CROP_VARS` is gone (farms have their own baked
+field tiles now) and so is `AT.QUARRY`. That pass changed no code — it was
 purely `assets/tileset16x16_1.png` pixels at existing `AT` coordinates. A backup
 of the pre-splice original is not kept in-repo (recoverable via git history).
+
+**The punyworld sheet is a second runtime tileset now, not a reference.** The
+splice above stopped short of the wall, gate and bridge art on the grounds that
+`bakeRamparts`/`bakeTile` hardcoded pixel offsets against the original sprites'
+geometry, so a cell swap alone would have broken them. A later pass took the
+other route: `assets/punyworld-overworld-tileset.png` (27×65 cells, art only to
+row 37) is **loaded at runtime** alongside the atlas, and `PUNY` in
+`js/assets.js` addresses it the way `AT` addresses the atlas. Off it come all
+five rampart pieces, both bridge decks, and four buildings — Town Hall, Lumber
+Camp, Gold Mine, Well. That pack's castle-wall set was drawn to tile, so the
+edge-repair machinery `bakeTile` existed for is gone entirely, replaced by
+`bakePuny` (block size in tiles, quarter-turn, `stoneHue`, overlay). What it
+cost instead is the faction tint: the pack's masonry is too desaturated for the
+warm recolor band to see, so the stone gets its own `shiftHue` pass — see
+`docs/formations-tiers-ui.md`. Every recolor path is per-faction and baked once
+at load, exactly as before. Left behind, catalogued but no longer drawn:
+`AT.WALL`/`AT.WALL_V`/`AT.WALL_TOWER`/`AT.GATE`, `AT.BRIDGE_H`/`AT.BRIDGE_V`,
+`AT.TOWNHALL`, `AT.LUMBER`, `AT.MINE`, `AT.WELL`, plus the long-unused
+`AT.SAPLING` and `AT.POND_DECOR` — there is a note listing them under the `AT`
+table in `js/assets.js`.
 
 **The cliff set was appended, not overwritten.** The plateau art needed 29
 tiles and the sheet had exactly one free cell, so a pass grew the PNG from 14
@@ -760,8 +784,10 @@ Appending rather than repacking means every pre-existing `AT` coordinate still
 addresses the same pixels — rows 0–13 are byte-identical — so nothing else had
 to move. Unlike the 2026-07 pass this one is reproducible:
 `tools/splice-cliffs.py` copies the cells out of
-`assets/punyworld-overworld-tileset.png` (still never loaded at runtime) and is
-safe to re-run, since it rebuilds rows 14+ from scratch each time. The cliff art
+`assets/punyworld-overworld-tileset.png` and is safe to re-run, since it
+rebuilds rows 14+ from scratch each time. (That sheet is loaded at runtime in
+its own right now — see above — but the cliff set is still a splice, because
+`AT.CLIFF_*`/`AT.RAMP_*` need rotations the pack never drew.) The cliff art
 is greyish-olive (hue 70–80°) plus desaturated greys, and `shiftHue` only
 rotates hues in the warm band with saturation > 0.15, so **no cliff pixel is
 touched by the per-faction recolor** — mesas stay neutral terrain for every

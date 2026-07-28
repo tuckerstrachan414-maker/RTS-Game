@@ -1,7 +1,8 @@
 # Nations — an RTS of trade and war
 
 A browser real-time strategy game built entirely with vanilla JavaScript and the
-asset packs in this repo: the 16×16 top-down tileset (`assets/tileset16x16_1.png`)
+asset packs in this repo: two 16×16 top-down tilesets
+(`assets/tileset16x16_1.png` and `assets/punyworld-overworld-tileset.png`)
 and the **Minifolks: Humans** unit pack (`assets/units/`).
 
 You lead the blue nation of **Azuria** on a procedurally generated continent shared
@@ -69,7 +70,10 @@ building? **Demolish** it from its panel and reclaim 75% of its cost.
 **Everything on the map looks like what it is.** A Farm is a field — ploughed
 soil while it is being cleared, standing crop once it is finished — a
 Storehouse is a barn with sacks stacked outside, a Quarry is a worked rock face,
-a Well is a well, and a Church has a steeple. Buildings wear their nation's
+a Well is a roofed wellhead, a Gold Mine is a timbered adit cut into a mound,
+a Lumber Camp is a log cabin, and a Church has a steeple. Your Town Hall is a
+tiered stone keep drawn at full size across its footprint rather than one tile
+of art stretched to fit. Buildings wear their nation's
 colour, including yours, so you can read who owns a town at a glance. Trees,
 troops and buildings overlap each other by how near they are to you, so a
 soldier walking behind a keep goes behind it and a wood in front of a farm
@@ -90,9 +94,10 @@ translucent preview while you drag, so you can see exactly what will be built
 before you commit. Release to place it all at once; nothing is built or paid
 for until you let go. The segments knit together — east–west and north–south
 alike — with towers rising at corners, junctions and ends. Drop a Gate
-anywhere in a run and it takes the run's direction, an archway set into the
+anywhere in a run and it takes the run's direction, a timber gate set into the
 wall rather than a gap in it. A north–south stretch is the same masonry as an
-east–west one, not a thinner fence.
+east–west one, not a thinner fence, and the crenellated stone takes your
+nation's colour like everything else you build.
 
 **The ground fights you too.** Forests and boulder fields are not walls —
 troops push through both — but the going is slow: roughly 2.4× as long to
@@ -339,8 +344,9 @@ pre-game and end screens scroll rather than clip on a short screen.
 
 Plain `<script>` modules, no build step:
 
-- `js/assets.js` — atlas coordinates, animation auto-detection, faction palette-swap
-  (the blue Minifolks art and orange roofs are hue-shifted per nation at load)
+- `js/assets.js` — atlas coordinates for both tilesets, animation auto-detection,
+  faction palette-swap (the blue Minifolks art, orange roofs and castle stone are
+  hue-shifted per nation at load)
 - `js/map.js` — seeded map generation, water and cliff autotiling, plateaus and
   their stairs, A* pathfinding
 - `js/buildings.js` — building defs/placement, incl. physical storage buildings

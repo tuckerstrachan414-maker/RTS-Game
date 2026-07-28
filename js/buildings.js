@@ -2,8 +2,10 @@
 // Building definitions, placement rules, construction, per-building production.
 
 // art: atlas entry; pair=true means [orange,blue] faction variants exist in the tileset.
-// art: null means the sprite is composited at load time instead — see `bakeBuildings`
-//      (js/assets.js), which keys its output off this table's `key`.
+// art: null means the sprite is not an atlas lookup — it is baked at load time by
+//      `bakeBuildings` (js/assets.js), which keys its output off this table's `key`,
+//      or (walls, gates, bridges) drawn per tile from `Assets.rampart`/the bridge
+//      decks rather than stamped as one sprite at all.
 // flat: the building's art lies on the ground (crop fields), so it is painted with the
 //      terrain rather than in the depth-sorted pass (js/ui.js).
 // size: tiles per side (art is scaled up for larger buildings).
@@ -13,7 +15,7 @@
 const LUMBER_RADIUS = 25;
 const BUILDING_TYPES = {
   townhall: {
-    key: 'townhall', name: 'Town Hall', art: AT.TOWNHALL, pair: true, size: 2,
+    key: 'townhall', name: 'Town Hall', art: null, size: 2,
     cost: {}, hp: 900, buildTime: 0, slots: 0, solid: true,
     storage: { food: 300, wood: 300, stone: 300, gold: 1e9 },
     desc: 'Heart of your nation. Stores resources. Lose it and your nation falls.',
@@ -37,7 +39,7 @@ const BUILDING_TYPES = {
     placeReq: (map, x, y) => true,
   },
   lumber: {
-    key: 'lumber', name: 'Lumber Camp', art: AT.LUMBER, size: 1,
+    key: 'lumber', name: 'Lumber Camp', art: null, size: 1,
     cost: { wood: 20 }, hp: 150, buildTime: 6, slots: 3,
     produces: 'wood', rate: 0.4,
     desc: 'Workers chop adjacent trees for wood. Needs trees nearby.',
@@ -53,7 +55,7 @@ const BUILDING_TYPES = {
     reqText: 'must be within 2 tiles of rocks',
   },
   mine: {
-    key: 'mine', name: 'Gold Mine', art: AT.MINE, size: 1,
+    key: 'mine', name: 'Gold Mine', art: null, size: 1,
     cost: { wood: 30 }, hp: 150, buildTime: 10, slots: 3,
     produces: 'gold', rate: 0.25,
     desc: 'Workers dig gold from a cave. Must be next to a cave tile.',
@@ -82,17 +84,17 @@ const BUILDING_TYPES = {
     desc: 'Trains your army and envoys. Upgrade to a Grand Castle — a monument to your prosperity.',
   },
   wall: {
-    key: 'wall', name: 'Wall', art: AT.WALL, size: 1,
+    key: 'wall', name: 'Wall', art: null, size: 1,
     cost: { stone: 5 }, hp: 300, buildTime: 2, slots: 0, solid: true, line: true,
     desc: 'Stone wall. Segments join up into a solid barrier. Keeps enemies out.',
   },
   gate: {
-    key: 'gate', name: 'Gate', art: AT.GATE, size: 1,
+    key: 'gate', name: 'Gate', art: null, size: 1,
     cost: { stone: 15 }, hp: 250, buildTime: 3, slots: 0, line: true,
     desc: 'A wall your own people (and allies) can pass through. Joins onto walls.',
   },
   bridge: {
-    key: 'bridge', name: 'Bridge', art: AT.BRIDGE_H, size: 1,
+    key: 'bridge', name: 'Bridge', art: null, size: 1,
     cost: { wood: 20 }, hp: 120, buildTime: 5, slots: 0, line: true,
     desc: 'Cross rivers and lakes. Drag to lay a span; press R (or the rotate button) to turn it.',
     waterOnly: true,

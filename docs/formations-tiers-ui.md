@@ -415,30 +415,38 @@ all — a north–south run stacked the *horizontal* sprite — and gates went
 through `drawBuilding`, joining nothing.
 
 **The rampart set (`bakeRamparts` in `js/assets.js`)** is five pieces baked per
-faction at load time, each the same atlas sprite edited only enough that its
-tile edges match its neighbours':
+faction at load time. All of them now come out of a **second sheet**,
+`assets/punyworld-overworld-tileset.png` (27×65 cells on the same 16px grid; it
+was already in the repo as the reference the cliff set was spliced from, and is
+loaded at runtime as of the tileset swap). Its castle-wall set was drawn to
+tile, so four of the five pieces are one cell taken **as-is** — none of the
+edge repair the old atlas art needed:
 
-| Piece | Source | Edit |
+| Piece | Source cell | Notes |
 |---|---|---|
-| `wallH` | `AT.WALL` | grass margin (cols 12–15) refilled from the parapet band at col 1, so the band reaches both edges. Pillar untouched |
-| `wallV` | `AT.WALL_TOWER` row 10 | that one row repeated down the tile |
-| `tower` | `AT.WALL_TOWER` | grass stripped; the empty top row filled from the crenellation below it |
-| `gateH` | `AT.GATE` | grass stripped only — its parapet already spans the full width on the same rows as `wallH`'s band |
-| `gateV` | `wallV` + `AT.GATE`'s arch | a 6×6 block of the arch composited into the middle. The vertical gate the tileset never had |
+| `wallH` | `PUNY.WALL_H` `(19,28)` | full-width crenellated parapet with no end pillars, so segment butts onto segment |
+| `wallV` | `PUNY.WALL_V` `(18,27)` | the same wall seen end-on; a column that repeats down. Its outermost pixel column is transparent each side, so a north–south run reads slightly narrower than the towers it passes through — deliberate, that is the wall seen from the side |
+| `tower` | `PUNY.WALL_TOWER` `(16,26)` | pillared bastion with an arrow slit — the node at every corner, T, end and lone post |
+| `gateH` | `PUNY.GATE` `(18,29)` | the same wall with a timber gate punched through its base |
+| `gateV` | `wallV` + `GATE`'s door block | the pack has no north–south gate either, so `PUNY.GATE_DOOR` (an 8×4 rect) is composited into the middle of the vertical wall |
 
-`wallV` was originally `AT.WALL_V` (`[1,3]`) flattened to one row, which is a
-**6px-wide column** (cols 5–10) with no shading. Beside `wallH`'s full-width
-parapet a north–south run read as a line of fence posts rather than a wall, and
-because the tower's body is 8px (cols 4–11) every tower in a vertical run
-stepped out a pixel on each side and back in again. Taking the row straight off
-`WALL_TOWER`'s own body makes wall and tower identical by construction — same
-width, same shading, no step. The tower's crown had the matching problem in the
-other axis: its row 0 is empty, so a wall coming down from the tile above met a
-one-pixel transparent seam; `fillRows` copies row 1 up into it.
+The bridge comes off the same sheet: `PUNY.BRIDGE` `(10,31)` is a plank deck
+that tiles in **both** axes, so `Assets.bridgeH` is that same cell turned a
+quarter turn (`bakePuny`'s `rotate`) rather than a second sprite that would
+never quite match it where the two axes meet. `Assets.bridgeVmid` keeps its
+name and is the cell untouched.
 
-`GATE`'s parapet sits on exactly `WALL`'s band rows, so a gate drops into a
-horizontal run untouched. All the seams are asserted in the verification script
-(see Testing below) by comparing edge rows/columns of the baked canvases.
+**Faction colour on stone (`stoneHue`).** The pack's masonry is a pale
+desaturated green — hue ≈70–90°, saturation 0.10–0.31 — which the warm recolor
+that handles every other building's roof (`recolor(sheet, hue, 'warm')`, hue
+345°–42°, saturation > 0.2) steps straight over. Left alone, all four nations
+would have shared one grey wall. `bakePuny`'s `stoneHue` runs `shiftHue` with
+the new `STONE` band (55°–105°) and a **0.06** saturation floor — well under
+`shiftHue`'s 0.15 default, which the stone would otherwise fail — so walls,
+gates, towers and the Town Hall keep take their banner's colour. The timber
+door and roofs are already handled by the warm pass and sit outside the `STONE`
+band, so the two never fight; `stoneHue` is applied *before* any `overlay` for
+the same reason.
 
 **`drawRampart` (`js/ui.js`)** assembles each tile. A clean straight run draws
 the matching connector whole; anything else — corner, T, cross, end, lone post,
@@ -452,25 +460,22 @@ a gate's archway is — and only on towers, gates and every third plain segment
 (`(b.x + b.y) % 3`), because one per tile turned a long wall into a dotted line
 of faction-coloured squares marching across the map.
 
-**Sprite baking (`bakeTile` in `js/assets.js`)** extracts a single 16×16
-atlas tile into its own canvas and cleans it up, via four independent options:
-- `stripGreen` — knocks out the grass baked into a sprite's corners (opaque
-  green pixels become transparent). Used for every rampart piece.
-- `replicateMid: [a, b]` — rebuilds every row from the clamped `[a..b]` band,
-  erasing the sprite's top/bottom end-caps. Used for `wallV`/`gateV` and for
-  the vertical bridge (`Assets.bridgeVmid`) so a north–south span reads as one
-  continuous run instead of broken segments at each tile boundary; the
-  horizontal bridge doesn't need this and still draws straight from the atlas.
-- `fillCols: [x0, x1, src]` — overwrites columns `x0..x1` with a copy of column
-  `src`, extending a band that stopped short of the tile edge. Used for `wallH`.
-- `fillRows: [y0, y1, src]` — the same for rows. Used to close the tower's crown.
-- `overlay: {at, sx, sy, w, h, dx, dy}` — composites a rect from another atlas
-  tile on top. Used to put `GATE`'s arch into `gateV`.
+**Sprite baking (`bakePuny` in `js/assets.js`)** cuts a block out of the
+punyworld sheet into its own canvas. It replaced `bakeTile`, whose whole
+purpose — `stripGreen`, `replicateMid`, `fillCols`, `fillRows` — was repairing
+atlas sprites that were never drawn to tile; the pack's art needs none of it,
+so the options that survive are only about jobs the pack didn't draw:
+- `w, h` — block size in **tiles** (default 1×1). The Town Hall is 2×2, so a
+  2×2 building is two tiles of real art instead of one 16×16 cell blown up.
+- `rotate` — quarter turn clockwise. Makes the east–west bridge deck.
+- `stoneHue` — the faction tint described above.
+- `overlay: {at, sx, sy, w, h, dx, dy}` — composites a rect from another cell
+  on top. Used to put `GATE`'s door into `gateV`.
 
 `drawTileCanvas(canvas, x, y)` is the shared helper that blits one of these
-baked canvases at a tile position (every rampart piece, the vertical bridge
-mid, and the wall/gate/bridge placement ghosts all go through it instead of
-`tile()`, which draws straight from the shared atlas image).
+baked canvases at a tile position (every rampart piece, both bridge decks, and
+the wall/gate/bridge placement ghosts all go through it instead of `tile()`,
+which draws straight from the shared atlas image).
 `drawTileSlice(canvas, x, y, px, py, pw, ph)` is its partial form — it maps a
 source rect to the same fraction of the tile's screen rect, using the same
 maths at the extremes, so a half-tile stub lines up exactly with a full-tile
