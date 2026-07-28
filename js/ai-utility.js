@@ -382,19 +382,23 @@ class AIUtilityEngine {
       if (t.storage) s *= 1 + 0.6 * this.storagePressure();
       if (t.housing && n.pop >= n.housingCap() - 2) s *= 1.8;
       if (k === 'market' && mustBuy) s *= 4;
-      if (!n.canAfford(t.cost)) s *= 0.2;
+      if (!n.canStart(t.cost)) s *= 0.2;
       if (s > bestScore) { bestScore = s; best = k; }
     });
     if (!best) return null;
     return {
       id: 'build:' + best, score: bestScore,
       run: () => {
-        if (!n.canAfford(BUILDING_TYPES[best].cost)) return false;
+        // Don't stake out more ground than the builders can work. Every open site
+        // holds a reservation against the stores, so a nation that keeps breaking
+        // ground on a whim ends up with a dozen foundations, no free timber and
+        // nothing finished.
+        if (!aiCanBreakGround(f)) return false;
+        if (!n.canStart(BUILDING_TYPES[best].cost)) return false;
         if (!this.respectsWoodFloor(best)) return false;
         const spot = findBuildSpot(f, best, f.ai.expansionSite);
         if (!spot) return false;
-        n.pay(BUILDING_TYPES[best].cost);
-        placeBuilding(game, best, spot[0], spot[1], f.id);
+        startConstruction(game, best, spot[0], spot[1], f.id);
         return true;
       },
     };

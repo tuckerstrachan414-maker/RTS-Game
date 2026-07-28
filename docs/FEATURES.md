@@ -105,6 +105,113 @@ mesas existed. `?seed=N` URL replay. Notably absent: tree regrowth (the
 `SAPLING` atlas entry is unused), map
 sizes, biomes.
 
+## Civilians & labour — Deep
+
+`js/civilians.js`. **Every citizen in `nation.pop` is a body on the map.** There
+is no abstract workforce left: a citizen is either a worker at a building, a
+builder, or an unemployed townsperson wandering the settlement, and the count of
+civilian units alive is exactly the population. `syncCivilians` (run twice a
+second from `Nation.tick`) enforces that in both directions — dawn growth walks
+new people out of the Town Hall, and starvation, conscription into the army, or
+an enemy blade takes one away. Killing a civilian costs the nation the citizen
+(`onCivilianDeath`) and frees the slot they held.
+
+**`building.workers` is still the source of truth.** The panel's `+`/`−`, the
+AI's `staffWorkers` pass and `unassignExcess` all still just move an integer;
+`reconcileJobs` then moves bodies to match it, nearest free citizen first, and
+retypes them (worker ↔ builder) for the kind of slot they are filling. Nothing
+that used to set `workers` had to learn anything new.
+
+**Gathering is a journey.** A worker walks to a real tile (`findWorkTile`, in
+`js/buildings.js`: a tree with `treeWood` left anywhere in `LUMBER_RADIUS`, a
+rock within `QUARRY_RADIUS`, a cave mouth within `MINE_RADIUS`, its own crop
+field, its own Market), works there until it is carrying **5**, and walks the
+load to the nearest Town Hall or Storehouse to deposit it. Wood is still cut out
+of the tile itself, so forests still deplete and still turn to grass. A load is
+accumulated into `unit.carry` *as it is gathered*, so a worker killed at the
+tree face spills a partial load exactly like a laden Bandit. Nothing is
+deposited anywhere else, by anyone: `buildingProduction` and the per-tick
+deposit loop in `Nation.tick` are gone.
+
+The consequence is the point: **distance to storage is now an economic
+decision.** Measured over 400s with one worker, a Lumber Camp delivers 1.84× its
+old flat rate with a Storehouse 2 tiles away, 0.97× at 8 tiles, and 0.62× at 20.
+`gatherWorkTime` is what centres that curve — it solves for the time at the face
+that makes a full cycle deliver the building's historical per-worker rate over a
+reference 8-tile round trip (`CIV_TRIP_BUDGET`), with a floor at
+`CIV_WORK_FLOOR` (0.35) of the old cycle so that a building whose load fills
+faster than the reference walk — a farm with both the water and well bonuses —
+cannot be handed an unbounded bonus by a short haul. Farms sit near the granary
+by nature and so run around 1.9× their nominal rate; camps out at the treeline
+run under it. Food is meaningfully more abundant than before this change, which
+is the honest result of farms being close-in work.
+
+**Unemployed citizens wander** (`tickIdler`) between the buildings of their own
+settlement on a 4–11s cycle, drawn from `game.rng` so seeds replay. **Civilians
+flee** rather than fight: `civThreatNear` (checked only when the nation is
+actually at war, since otherwise it is the most-called test in the game) sends
+them to the nearest friendly building. They have `dmg: 0`, never fight back, and
+`findEnemyNear` skips them entirely — an army walks past the lumberjacks and
+goes for the soldiers — but a **direct attack order still kills them**, and
+splash still catches them. They are excluded from `armyUnits`, `strength`,
+formations, Select Army, box-select and AI perception's army estimates.
+
+**Player control: none, deliberately.** Clicking one opens an information card
+(`UI.civilianHTML`) saying what that citizen is doing right now — "Hauling
+materials to the Church site", "Carrying wood to the nearest store" — and right
+click does nothing. You direct the economy by deciding what to build and who
+staffs it.
+
+Art: the two unit sheets orphaned by the roster cut (`MiniShieldMan`,
+`MiniCrossBowMan`) are the worker and the builder, drawn at 0.85 scale and run
+through a `drab` pass at load (`js/assets.js`) that mutes saturation to ~42% —
+without it, at 16px, a crowd of workers reads as a crowd of troops. They keep
+their nation's hue, so whose lumberjacks those are is still legible.
+
+## Construction & builders — Deep
+
+`js/buildings.js` (`startConstruction`, the `site` ledger, `advanceConstruction`),
+`js/civilians.js` (`tickBuilder`). **Placing a building stakes out a site and
+pays nothing.** The site records `needs` (the type's cost), `delivered` and
+`inbound`; builders fetch from a store that actually holds the good, **15 at a
+time** (`CIV_BUILD_LOAD`), and the withdrawal happens on arrival at the store,
+not on setting out. Progress cannot move until `siteReady` — every material
+physically on site — after which each builder present adds `dt / buildTime`, up
+to `MAX_BUILDERS_PER_SITE` (3) of them.
+
+Because goods only leave a Storehouse when somebody picks them up, materials in
+transit are literally on a builder's back: kill the builder and the load spills
+as loot, and the site stops counting it as inbound (`releaseBuilderLoad`) so
+another builder re-fetches it. Razing a half-built site spills everything
+carried there (`siteMaterials` → `game.loot`), and calling a site off refunds
+the delivered materials **in full** rather than the 75% a finished building's
+demolition returns — nothing has been built to lose value.
+
+**Reservations** stop one pile of timber being promised to five sites:
+`Nation.reserved(r)` sums every site's outstanding need, `available(r)` nets it
+off, and `canStart(cost)` — not `canAfford` — is what every placement path now
+checks (player single/line-drag/paste, and all four AI paths). Verified: with 70
+wood in store, exactly 3 house sites (20 each) can be started.
+
+**Builders come from slots like any other job.** The Town Hall has 2
+(`builders: true`), staffed at game start, because otherwise no nation could
+build the Builder House that makes builders. A **Builder House** (30 wood, 3
+slots) is the way to more.
+
+**Bridges are built from the bank outward.** `map.bridge` — the terrain flag
+that makes water walkable — is only stamped by `completeBuilding`, so a planned
+span is a row of pilings that nothing can walk on and `canPlace` reads pending
+spans through `map.bridgeAt` for both occupancy and the no-perpendicular rule. A
+builder works a site from an adjacent tile, so each finished deck tile makes the
+next one reachable; `siteReachable` skips a bridge tile with no passable
+neighbour instead of pacing at the water's edge, and `blockSite` parks any site
+that has defeated the pathfinder three times for 15s.
+
+The AI plays by all of it. `aiCanBreakGround` (`js/ai.js`) caps a nation's open
+sites at its builder count (min 2) across every path it can place from —
+without it, turtles queued 14 wall segments they had no hands for, and every one
+held a reservation against the stone.
+
 ## Economy & population — Deep
 
 `js/economy.js`. Citizens eat continuously; population grows once per dawn
@@ -117,11 +224,26 @@ war weariness (0–25), taxes (slider, 0–40%), −12 while the nation's King i
 dead. Tax slider converts happiness into gold income; `TAX_MAX` and
 `TAX_HAPPINESS_COST` are shared constants, and `happinessTargetWithoutTax()`
 factors out the tax term so the AI's tax controller inverts the real formula
-instead of duplicating it. Worker assignment is manual per building (+/−) with
-idle-worker accounting; over-assignment after deaths is auto-unassigned.
-`estimateIncome(f, res)` lives here too (moved from `js/ui.js`) and now respects
-forest depletion, so an exhausted Lumber Camp reports zero — the signal the AI
-uses to decide a shortage is structural.
+instead of duplicating it. Worker assignment is still manual per building (+/−) with
+idle-worker accounting and auto-unassignment after deaths — but the number now
+commands actual people (see Civilians & labour): `Nation.tick` no longer
+produces or builds anything itself, it calls `syncCivilians` and leaves both to
+the citizenry.
+`estimateIncome(f, res)` lives here too (moved from `js/ui.js`). It no longer
+re-implements the production maths — `workerYieldRate` (`js/buildings.js`) is
+the only copy — and prefers what a building has **measured** itself delivering
+(`b.yieldRate`, a fixed 25-second window sampled in `sampleYields`) over its
+nominal rate, because with hauling a building's real output depends on how far
+its workers walk. It falls back to nominal for a building with no delivery in
+the last 45 seconds, and still reports zero for an exhausted Lumber Camp — the
+signal the AI uses to decide a shortage is structural. `estimateFoodRate`
+(`js/factions.js`) goes through it too, so the AI cannot think it is fed on
+farms whose harvest never arrives.
+
+The rate has to be a windowed average and not the gap between one delivery and
+the next: a building's workers walk home together, so two deliveries can land in
+the same tick and the implied rate comes out 6–9× the truth. That version
+existed long enough to make the first balance run unreadable.
 
 ## Day/night cycle — Basic
 
@@ -154,7 +276,8 @@ or spillable as loot. This underpins the entire raiding design.
 
 ## Buildings — Moderate
 
-`js/buildings.js`. 13 types: Town Hall, Storehouse, House, Farm (2×2 crop
+`js/buildings.js`. 14 types: Town Hall, Storehouse, House, Builder House
+(3 builder slots — see Construction & builders), Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles anywhere in a 25-tile square — up/down/left/right — around it; idles only
 once that whole reach is exhausted), Quarry, Gold Mine (needs a cave), Market,
@@ -164,7 +287,12 @@ Bridge (water-only, rotatable, drag to lay a span, one plank-deck sprite that
 tiles seamlessly in both axes; straight runs only — a horizontal and a vertical bridge can never touch or
 join, see Map & terrain and Units & combat).
 Placement validation with per-type requirements, construction time, HP/damage,
-demolish with 75% refund (except Town Hall). **Any non-water building can be
+demolish with 75% refund (except Town Hall — and except an unfinished site,
+which refunds its delivered materials in full instead). **Placement no longer
+builds anything**: every path now calls `startConstruction`, which stakes out a
+site for builders to supply and raise (see Construction & builders). The only
+direct `placeBuilding` caller left is the founding Town Hall, which has no build
+time and is laid down before the `game` global exists. **Any non-water building can be
 placed on forest or rock** — the footprint clears it, same as cutting a track
 (caves are still off-limits); the placement ghost fills the tile white when
 legal and red when blocked, and a tree inside the footprint fades so the wash
@@ -445,7 +573,11 @@ war waves, bridge and wall engineering, coalitions, event cards. `aiTick`
 faction id rather than randomly, so nations never tick together and a seed
 replays identically.
 
-**Nothing is read from global state.** Each nation keeps a `ScoutMemoryMap`:
+**Nothing is read from global state.** Civilians are invisible to all of it —
+seeing a rival's farmhands says nothing about their army, so `observe` and
+`visibleThreatNearHome` skip them, though a nation's own workers do count as
+observers (a lumberjack at the treeline is a real pair of eyes). Each nation
+keeps a `ScoutMemoryMap`:
 rival positions, rough army sizes and storehouse contents, written only by real
 line of sight (7 tiles per soldier, 9 per building, 12 for a town hall or
 castle), combat contact, or diplomacy. Memories decay, and — the important part
@@ -492,7 +624,12 @@ when enemy soldiers are visible near the capital.
 **Economy.** Deficit-scored build planning; farms staffed first when food is
 negative; a lumber camp on a worked-out forest is unstaffed so the shortage
 surfaces; recruits are held back from the workforce when the army is under
-strength (capped at a third of the population). Marginal utility per resource is
+strength (capped at a third of the population). Staffing now moves real people
+without knowing it — `staffWorkers` sets `b.workers` exactly as before and
+`reconcileJobs` (js/civilians.js) walks citizens to match, including the Town
+Hall's and Builder Houses' builder slots, which come first in the building list
+and so are filled first. A nation wants `1 + floor(pop/25)` Builder Houses and
+will not break ground on more sites than it has builders (`aiCanBreakGround`). Marginal utility per resource is
 demand-derived — a nation wants stone because the quarry it is trying to build
 costs stone — and drives market orders, trade pacts, expansion and, at the
 extreme, war. The AI keeps back the price of a Market in timber so it can never
@@ -656,7 +793,17 @@ get the same deterministic jitter in their own terrain sub-pass — stamped dead
 centre they lined up into a visible lattice. The art itself is untouched.
 `collectDepthLayers` takes an optional fade set (tile indices to render
 translucent) so the placement ghost can preview a tree about to be cleared.
-**Unit overlays** (`drawUnit`): the faction flash, health bar, caravan/envoy
+**Construction bars** (`drawBuilding`): an unfinished building carries an amber
+materials bar above its blue progress bar, and the blue one cannot move until
+the amber one is full. A pending bridge tile draws its deck ghosted at 0.4 alpha
+with a progress bar over it, since `map.bridge` is not stamped until the span is
+finished and the tile would otherwise be invisible water.
+**Civilians in the selection model**: box-select and Select Army skip them,
+a single click opens a read-only card describing what that citizen is doing, and
+a right click with only civilians selected does nothing at all.
+**Unit overlays** (`drawUnit`): civilians are drawn at `type.scale` (0.85), and
+every overlay measurement scales with the figure rather than the camera, so the
+faction flash still sits on a worker's head. the faction flash, health bar, caravan/envoy
 badge and plunder sack stack upward from the top of the *figure*, measured per
 sheet by `describeSheet`, not from the top of its 32px frame — a foot soldier's
 art starts 15 rows down it, so frame-anchored markers floated the better part of
@@ -666,7 +813,9 @@ territory ownership tint + viewport rectangle, click/tap to jump), dashed
 territory border lines on the main map, event cards (`#eventcard`, see Event
 cards above). Topbar with live stats, tax slider,
 and per-stat live tooltips (income vs consumption breakdowns; happiness
-itemized). Building panel: workers, storage contents, castle training/upgrades/
+itemized). Building panel: workers (labelled Builders on a Town Hall or Builder House),
+a construction site's materials ledger and how many builders are on it, storage
+contents, castle training/upgrades/
 rally/Grand Castle, market buy/sell/barter, copy, demolish; a box-selected
 group of buildings gets its own summary panel with Copy and Delete All.
 Diplomacy panel with
@@ -702,6 +851,16 @@ non-empty frames (idle/walk/attack/hurt/death) plus the opaque bounds of the
 figure inside its frame (`top`/`bottom`, used to place unit overlays and the
 selection ring), projectile sheet, pixel-art icon CSS sprites replacing emoji
 throughout the HUD.
+
+**Civilian art is the roster cut's leftovers.** `MiniShieldMan` and
+`MiniCrossBowMan` — no unit type has been keyed to either since the roster went
+from 13 to 9 — are the worker and the builder. They take the ordinary per-faction
+`recolor` and then a `drab` pass (saturation ×0.42, lightness ×0.9) baked once
+per faction at load, because at 16px a smaller figure alone does not read as a
+non-combatant; the nation's hue survives it, which it must, since whose workers
+those are is a targeting decision. Placeholder-grade: they are still soldiers'
+silhouettes, and swapping in drawn civilian art would touch nothing but
+`UNIT_SHEETS`.
 
 The two hue knobs used to be one. `hue: null` meant "leave the art alone",
 which is right for the player's units (the Minifolks art is already blue) but

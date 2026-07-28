@@ -198,7 +198,7 @@ class AICombatManager {
     for (const o of game.factions) {
       if (o.id === f.id || o.eliminated || !game.diplomacy.hostile(f.id, o.id)) continue;
       for (const u of o.units) {
-        if (!u.alive) continue;
+        if (!u.alive || u.type.civilian) continue;   // their villagers are not an assault
         if (Math.hypot(u.x - th.cx, u.y - th.cy) > HOME_DEFENSE_RADIUS) continue;
         if (!p.visible(u.x, u.y)) continue;
         v += u.type.dmg * 2 + u.hp * 0.1;

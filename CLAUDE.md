@@ -41,6 +41,8 @@ the code; stale docs are treated as bugs.
 - `js/economy.js` — Nation sim; `res` is a Proxy over per-building `store`s
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
 - `js/units.js` — unit defs, combat, projectiles, rob/haul, formations, separation
+- `js/civilians.js` — the citizenry: population embodiment, job assignment,
+  gathering trips, builders and construction sites
 - `js/factions.js` — Faction state, training, the AI executor (`aiTick`)
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
 - `js/events.js` — event-card queue (AI-initiated player choices, expiry)
@@ -61,11 +63,25 @@ the code; stale docs are treated as bugs.
 
 - `nation.res.gold -= x` works — it's a Proxy that withdraws from physical
   building stores (Town Hall drained first, Storehouses filled first).
-- `estimateIncome` (now in `js/economy.js`) deliberately re-implements
-  `buildingProduction` math because the real function mutates tree tiles.
-  Change production math in BOTH places — they drifted once already (BUGS #6,
-  fixed), and the AI reads this number to decide whether a shortage is
-  structural.
+- Production maths lives in exactly one place now: `workerYieldRate`
+  (`js/buildings.js`), which returns what ONE worker earns per second and
+  returns 0 when the ground is worked out. `estimateIncome` (`js/economy.js`)
+  calls it rather than re-deriving it — the duplication that caused BUGS #6 is
+  gone — but prefers a building's *measured* throughput (`b.yieldRate`) when it
+  has one, because output now depends on how far the workers walk. If you add a
+  producing building, `workerYieldRate` and `findWorkTile` are the two functions
+  that need to know about it.
+- **Nothing is deposited or built by a formula.** `Nation.tick` no longer
+  produces resources or advances construction; civilians do both by walking
+  (`js/civilians.js`). A new placement path must call `startConstruction`, not
+  `placeBuilding`, and must check `nation.canStart(cost)` (which nets off
+  materials already promised to open sites) rather than `canAfford`.
+- Every citizen in `nation.pop` is one civilian unit on the map, and
+  `syncCivilians` keeps that true both ways. Anything that changes `pop` (dawn
+  growth, starvation, `trainUnit`) is fine; anything that kills a civilian must
+  go through `onUnitDeath` so the population actually drops.
+- `building.workers` is still the only thing that decides who works where —
+  set it and `reconcileJobs` moves the bodies. Don't assign civilians directly.
 - `trainUnit` / `startCastleUpgrade` return error *strings*, not exceptions.
 - Bridges live in `map.bridge`, not `map.buildingAt` — they're terrain, not
   targetable buildings.
@@ -120,6 +136,10 @@ the code; stale docs are treated as bugs.
   `AI_ARCHETYPES` (keyed by `f.ai.doctrine`) and `game.diff`. Personality is
   rolled per match by `rollPersonalities` — don't mutate it; mutate the
   ambition instead.
-- Use `game.rng()` in AI code, not `Math.random()`, so seeds replay.
+- Use `game.rng()` in AI code — and in civilian code, which is sim state for
+  every nation including the player — never `Math.random()`. The last three
+  stragglers were removed (BUGS #16) and the whole match is now deterministic:
+  two runs of a seed produce identical state, which is what makes an A/B
+  comparison of an AI change mean anything. Don't reintroduce one.
 - Verification pattern (headless Playwright driving `game.tick(0.1)` loops) is
   documented at the bottom of `docs/formations-tiers-ui.md`.

@@ -10,15 +10,23 @@
 //      terrain rather than in the depth-sorted pass (js/ui.js).
 // size: tiles per side (art is scaled up for larger buildings).
 // How far (in tiles, each direction — a 51×51 square) a Lumber Camp's workers
-// will range to find a tree to chop. Shared with economy.js's estimateIncome,
-// which re-implements this search read-only — keep both in sync (see BUGS #6).
+// will range to find a tree to chop. `findWorkTile` below is the one search;
+// estimateIncome and the gatherers both go through it (see BUGS #6, fixed).
 const LUMBER_RADIUS = 25;
+// How far a Quarry's stonecutters and a Gold Mine's diggers will walk from the
+// building to find the rock face or cave mouth they work. Unlike forest, neither
+// is consumed — the tile is a workplace, not a stock.
+const QUARRY_RADIUS = 4;
+const MINE_RADIUS = 3;
+// `slots` are worker slots, and every filled one is now a civilian standing on
+// the map (js/civilians.js). `builders: true` marks slots whose citizens become
+// builders — they haul materials to construction sites instead of gathering.
 const BUILDING_TYPES = {
   townhall: {
     key: 'townhall', name: 'Town Hall', art: null, size: 2,
-    cost: {}, hp: 900, buildTime: 0, slots: 0, solid: true,
+    cost: {}, hp: 900, buildTime: 0, slots: 2, builders: true, solid: true,
     storage: { food: 300, wood: 300, stone: 300, gold: 1e9 },
-    desc: 'Heart of your nation. Stores resources. Lose it and your nation falls.',
+    desc: 'Heart of your nation. Stores resources, and quarters two builders. Lose it and your nation falls.',
   },
   storehouse: {
     key: 'storehouse', name: 'Storehouse', art: null, size: 1,
@@ -62,6 +70,11 @@ const BUILDING_TYPES = {
     placeReq: (map, x, y) => map.countAdjacent(x, y, T_CAVE, 1) > 0,
     reqText: 'must be adjacent to a cave',
   },
+  builderhouse: {
+    key: 'builderhouse', name: 'Builder House', art: null, size: 1,
+    cost: { wood: 30 }, hp: 160, buildTime: 8, slots: 3, builders: true,
+    desc: 'Quarters three builders. Nothing gets built without them: they carry 15 materials at a time from your stores to each site.',
+  },
   market: {
     key: 'market', name: 'Market', art: AT.MARKET, pair: true, size: 1,
     cost: { wood: 30, stone: 10 }, hp: 150, buildTime: 8, slots: 2,
@@ -102,7 +115,7 @@ const BUILDING_TYPES = {
   },
 };
 
-const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
+const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'builderhouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
 
 // Grand Castle: a prestige monument, not a win condition — the game does not end.
 // Any nation (player or AI) can raise one once it clears the gate below.
@@ -126,8 +139,20 @@ class Building {
     this.faction = factionId;
     this.x = x; this.y = y;                  // top-left tile
     this.hp = this.type.hp;
-    this.workers = 0;
+    this.workers = 0;              // slots the owner wants filled; civilians follow it
     this.progress = this.type.buildTime === 0 ? 1 : 0;   // construction 0..1
+    // Construction site ledger, set by startConstruction: what the site still
+    // wants, what has physically been carried here, and what is on a builder's
+    // back on its way here. Null once the building is finished.
+    this.site = null;
+    this.orient = 1;               // bridges: 1 horizontal, 2 vertical
+    // Actual delivered throughput, written by gatherers as they bank a load
+    // (js/civilians.js) and read by estimateIncome — with hauling, a building's
+    // real output depends on how far its workers walk, which no formula here knows.
+    this.yieldRate = null;         // measured resource/second, or null until sampled
+    this.lastDeliver = -1e9;
+    this.yieldTotal = 0;           // lifetime banked by this building's workers
+    this.yieldT0 = null; this.yieldBase = 0;   // open sampling window
     this.rally = null;
     this.trainQueue = [];                    // {unitKey, t}
     this.grand = false;                      // grand castle upgrade
@@ -159,7 +184,11 @@ function canPlace(map, typeKey, x, y, factionId, orient = 1) {
       const i = map.idx(tx, ty);
       if (map.buildingAt[i]) return false;
       const t = map.terrain[i];
-      if (type.waterOnly) { if (t !== T_WATER || map.bridge[i]) return false; }
+      // A bridge tile that is only *planned* still occupies the water: map.bridge
+      // is not stamped until the deck is finished, so occupancy and the
+      // perpendicular test below both go through map.bridgeAt, which is set the
+      // moment the site is laid out.
+      if (type.waterOnly) { if (t !== T_WATER || map.bridge[i] || map.bridgeAt[i]) return false; }
       // A footprint clears whatever rough ground it sits on (see placeBuilding) —
       // forest and rock are buildable, same as they're now walkable (js/map.js).
       // Caves stay off-limits; they're a resource mouth, not ground to build on.
@@ -170,7 +199,8 @@ function canPlace(map, typeKey, x, y, factionId, orient = 1) {
         for (const [ndx, ndy] of ORTH) {
           const nx = tx + ndx, ny = ty + ndy;
           if (!map.inBounds(nx, ny)) continue;
-          const nOrient = map.bridge[map.idx(nx, ny)];
+          const nb = map.bridgeAt[map.idx(nx, ny)];
+          const nOrient = nb ? nb.orient : map.bridge[map.idx(nx, ny)];
           if (nOrient && nOrient !== orient) return false;
         }
       }
@@ -181,11 +211,18 @@ function canPlace(map, typeKey, x, y, factionId, orient = 1) {
 }
 
 // orient (bridges only): 1 = horizontal, 2 = vertical.
+// This lays the building down finished (or, for anything with a build time, at
+// 0% with no site ledger). Everything the player and the AI put up goes through
+// startConstruction below instead — the only direct caller left is the founding
+// Town Hall, which has no build time and predates the `game` global.
 function placeBuilding(game, typeKey, x, y, factionId, orient = 1) {
   const b = new Building(typeKey, factionId, x, y);
+  b.orient = orient;
   for (const [tx, ty] of b.footprint()) {
     const i = game.map.idx(tx, ty);
-    if (b.type.key === 'bridge') { game.map.bridge[i] = orient; game.map.bridgeAt[i] = b; }
+    // map.bridge (the terrain flag that makes water walkable) waits for
+    // completeBuilding; an unfinished span is a row of pilings, not a crossing.
+    if (b.type.key === 'bridge') { game.map.bridgeAt[i] = b; }
     else {
       game.map.buildingAt[i] = b;
       // A footprint claims the ground outright: any tree or rock under it is
@@ -199,8 +236,61 @@ function placeBuilding(game, typeKey, x, y, factionId, orient = 1) {
     }
   }
   game.factions[factionId].buildings.push(b);
-  if (b.type.key === 'bridge') b.progress = 1;  // bridges are walkable ground, not targets
   return b;
+}
+
+// ---------- construction sites ----------
+// Placing a building no longer erects it. It stakes out a site: the ground is
+// claimed, but not one plank of the cost has been paid. Builders (js/civilians.js)
+// physically carry the materials here 15 at a time, and only once the ledger is
+// full does anyone start hammering. Materials in transit are on a builder's back
+// — kill the builder and they spill on the ground.
+function startConstruction(game, typeKey, x, y, factionId, orient = 1) {
+  const b = placeBuilding(game, typeKey, x, y, factionId, orient);
+  if (b.type.buildTime > 0) {
+    b.progress = 0;
+    b.site = { needs: { ...(b.type.cost || {}) }, delivered: {}, inbound: {}, wait: 0 };
+    for (const r of RES_KEYS) { b.site.delivered[r] = 0; b.site.inbound[r] = 0; }
+  } else completeBuilding(b);
+  return b;
+}
+
+// How much of resource `r` this site still needs nobody has picked up yet.
+function siteOutstanding(b, r) {
+  if (!b.site) return 0;
+  return Math.max(0, (b.site.needs[r] || 0) - b.site.delivered[r] - b.site.inbound[r]);
+}
+function siteReady(b) {
+  if (!b.site) return true;
+  return RES_KEYS.every(r => b.site.delivered[r] >= (b.site.needs[r] || 0) - 1e-6);
+}
+// Everything physically standing on the site: refunded on demolish, spilled as
+// loot when a half-built site is razed.
+function siteMaterials(b) {
+  const out = {};
+  let total = 0;
+  for (const r of RES_KEYS) {
+    out[r] = b.site ? b.site.delivered[r] : 0;
+    total += out[r];
+  }
+  return total > 0.5 ? out : null;
+}
+
+// Builders push progress in their own tick, so this is the one place that can
+// finish a building — the per-tick economy loop no longer touches progress.
+function advanceConstruction(b, amount) {
+  if (b.done || !siteReady(b)) return;
+  b.progress = Math.min(1, b.progress + amount);
+  if (b.progress >= 1) completeBuilding(b);
+}
+
+function completeBuilding(b) {
+  b.progress = 1;
+  b.site = null;
+  if (b.type.key === 'bridge') {
+    for (const [tx, ty] of b.footprint()) game.map.bridge[game.map.idx(tx, ty)] = b.orient;
+  }
+  onBuildingCompleted(b);   // may spark a border dispute (js/territory.js)
 }
 
 function removeBuilding(game, b) {
@@ -280,9 +370,21 @@ function annexBuildings(game, fallen, victorFid) {
   return taken;
 }
 
-// Tear down a building, reclaiming 75% of its build cost (rounded up).
+// Tear down a building, reclaiming 75% of its build cost (rounded up). Calling
+// off a *site* is not a demolition — nothing has been built yet — so it hands
+// back every material already carried there, at full value.
 function demolishBuilding(game, b) {
   const refund = {};
+  if (!b.done) {
+    const mats = siteMaterials(b);
+    for (const r of RES_KEYS) if (mats && mats[r] > 0.5) refund[r] = Math.floor(mats[r]);
+    removeBuilding(game, b);
+    if (b.faction >= 0) {
+      const n = game.factions[b.faction].nation;
+      for (const r in refund) n.res[r] += refund[r];
+    }
+    return refund;
+  }
   for (const [r, v] of Object.entries(b.type.cost || {})) refund[r] = Math.ceil(v * 0.75);
   removeBuilding(game, b);
   if (b.faction >= 0) {
@@ -292,37 +394,57 @@ function demolishBuilding(game, b) {
   return refund;
 }
 
-// Production per tick for one worked building. Returns {resource, amount} or null.
-function buildingProduction(map, b, dt) {
+// What ONE worker of this building is worth per second, standing at the face and
+// working — bonuses folded in, zero if the ground has nothing left to give.
+// Nothing is deposited here any more: a worker fills a 5-unit load at this rate
+// and then has to walk it to a Storehouse (js/civilians.js). This is the single
+// definition of production maths in the game; `estimateIncome` (js/economy.js)
+// calls it rather than re-deriving it, which is what BUGS #6 was about.
+// `atTile`, when given, is a workplace the caller has already located — it saves
+// the Lumber Camp's emptiness check re-scanning the whole reach.
+function workerYieldRate(map, b, atTile = null) {
   const type = b.type;
-  if (!type.produces || !b.done || b.workers === 0) return null;
-  let rate = type.rate * b.workers;
+  if (!type.produces || !b.done) return 0;
+  let rate = type.rate;
   if (type.key === 'farm') {
     let bonus = 1;
     if (map.countAdjacent(b.x, b.y, T_WATER, 2) > 0) bonus += 0.5;
     // wells boost farms
     for (const [tx, ty] of b.footprint()) {
-      const around = nearBuilding(map, tx, ty, 2, 'well');
-      if (around) { bonus += 0.25; break; }
+      if (nearBuilding(map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
     }
     rate *= bonus;
   }
-  if (type.key === 'lumber') {
-    // consume wood from tree tiles anywhere in a 25-tile square; camp idles
-    // once every tree in that whole reach is exhausted
-    let tree = null;
-    outer: for (let dy = -LUMBER_RADIUS; dy <= LUMBER_RADIUS; dy++)
-      for (let dx = -LUMBER_RADIUS; dx <= LUMBER_RADIUS; dx++) {
-        const tx = b.x + dx, ty = b.y + dy;
-        if (map.t(tx, ty) === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) { tree = map.idx(tx, ty); break outer; }
-      }
-    if (tree === null) return null;
-    const amount = rate * dt;
-    map.treeWood[tree] -= amount;
-    if (map.treeWood[tree] <= 0) { map.terrain[tree] = T_GRASS; map.decor[tree] = -1; }
-    return { resource: 'wood', amount };
+  if (type.key === 'lumber' && !atTile && !findWorkTile(map, b)) return 0;
+  return rate;
+}
+
+// The tile a worker of this building physically walks to and works at. Forest is
+// consumed as it is cut, so a Lumber Camp searches its whole reach every time and
+// idles when there is nothing left; rock and cave are workplaces, not stocks, and
+// never run out. Farm hands work their own crop field, traders their own Market.
+function findWorkTile(map, b) {
+  const key = b.type.key;
+  if (key === 'farm' || key === 'market') {
+    const tiles = b.footprint();
+    return tiles[Math.floor(tiles.length / 2)];
   }
-  return { resource: type.produces, amount: rate * dt };
+  const [want, radius] = key === 'lumber' ? [T_TREE, LUMBER_RADIUS]
+    : key === 'quarry' ? [T_ROCK, QUARRY_RADIUS]
+    : key === 'mine' ? [T_CAVE, MINE_RADIUS] : [null, 0];
+  if (want === null) return null;
+  // nearest first, so a camp works the treeline in front of it before the far side
+  let best = null, bestD = Infinity;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const tx = b.x + dx, ty = b.y + dy;
+      if (map.t(tx, ty) !== want) continue;
+      if (want === T_TREE && map.treeWood[map.idx(tx, ty)] <= 0) continue;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = [tx, ty]; }
+    }
+  }
+  return best;
 }
 
 function nearBuilding(map, x, y, radius, typeKey) {

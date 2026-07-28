@@ -197,7 +197,7 @@ function resolveAIDispute(a, b) {
     game.log(`Envoys from ${fa.name} and ${fb.name} settle the boundary.`);
     // merchants may turn a settled border into a trade pact
     const merchant = [fa, fb].find(x => x.ai && (x.ai.doctrine === 'prosperity' || x.ai.doctrine === 'hegemon'));
-    if (merchant && Math.random() < 0.3) {
+    if (merchant && game.rng() < 0.3) {
       const other = merchant === fa ? b : a;
       dip.propose(merchant.id, other, 'trade');
     }

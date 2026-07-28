@@ -124,6 +124,12 @@ const UNIT_SHEETS = {
   cavalier: 'MiniCavalierMan.png',
   king:     'MiniKingMan.png',
   prince:   'MiniPrinceMan.png',
+  // Civilians (js/civilians.js). Two sheets left over from the roster cut — no
+  // unit type is keyed `shieldman` or `crossbow` any more — put back to work as
+  // the townsfolk. They are drawn at UNIT_TYPES.scale (0.85), so a worker reads
+  // as smaller than a soldier at a glance even before you look at what it carries.
+  shieldman: 'MiniShieldMan.png',
+  crossbow:  'MiniCrossBowMan.png',
 };
 
 // Faction palettes. `hue` recolors the blue clothing on the unit sheets (null = leave the
@@ -168,7 +174,8 @@ const Assets = {
       const punySheet = roofHue === null ? toCanvas(puny) : recolor(puny, roofHue, 'warm');
       this.unitSheets[f] = {};
       for (const [key, img] of Object.entries(rawUnits)) {
-        const canvas = hue === null ? toCanvas(img) : recolor(img, hue, 'cool');
+        let canvas = hue === null ? toCanvas(img) : recolor(img, hue, 'cool');
+        if (CIVILIAN_SHEETS.includes(key)) canvas = drab(canvas);
         this.unitSheets[f][key] = describeSheet(canvas);
       }
       this.rampart[f] = bakeRamparts(punySheet, roofHue);
@@ -275,6 +282,19 @@ function bakeBuildings(plain, sheet, roofHue, puny) {
     }),
     castle: bakeArt({ sheet, at: AT.CASTLE }, (px, strip, g) => {
       if (roofHue !== null) shiftHue(g, VIOLET, roofHue);
+    }),
+    // The builders' yard: the house silhouette with the trade's kit against it —
+    // a ladder up the near wall and a stack of sawn planks in the yard. It has to
+    // read as "a house that builds things" next to an ordinary House at 16px, so
+    // the ladder breaks the roofline rather than sitting flat on the wall.
+    builderhouse: bakeArt({ sheet, at: AT.HOUSE[1] }, px => {
+      px(WOOD.dark, 1, 3, 1, 12); px(WOOD.dark, 3, 3, 1, 12);   // ladder rails
+      px(WOOD.lit, 1, 3, 1, 1); px(WOOD.lit, 3, 3, 1, 1);
+      for (let y = 5; y < 15; y += 3) px(WOOD.mid, 1, y, 3, 1);  // rungs
+      px(WOOD.dim, 9, 13, 6, 1); px(WOOD.lit, 9, 12, 6, 1);      // plank stack
+      px(WOOD.mid, 10, 11, 5, 1); px(WOOD.lit, 10, 10, 5, 1);
+      px(WOOD.dark, 9, 14, 6, 1);
+      px('#8d8d92', 6, 8, 1, 5); px('#c8c8cf', 5, 7, 3, 2);      // mallet leaning on the wall
     }),
   };
 }
@@ -388,6 +408,27 @@ function toCanvas(img) {
   c.width = img.width; c.height = img.height;
   c.getContext('2d').drawImage(img, 0, 0);
   return c;
+}
+
+// Working clothes. The two sheets the civilians borrow (js/civilians.js) are
+// soldiers' art, and at 16px a smaller figure alone does not say "not a soldier"
+// — so a citizen's palette is muted and slightly darkened. The nation's colour
+// still shows, because whose lumberjacks those are matters, but a crowd of
+// workers no longer reads as a crowd of troops.
+const CIVILIAN_SHEETS = ['shieldman', 'crossbow'];
+
+function drab(canvas, satMul = 0.42, lightMul = 0.9) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = data.data;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] === 0) continue;
+    const [h, s, l] = rgbToHsl(px[i], px[i + 1], px[i + 2]);
+    const [r, g, b] = hslToRgb(h, s * satMul, Math.min(1, l * lightMul));
+    px[i] = r; px[i + 1] = g; px[i + 2] = b;
+  }
+  ctx.putImageData(data, 0, 0);
+  return canvas;
 }
 
 // Recolor: shift blue hues (units, 'cool') or orange hues (roofs, 'warm') to target hue.

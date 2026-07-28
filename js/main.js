@@ -74,6 +74,9 @@ class Game {
       th.progress = 1;
       // seed starting resources physically into the Town Hall
       th.store.food = 120; th.store.wood = 90; th.store.stone = 50; th.store.gold = 40;
+      // The Town Hall's two builder slots start filled: without a builder nothing
+      // can be built at all, including the Builder House that makes more of them.
+      th.workers = th.type.slots;
       // a small starting escort
       const f = this.factions[i];
       const spots = [[z.x - 3, z.y + 2], [z.x + 2, z.y + 2], [z.x - 3, z.y - 3]];
@@ -151,7 +154,8 @@ class Game {
       let best = null, bd = 1.3;
       for (const f of this.factions) {
         for (const u of f.units) {
-          if (!u.alive || u.type.envoy || u.carryCap - u.carryTotal() <= 0) continue;
+          // spoils are a raider's business — civilians have their own loads to carry
+          if (!u.alive || u.type.envoy || u.type.civilian || u.carryCap - u.carryTotal() <= 0) continue;
           const d = Math.hypot(u.x - pile.x, u.y - pile.y);
           if (d < bd) { bd = d; best = u; }
         }
@@ -170,7 +174,7 @@ class Game {
         let cand = null, cd = 5;
         for (const f of this.factions) {
           for (const u of f.units) {
-            if (!u.alive || u.type.envoy || u.mission || u.target || u.path.length > 0) continue;
+            if (!u.alive || u.type.envoy || u.type.civilian || u.mission || u.target || u.path.length > 0) continue;
             if (u.carryCap - u.carryTotal() <= 0) continue;
             const d = Math.hypot(u.x - pile.x, u.y - pile.y);
             if (d < cd) { cd = d; cand = u; }
@@ -273,6 +277,8 @@ function saveFormations(name, cfg) {
 
 function onUnitDeath(unit, attacker) {
   const f = game.factions[unit.faction];
+  // a killed civilian is a citizen the nation no longer has
+  if (unit.type.civilian) onCivilianDeath(unit);
   if (unit.type.key === 'king') {
     f.kingAlive = false;
     game.log(`The King of ${f.name} has fallen in battle!`, unit.faction === 0 ? 'bad' : '');
@@ -312,6 +318,12 @@ function dropLoot(b) {
 function onBuildingDestroyed(b, attacker) {
   // razing a storehouse scatters its goods on the ground to be carried off
   if (b.type.storage) dropLoot(b);
+  // so does knocking over a half-built site: the materials the builders carried
+  // there are lying on the ground, and anyone with a sack can take them
+  if (!b.done && b.site) {
+    const mats = siteMaterials(b);
+    if (mats) game.loot.push({ x: b.cx, y: b.cy, res: mats, t: 0 });
+  }
   if (b.type.key === 'bridge') {
     // a single tile going down brings the whole straight span with it
     collapseBridgeSpan(game, b);

@@ -139,6 +139,18 @@ function aiBuildWishes(f, counts) {
   return aiBuildWishesScored(f, counts).map(x => x[1]);
 }
 
+// How much unfinished work a nation should have on the go at once. Every open
+// site holds a reservation against the stores and needs a builder to walk to it,
+// so breaking ground faster than the builders can follow just spreads them thin
+// and locks up the timber. Shared by every AI path that puts a building down.
+function aiSiteBudget(f) {
+  const crew = f.units.filter(u => u.alive && u.type.key === 'builder').length;
+  return Math.max(2, crew);
+}
+function aiCanBreakGround(f) {
+  return f.buildings.filter(b => !b.done).length < aiSiteBudget(f);
+}
+
 // [score, key] pairs, highest first. The scores matter: bootstrap bonuses below
 // are how a nation knows a first Castle outranks a fourth storehouse, and a
 // caller that re-ranks by position alone throws that information away.
@@ -154,6 +166,10 @@ function aiBuildWishesScored(f, counts) {
     storehouse: (prof.desire.storehouse || 1)
       + ['food', 'wood', 'stone'].filter(r => n.capacityFor(r) > 0 && n.total(r) > n.capacityFor(r) * 0.7).length,
     market: prof.desire.market || 1,
+    // Builders are not optional infrastructure: without one of these nothing a
+    // nation plans ever gets raised. A second yard once the town is big enough
+    // keeps a long build queue from crawling.
+    builderhouse: 1 + Math.floor(pop / 25),
     church: 1,
     well: 1,
     castle: 1 + (prof.secondCastlePop && pop >= prof.secondCastlePop ? 1 : 0),
@@ -165,6 +181,8 @@ function aiBuildWishesScored(f, counts) {
     let s = deficit * (prof.buildWeights[k] || 1);
     // bootstrap: stand up the essential production chain before anything fancy
     if ((k === 'farm' || k === 'lumber') && have(k) === 0) s += 10;
+    // nothing else on this list can be built at all until the builders exist
+    if (k === 'builderhouse' && have(k) === 0) s += 9;
     if (k === 'quarry' && have(k) === 0 && have('lumber') > 0) s += 5;
     if (k === 'house' && n.pop >= n.housingCap() - 2) s += 6;   // growth is blocked right now
     if (k === 'castle' && have('quarry') === 0) s -= 5;         // no stone income yet
@@ -379,7 +397,7 @@ function aiSendUltimatum(f) {
       { label: 'Counter-offer 40', cls: '', apply: () => {
           const pn = game.factions[0].nation;
           const odds = (game.diplomacy.relation(0, f.id) + 100) / 200;   // warmer relations, better odds
-          if (pn.res.gold >= 40 && Math.random() < odds + 0.2) {
+          if (pn.res.gold >= 40 && game.rng() < odds + 0.2) {
             pn.res.gold -= 40;
             f.nation.res.gold += 40;
             ai.consolidationUntil = Math.max(ai.consolidationUntil, game.time + 120);
@@ -644,19 +662,19 @@ function aiPickExpansionSite(f, want) {
 // Raise one building per call, cheapest-first through the settlement plan.
 function aiDevelopSatellite(f, site, want) {
   const n = f.nation;
+  if (!aiCanBreakGround(f)) return false;
   const order = [];
   if (want && EXTRACTOR_FOR[want]) order.push(EXTRACTOR_FOR[want]);
   order.push(...SATELLITE_PLAN);
   for (const key of order) {
     const type = BUILDING_TYPES[key];
-    if (!type || !n.canAfford(type.cost)) continue;
+    if (!type || !n.canStart(type.cost)) continue;
     if (!f.brain.utility.respectsWoodFloor(key)) continue;
     const cap = key === 'house' ? 2 : 1;
     if (aiCountNearSite(f, site, key) >= cap) continue;
     const spot = aiFindSpotNearSite(f, key, site);
     if (!spot) continue;
-    n.pay(type.cost);
-    placeBuilding(game, key, spot[0], spot[1], f.id);
+    startConstruction(game, key, spot[0], spot[1], f.id);
     f.ai.expansionBuilt = (f.ai.expansionBuilt || 0) + 1;
     if (f.ai.expansionBuilt === 1) {
       game.log(`Settlers from ${f.name} are breaking ground on new land.`);
@@ -677,7 +695,8 @@ function aiPlanWalls(f) {
   // its stone on a wall ring before building a Castle can never train a soldier
   if (!f.buildings.some(b => b.type.key === 'castle' && b.done && b.hp > 0)) return;
   const n = f.nation;
-  if (!n.canAfford(BUILDING_TYPES.gate.cost)) return;   // afford the priciest piece
+  if (!n.canStart(BUILDING_TYPES.gate.cost)) return;   // afford the priciest piece
+  if (!aiCanBreakGround(f)) return;                   // builders are already behind
   // core bounding box; freeze the ring so it stays coherent, expanding only
   // when the town outgrows it
   let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, core = 0;
@@ -714,15 +733,13 @@ function aiPlanWalls(f) {
     cand.sort((p, q) => Math.hypot(p[0] - tx, p[1] - ty) - Math.hypot(q[0] - tx, q[1] - ty));
     const spot = cand.find(([x, y]) => aiRingTileConnected(f, x, y));
     if (!spot) return;
-    n.pay(BUILDING_TYPES.gate.cost);
-    placeBuilding(game, 'gate', spot[0], spot[1], f.id);
+    startConstruction(game, 'gate', spot[0], spot[1], f.id);
     return;
   }
   for (const [x, y] of per) {
     if (!canPlace(game.map, 'wall', x, y, f.id)) continue;   // occupied or natural barrier
     if (!aiRingTileConnected(f, x, y)) continue;             // e.g. across a channel
-    n.pay(BUILDING_TYPES.wall.cost);
-    placeBuilding(game, 'wall', x, y, f.id);
+    startConstruction(game, 'wall', x, y, f.id);
     return;                                             // one segment per tick
   }
 }
@@ -817,9 +834,9 @@ function aiBuildBridges(f) {
   const i = game.map.idx(x, y);
   if (game.map.bridge[i] || game.map.terrain[i] !== T_WATER
       || !canPlace(game.map, 'bridge', x, y, f.id, orient)) { bp.i++; return; }
-  if (!f.nation.canAfford(BUILDING_TYPES.bridge.cost)) return;   // wait for wood
-  f.nation.pay(BUILDING_TYPES.bridge.cost);
-  placeBuilding(game, 'bridge', x, y, f.id, orient);
+  if (!f.nation.canStart(BUILDING_TYPES.bridge.cost)) return;   // wait for wood
+  if (!aiCanBreakGround(f)) return;
+  startConstruction(game, 'bridge', x, y, f.id, orient);
   bp.i++;
   if (bp.i >= bp.tiles.length) {
     f.ai.bridgePlan = null;
