@@ -60,12 +60,14 @@ class ScoutMemoryMap {
   }
 
   markExplored(cx, cy, radius) {
-    const x0 = Math.max(0, Math.floor(cx - radius)), x1 = Math.min(MAP_W - 1, Math.ceil(cx + radius));
+    const x0 = Math.floor(cx - radius), x1 = Math.ceil(cx + radius);
     const y0 = Math.max(0, Math.floor(cy - radius)), y1 = Math.min(MAP_H - 1, Math.ceil(cy + radius));
     const r2 = radius * radius;
     for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+      for (let xi = x0; xi <= x1; xi++) {
+        if (!WORLD_WRAP && (xi < 0 || xi >= MAP_W)) continue;
+        const x = wrapX(xi);
+        const dx = wdx(cx, x + 0.5), dy = y + 0.5 - cy;
         if (dx * dx + dy * dy > r2) continue;
         const i = y * MAP_W + x;
         if (!this.explored[i]) { this.explored[i] = 1; this.exploredCount++; }
@@ -74,8 +76,9 @@ class ScoutMemoryMap {
   }
 
   isExplored(x, y) {
-    if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return false;
-    return this.explored[y * MAP_W + x] === 1;
+    if (y < 0 || y >= MAP_H) return false;
+    if (!WORLD_WRAP && (x < 0 || x >= MAP_W)) return false;
+    return this.explored[y * MAP_W + wrapX(x)] === 1;
   }
 
   // Forget a building we remember but can now see is gone (razed or captured).
@@ -186,7 +189,7 @@ class AIPerception {
     // or hitting it. From a distance you can tell a granary is busy, not full.
     if (b.type.storage) {
       const close = this.observers.some(([ox, oy]) =>
-        Math.hypot(ox - b.cx, oy - b.cy) <= 2.5);
+        wdist(ox, oy, b.cx, b.cy) <= 2.5);
       if (close) {
         mem.store = { food: b.store.food, wood: b.store.wood, stone: b.store.stone, gold: b.store.gold };
         mem.storeSeenAt = now;

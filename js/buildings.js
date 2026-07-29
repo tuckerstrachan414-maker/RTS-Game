@@ -153,6 +153,9 @@ class Building {
     this.lastDeliver = -1e9;
     this.yieldTotal = 0;           // lifetime banked by this building's workers
     this.yieldT0 = null; this.yieldBase = 0;   // open sampling window
+    // Set on a construction site the nation cannot afford to have ignored;
+    // builders weight it as much nearer than it is (js/civilians.js claimSite).
+    this.urgent = false;
     this.rally = null;
     this.trainQueue = [];                    // {unitKey, t}
     this.grand = false;                      // grand castle upgrade
@@ -191,8 +194,9 @@ function canPlace(map, typeKey, x, y, factionId, orient = 1) {
       if (type.waterOnly) { if (t !== T_WATER || map.bridge[i] || map.bridgeAt[i]) return false; }
       // A footprint clears whatever rough ground it sits on (see placeBuilding) —
       // forest and rock are buildable, same as they're now walkable (js/map.js).
+      // Beach is buildable too, which is what lets a Dock stand on the shore.
       // Caves stay off-limits; they're a resource mouth, not ground to build on.
-      else if (t !== T_GRASS && t !== T_TREE && t !== T_ROCK) return false;
+      else if (t !== T_GRASS && t !== T_TREE && t !== T_ROCK && t !== T_SAND) return false;
       // Bridges run straight, one axis at a time, and never meet at a junction:
       // a tile touching a perpendicular span (or ending flush against one) is refused.
       if (type.key === 'bridge') {
@@ -437,8 +441,8 @@ function findWorkTile(map, b) {
   let best = null, bestD = Infinity;
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
-      const tx = b.x + dx, ty = b.y + dy;
-      if (map.t(tx, ty) !== want) continue;
+      const tx = wrapX(b.x + dx), ty = b.y + dy;
+      if (!map.inBounds(tx, ty) || map.t(tx, ty) !== want) continue;
       if (want === T_TREE && map.treeWood[map.idx(tx, ty)] <= 0) continue;
       const d = dx * dx + dy * dy;
       if (d < bestD) { bestD = d; best = [tx, ty]; }

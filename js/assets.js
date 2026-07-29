@@ -109,6 +109,14 @@ const PUNY = {
   LUMBER: [4, 27],      // log-walled cabin
   MINE: [6, 26],        // mossy mound with a timber-framed adit
   WELL: [4, 30],        // roofed wellhead
+  // Beach. A 3x3 patch of sand drawn over grass, blended at the edges: the
+  // top-left cell is the north-west corner and [5,1] is solid sand. `sandEdge`
+  // (js/map.js) picks the cell from a tile's neighbours, so a strand reads as
+  // one continuous bank of sand rather than a row of separate blobs.
+  SAND: [4, 0],
+  // The pack's palm — catalogued for the tropical biomes that will want it, not
+  // drawn yet (there is no per-biome tree art; see the note on BIOMES).
+  PALM: [3, 28],
 };
 
 // Unit spritesheets. Rows: 0=idle, 1=walk, rows-3=attack, rows-2=hurt, rows-1=death.
@@ -160,6 +168,9 @@ const Assets = {
   bridgeH: null,         // the same deck turned a quarter turn, for an east-west span
   tilled: null,          // farm field under construction (bare furrows)
   crop: null,            // finished farm field (furrows in crop)
+  sand: [],              // beach 3x3, indexed [ey * 3 + ex] from GameMap.sandEdge
+  deepWater: null,       // open ocean: the atlas's water centre, taken deeper
+  ships: [],             // [factionIdx] -> {transport, galley}, see bakeShips
   loaded: false,
 
   async load() {
@@ -184,6 +195,7 @@ const Assets = {
       }
       this.rampart[f] = bakeRamparts(punySheet, roofHue);
       this.buildingArt[f] = bakeBuildings(tileset, this.factionTilesets[f], roofHue, punySheet);
+      this.ships[f] = bakeShips(FACTION_COLORS[f].css);
     }
     this.tileset = tileset;
     // Bridges are terrain, not a faction's building — baked off the plain sheet.
@@ -191,6 +203,12 @@ const Assets = {
     this.bridgeH = bakePuny(puny, PUNY.BRIDGE, { rotate: true });
     this.tilled = bakeFarmland(false);
     this.crop = bakeFarmland(true);
+    // Terrain comes off the PLAIN punyworld sheet, never a recolored one: a
+    // beach belongs to the world, not to whoever happens to own the tile.
+    for (let ey = 0; ey < 3; ey++)
+      for (let ex = 0; ex < 3; ex++)
+        this.sand[ey * 3 + ex] = bakePuny(puny, [PUNY.SAND[0] + ex, PUNY.SAND[1] + ey]);
+    this.deepWater = bakeDeepWater(tileset);
     this.loaded = true;
   },
 };
@@ -287,6 +305,29 @@ function bakeBuildings(plain, sheet, roofHue, puny) {
     castle: bakeArt({ sheet, at: AT.CASTLE }, (px, strip, g) => {
       if (roofHue !== null) shiftHue(g, VIOLET, roofHue);
     }),
+    // The Dock. Drawn here for the same reason the Quarry is: neither tileset has
+    // a harbour in it. It has to read as "shipyard" against a beach at 16px and
+    // from the same three-quarter angle as everything else, so it is a planked
+    // jetty running out over the water on pilings, with a boathouse and a
+    // derrick on the landward side. Scaled 2x across its footprint like the
+    // Church and the Castle.
+    dock: bakeArt(null, px => {
+      // No water is painted in: the tile underneath is already the sea (or the
+      // beach), and a baked-in water band read as a blue rectangle sitting on
+      // top of the sand.
+      px(WOOD.dim, 1, 9, 14, 3);                           // deck
+      px(WOOD.lit, 1, 9, 14, 1);
+      px(WOOD.dark, 1, 11, 14, 1);
+      for (let x = 2; x < 15; x += 4) px(WOOD.dark, x, 12, 1, 3);   // pilings
+      px(WOOD.dark, 3, 1, 10, 8);                          // boathouse
+      px(WOOD.mid, 4, 2, 8, 7);
+      px(WOOD.lit, 4, 2, 8, 1);
+      px('#8b3a2e', 2, 0, 12, 2); px('#b04b3a', 2, 0, 12, 1);       // roof
+      px('#2b1f16', 6, 5, 4, 4);                           // open boat bay
+      px('#c9b07a', 6, 5, 4, 1);
+      px(WOOD.dark, 13, 1, 1, 8); px(WOOD.dark, 13, 1, 3, 1);       // derrick arm
+      px('#9a9a9a', 15, 2, 1, 3);                          // hoist rope
+    }),
     // The builders' yard: the house silhouette with the trade's kit against it —
     // a ladder up the near wall and a stack of sawn planks in the yard. It has to
     // read as "a house that builds things" next to an ordinary House at 16px, so
@@ -307,6 +348,59 @@ function bakeBuildings(plain, sheet, roofHue, puny) {
 // the GRASS_VARS tuft tiles, which is to say they were invisible against grass. These
 // two tiles are ploughed soil (while the farm is being built) and the same field in
 // crop (once it is finished), so a farm reads as a farm and its progress reads too.
+// Open ocean. The atlas has one flat water-centre cell and no notion of depth,
+// so the deep tile is that cell taken darker and a shade greener — enough that a
+// coastline reads as a shelf falling away into blue water without introducing a
+// second water palette the shoreline art would then have to match.
+function bakeDeepWater(tileset) {
+  const c = document.createElement('canvas');
+  c.width = TILE; c.height = TILE;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingEnabled = false;
+  g.drawImage(tileset, AT.W_C[0] * TILE, AT.W_C[1] * TILE, TILE, TILE, 0, 0, TILE, TILE);
+  const d = g.getImageData(0, 0, TILE, TILE), p = d.data;
+  for (let i = 0; i < p.length; i += 4) {
+    if (!p[i + 3]) continue;
+    p[i] = p[i] * 0.55; p[i + 1] = p[i + 1] * 0.62; p[i + 2] = p[i + 2] * 0.82;
+  }
+  g.putImageData(d, 0, 0);
+  return c;
+}
+
+// Ships. There is no boat anywhere in either tileset, so — same approach as the
+// Quarry and the Storehouse — they are drawn here rather than added as art. Both
+// are 16x16, seen from above-behind like everything else, and both take the
+// nation's colour on the sail so a fleet on open water is legible at a glance.
+//
+//  transport  a broad-beamed hulk: deep hull, one square sail, cargo lashed amidships
+//  galley     narrower, a ram at the prow and oars out either side
+function bakeShips(css) {
+  const HULL = { lit: '#a8763f', mid: '#7d5530', dark: '#523720' };
+  const sail = css;
+  return {
+    transport: bakeArt(null, px => {
+      px(HULL.dark, 2, 9, 12, 4);                       // hull
+      px(HULL.mid, 3, 8, 10, 1); px(HULL.mid, 3, 10, 10, 2);
+      px(HULL.lit, 3, 9, 10, 1);
+      px(HULL.dark, 1, 10, 1, 2); px(HULL.dark, 14, 10, 1, 2);
+      px('#3c2a18', 7, 2, 1, 7);                        // mast
+      px(sail, 8, 3, 5, 5); px('#ffffff', 8, 3, 5, 1);  // sail
+      px('#000000aa', 8, 7, 5, 1);
+      px('#6b4a2a', 4, 11, 3, 2); px('#8a6238', 4, 11, 3, 1);   // deck cargo
+      px('#e6dcc0', 2, 13, 12, 1);                      // wake
+    }),
+    galley: bakeArt(null, px => {
+      px(HULL.dark, 2, 9, 12, 3);
+      px(HULL.mid, 3, 8, 10, 1); px(HULL.lit, 3, 9, 10, 1);
+      px('#c9c2b0', 14, 9, 2, 1);                       // ram
+      px('#3c2a18', 7, 3, 1, 6);                        // mast
+      px(sail, 8, 4, 4, 4); px('#ffffff', 8, 4, 4, 1);
+      for (let x = 3; x < 13; x += 3) { px('#6b4a2a', x, 12, 1, 2); px('#6b4a2a', x, 7, 1, 1); }
+      px('#e6dcc0', 2, 12, 12, 1);
+    }),
+  };
+}
+
 function bakeFarmland(planted) {
   return bakeArt(null, px => {
     px('#6d4a2c', 0, 0, TILE, TILE);

@@ -314,6 +314,14 @@
   #difficulty button:hover { background: #3a4658; }
   #difficulty button b { display: block; font-size: 17px; margin-bottom: 3px; }
   #difficulty .diff-desc { font-size: 12.5px; color: #9ab; line-height: 1.4; }
+  #world-pick { width: min(480px, 92vw); text-align: left; }
+  #world-pick .world-label { color: #9ab; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 5px; }
+  #world-pick .world-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  #world-pick .world-row button { width: auto; flex: 1 1 auto; text-align: center;
+    padding: 7px 10px; font-size: 13px; }
+  #world-pick .world-row button.on { background: #3d5b78; border-color: #6f9ec9; }
+  #world-pick .world-desc { color: #9ab; font-size: 12px; margin-top: 6px; min-height: 2.6em; line-height: 1.4; }
 
   /* Above every floating HUD panel (the highest is the tooltip at 9) — the end screen
      has to be the last word, and a diplomacy panel left open used to sit on top of it. */
@@ -470,6 +478,16 @@
 <div id="difficulty">
   <h1><span class="icon icon-crown"></span> Nations</h1>
   <p class="sub">Rival nations pursue their own ambitions — conquest, riches, walls or webs of alliances. Choose how hard they come at you.</p>
+  <!-- World picker. The first, deliberately small piece of the world creator:
+       one row of presets over `WORLD_PRESETS` (js/world.js). Everything a fuller
+       creator would offer — sea level, continent count, rainfall — is already a
+       knob on `configureWorld`, so growing this into a proper screen means
+       adding controls here, not changing the generator. -->
+  <div id="world-pick">
+    <div class="world-label">World</div>
+    <div class="world-row"></div>
+    <div class="world-desc"></div>
+  </div>
   <button data-diff="ramped"><b>Measured March</b><span class="diff-desc"></span></button>
   <button data-diff="slanted"><b>Quiet Frontier</b><span class="diff-desc"></span></button>
   <button data-diff="ruthless"><b>Iron Age</b><span class="diff-desc"></span></button>
@@ -508,6 +526,7 @@
   </div>
 </div>
 
+<script src="js/world.js"></script>
 <script src="js/assets.js"></script>
 <script src="js/map.js"></script>
 <script src="js/buildings.js"></script>
@@ -515,6 +534,7 @@
 <script src="js/market.js"></script>
 <script src="js/units.js"></script>
 <script src="js/civilians.js"></script>
+<script src="js/naval.js"></script>
 <script src="js/factions.js"></script>
 <script src="js/diplomacy.js"></script>
 <script src="js/events.js"></script>
@@ -524,6 +544,7 @@
 <script src="js/ai-utility.js"></script>
 <script src="js/ai-trade.js"></script>
 <script src="js/ai-combat.js"></script>
+<script src="js/globe.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/main.js"></script>
 </body>

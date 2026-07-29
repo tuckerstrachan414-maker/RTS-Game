@@ -17,13 +17,13 @@ class Territory {
   }
 
   pairKey(a, b) { return a < b ? a * this.n + b : b * this.n + a; }
-  ownerAt(x, y) { return this.owner[y * MAP_W + x]; }
+  ownerAt(x, y) { return this.owner[y * MAP_W + wrapX(x)]; }
 
   // Bounds-safe "is this tile inside `fid`'s claim?" — the question a defensive
   // garrison asks before patrolling onto a tile (js/units.js, tickPatrol).
   // `ownerAt` alone reads out of the array on an off-map tile.
   controls(fid, x, y) {
-    return game.map.inBounds(x, y) && this.owner[y * MAP_W + x] === fid;
+    return game.map.inBounds(x, y) && this.owner[y * MAP_W + wrapX(x)] === fid;
   }
 
   // Influence radiates from completed buildings with linear falloff; the
@@ -40,11 +40,16 @@ class Territory {
         const isWall = b.type.key === 'wall' || b.type.key === 'gate';
         const w = isKeep ? 20 : isCastle ? 14 : isWall ? 6 : 8;
         const r = isKeep ? 12 : isCastle ? 10 : isWall ? 4 : 6;
-        const x0 = Math.max(0, Math.floor(b.cx - r)), x1 = Math.min(MAP_W - 1, Math.ceil(b.cx + r));
+        // The x sweep is not clamped on a wrapping world: a town on the seam
+        // claims ground both sides of it, the same way it claims ground north
+        // and south. Only y stops at the poles.
+        let x0 = Math.floor(b.cx - r), x1 = Math.ceil(b.cx + r);
+        if (!WORLD_WRAP) { x0 = Math.max(0, x0); x1 = Math.min(MAP_W - 1, x1); }
         const y0 = Math.max(0, Math.floor(b.cy - r)), y1 = Math.min(MAP_H - 1, Math.ceil(b.cy + r));
         for (let y = y0; y <= y1; y++) {
-          for (let x = x0; x <= x1; x++) {
-            const d = Math.hypot(x + 0.5 - b.cx, y + 0.5 - b.cy);
+          for (let xi = x0; xi <= x1; xi++) {
+            const x = wrapX(xi);
+            const d = wdist(x + 0.5, y + 0.5, b.cx, b.cy);
             if (d < r) this.inf[base + y * MAP_W + x] += w * (1 - d / r);
           }
         }

@@ -639,8 +639,9 @@ project — see README's "no build step" philosophy). Verification for this
 batch was done with ad hoc headless Playwright scripts driving the
 already-running `game`/`ui` globals via `page.evaluate`, fast-forwarding
 with `game.tick(0.1)` in a loop for deterministic time control. Those
-scripts were scratch files, not committed — if you need to re-verify this
-area, the pattern is:
+scripts were scratch files, not committed (name them `_something.js` in the repo
+root — `.gitignore` covers that prefix so they never end up in a commit) — if
+you need to re-verify this area, the pattern is:
 
 ```js
 const { chromium } = require('playwright-core');
@@ -850,3 +851,64 @@ worth knowing before touching it:
   the margins uneven, which put the one toolless sheet a pixel off from the
   other four. `FOOT_ROW`/`FOOT_CENTRE` come from the MinifolksHumans sheets, so
   a civilian stands on a tile exactly the way a swordsman does.
+
+## The world pass (2026-07): verifying wrap, the navy and the globe
+
+Three things in this batch are not visible in a screenshot and want their own
+harness, all in the same headless-Playwright pattern as above.
+
+**Wrap.** The failure mode is silent: a unit near the seam walks the whole
+width of the planet the wrong way, or a border/tree/army is culled because a
+bounding test compared raw x values. The check is to place a unit at
+`x = MAP_W - 2`, order it to `x = 2`, tick, and assert the path length is ~4
+and not ~`MAP_W`; and to put the camera at `cam.x = MAP_W - 5` and assert
+`ui.onScreen` is true for objects at small x. `wdx` is the primitive every one
+of those goes through — if something behaves oddly near x = 0, the first thing
+to look for is a raw `b.x - a.x`.
+
+**Naval.** The whole chain is drivable in one `page.evaluate`: `aiFindDockSpot`
+→ `placeBuilding('dock')` → `completeBuilding` → `trainShip` → tick until a
+hull exists → assert it is standing on `T_WATER` → `orderBoard` each escort →
+tick until `ship.cargo.length` matches → `orderUnload` at a town hall on
+another continent → tick and assert the troops end up with
+`map.continentAt(u.tileX, u.tileY)` equal to the target continent. That whole
+run takes about 90 sim-seconds of crossing on a Standard World. The two things
+that broke it while it was being built were both in `orderUnload`: a berth
+search too small to reach an inland objective (it returned false and the order
+silently did nothing), and a sea path iteration cap too low for an ocean
+crossing.
+
+**The AI's navy is the part that needs a forced harness, not a soak.** An
+unattended run tells you almost nothing here: whether an AI ever lands troops
+depends on whether it happens to be at war with somebody overseas for long
+enough, which on most seeds it is not. The harness that actually found the bugs
+does four things — tick a few sim-minutes so the AIs have an economy, pick two
+AIs whose town halls sit on different `map.continentAt` values, re-declare war
+between them *every tick* (peace aborts the campaign and hides the result), and
+top up the aggressor's Town Hall store each minute so the test measures the
+invasion rather than the economy. Then log `f.ai.invasion.state` on every change
+and assert the sequence reaches `building -> fleet -> loading -> sailing` and
+that units end up with `continentAt` equal to the target's. Three separate
+faults only showed up under it: the shipyard never being built at all (builders
+prefer nearer sites), the fleet gate waiting for an escort that never came, and
+the stage deadline preempting a transition that was ready in the same tick.
+When a stage stalls, log the stage's own inputs — transports, army size, free
+citizens, the dock's queue — rather than guessing; "free citizens: 1" is what
+explains a shipyard that builds nothing for twenty minutes, and no amount of
+staring at the state machine would have said so.
+
+**The globe.** Cheap to check numerically, because `GlobeRenderer.pick` is the
+exact inverse of the projection: for a spread of screen points inside the disc,
+`pick` then re-project and assert you land back within a pixel or two. For
+performance, time `globeR.draw` separately from `ui.render` — the projection
+pass is ~5ms at a 614px disc and the rest of a globe frame is the minimap and
+the halo, which is worth knowing before optimising the wrong one. Note that
+`buildProjection` caches on (radius, tilt) only, so a timing loop that spins
+the planet is measuring the fast path, which is the one that matters.
+
+**A caution about profiling the renderer at all.** `ui.render()` refreshes the
+minimap every 20 calls, and the minimap's terrain layer is on its own 2-second
+clock, so a tight 20-iteration timing loop can land on exactly one whole-world
+rebuild and report a number that has nothing to do with a real frame. Time
+`renderMinimapBase` on its own, and time `render` over enough iterations that
+the periodic work is amortised the way it is in the game.

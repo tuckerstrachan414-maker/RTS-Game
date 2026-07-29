@@ -110,7 +110,7 @@ class AICombatManager {
       if (o.id === f.id || o.eliminated) continue;
       const known = p.knownTownhall(o.id);
       if (!known || !p.stale(o.id, arch.staleTolerance)) continue;
-      const d = Math.hypot(known.x - th.cx, known.y - th.cy);
+      const d = wdist(th.cx, th.cy, known.x, known.y);
       const s = 120 / Math.max(10, d);
       if (s > bestScore) { bestScore = s; best = { x: known.x, y: known.y }; }
     }
@@ -132,7 +132,7 @@ class AICombatManager {
       const x = Math.floor(game.rng() * MAP_W), y = Math.floor(game.rng() * MAP_H);
       if (mem.isExplored(x, y)) continue;
       if (!game.map.passable(x, y, f.id)) continue;
-      const d = Math.hypot(x - th.cx, y - th.cy);
+      const d = wdist(th.cx, th.cy, x, y);
       if (d < 8 || d > SCOUT_RANGE) continue;
       if (d > bestScore) { bestScore = d; best = { x, y }; }
     }
@@ -199,7 +199,7 @@ class AICombatManager {
       if (o.id === f.id || o.eliminated || !game.diplomacy.hostile(f.id, o.id)) continue;
       for (const u of o.units) {
         if (!u.alive || u.type.civilian) continue;   // their villagers are not an assault
-        if (Math.hypot(u.x - th.cx, u.y - th.cy) > HOME_DEFENSE_RADIUS) continue;
+        if (wdist(u.x, u.y, th.cx, th.cy) > HOME_DEFENSE_RADIUS) continue;
         if (!p.visible(u.x, u.y)) continue;
         v += u.type.dmg * 2 + u.hp * 0.1;
       }
@@ -212,7 +212,7 @@ class AICombatManager {
     if (!th) return;
     for (const u of f.armyUnits()) {
       if (u.target || u.path.length > 0) continue;
-      if (Math.hypot(u.x - th.cx, u.y - th.cy) <= 8) continue;
+      if (wdist(u.x, u.y, th.cx, th.cy) <= 8) continue;
       u.orderMove(Math.floor(th.cx) + (game.rng() * 6 - 3 | 0),
         Math.floor(th.cy) + (game.rng() * 6 - 3 | 0));
     }
@@ -313,9 +313,12 @@ class AICombatManager {
       if (score > bestScore) { bestScore = score; best = o; }
     }
     if (!best) return;
-    // only now pay for the expensive reachability check
+    // only now pay for the expensive reachability check. An ocean between us is
+    // no longer a veto — it just means the war will be fought from ships
+    // (js/naval.js), and only a nation that can actually mount a landing is
+    // allowed to declare one.
     const reach = aiReachInfo(f, best);
-    if (!reach.reachable && !reach.crossing) return;
+    if (!reach.reachable && !reach.crossing && !aiCanInvadeBySea(f, best)) return;
     if (best.isPlayer && game.diff.ultimatums) return aiSendUltimatum(f);
     dip.declareWar(f.id, best.id);
   }

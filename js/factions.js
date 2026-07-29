@@ -84,7 +84,9 @@ class Faction {
 
   tickTraining(dt) {
     for (const b of this.buildings) {
-      if (b.type.key !== 'castle' || !b.done) continue;
+      // Docks build hulls, castles build troops; everything below about queues,
+      // rally points and spawning is the same for both.
+      if (!b.done || (b.type.key !== 'castle' && b.type.key !== 'dock')) continue;
       if (b.grandProgress > 0 && !b.grand) {
         b.grandProgress += dt;
         if (b.grandProgress >= 30) { b.grand = true; if (this.isPlayer) game.log('The Grand Castle is complete!', 'good'); }
@@ -102,9 +104,15 @@ class Faction {
       const q = b.trainQueue[0];
       q.t += dt;
       if (q.t >= UNIT_TYPES[q.unitKey].trainTime) {
+        // A hull has to touch the water or it is stranded on the quay the
+        // instant it is finished; if the berth has silted up (a bridge thrown
+        // across the harbour mouth, say) the order waits rather than launching
+        // a ship onto dry land.
+        const naval = UNIT_TYPES[q.unitKey].naval;
+        const spot = naval ? shipSpawnNear(b) : this.spawnPointNear(b);
+        if (!spot) continue;
         b.trainQueue.shift();
-        const [sx, sy] = this.spawnPointNear(b);
-        const u = new Unit(q.unitKey, this.id, sx, sy);
+        const u = new Unit(q.unitKey, this.id, spot[0], spot[1]);
         this.units.push(u);
         if (q.unitKey === 'king') this.kingAlive = true;
         if (b.rally) u.orderMove(b.rally[0], b.rally[1]);
@@ -166,6 +174,10 @@ function aiTick(f, dt) {
   f.aiT = AI_TICK_PERIOD;
   if (!f.ai) initFactionAI(f);
   f.brain.utility.tick();
+  // The navy runs alongside the utility brain rather than inside it: getting an
+  // army across an ocean is a campaign, not a marginal-utility choice, and it
+  // has to keep running while the land AI is busy with everything else.
+  aiNavalTick(f, dt);
 }
 
 // Net food per second. Goes through estimateIncome rather than summing farm

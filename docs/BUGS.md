@@ -9,6 +9,71 @@ Ordered roughly by player impact.
 
 ## Open
 
+### 38. Zoom 1 costs ~35ms a frame, and now there is much more map to look at
+`js/ui.js` `render` — the terrain pass draws every visible tile individually
+(base coat + decor/water/rim, 2-4 `drawImage` calls each). At zoom 1 on a
+1280×720 window that is ~3600 tiles and ~35ms, i.e. under 30fps. This is
+**pre-existing** — the same measurement on the 96×96 map before the world pass
+is 34.8ms, so nothing here regressed it — but it used to be the corner of the
+game you rarely sat in, and on a 384×192 (or 1024×512) world it is where a
+player will spend real time. The fix is a chunked offscreen terrain cache: the
+ground layer only changes when a tile does.
+**Plan:** TBD
+
+### 39. AI nations are slow to find each other across an ocean
+`js/naval.js` `aiNavalExplore` — an AI charts the sea with a single galley
+picking unexplored water at random, and `knownTownhall` needs line of sight on
+a building that is usually well inland, so after 50 sim-minutes on a Standard
+World the perception maps are typically still empty of rival capitals. Wars
+across water do get declared (they fall back to the drawn territory borders,
+which are public knowledge — see `aiEnemyAnchor`), but they are declared on
+much thinner information than a land war, and the sea scout never does a
+systematic coastal survey. A proper coast-following patrol, and more than one
+hull, would fix both.
+**Plan:** TBD
+
+### 44. Population runs high on the big worlds
+On a 75-minute unattended Standard World soak nations finish around 100-180
+population with 143-219 units each, against 13-17 on the old 96×96 map over a
+comparable run. Nothing is wrong with the growth rule — a nation grows by a
+fraction of its housing cap, and the big worlds give it four to six thousand
+tiles to fill instead of a shared few hundred — but nothing pushes back on it
+either. (It was far worse, 454-1072 population, before overseas wars could
+actually be fought: the armies that die in them are most of what checks growth
+now. That is a fragile equilibrium to rely on.) Wants a real ceiling: land
+quality, food logistics, unrest, or an upkeep curve that bites.
+**Plan:** TBD
+
+### 40. Ships have no formation, no group role, and no place in the panels
+`js/naval.js`, `js/ui.js` — `formationMove` and the Formations panel only know
+the nine land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
+move order sails as a loose crowd; `GROUP_ROLES` (defensive garrison, patrol)
+assume land tiles and a post you can stand on; and a Transport's panel shows
+the generic unit card rather than its manifest, so the only way to see who is
+aboard is the pips over the hull.
+**Plan:** TBD
+
+### 41. A transport whose landing site is unreachable unloads wherever it is
+`js/naval.js` `tickLanding` — when the sea path to the chosen berth runs out
+(a bay sealed by a bridge, an island the pathfinder gives up on), the mission
+falls through to `unloadShip` at the *intended* landing point regardless of
+where the hull actually is. `landingSpot` then searches only 4 tiles around
+that point, so in the worst case the troops stay aboard and the mission clears
+itself, leaving a loaded transport idling with no orders. It never drops anyone
+into the sea, but "sail somewhere impossible" fails quietly rather than
+reporting.
+**Plan:** TBD
+
+### 42. Biomes are data only — they do not affect movement, yield or combat
+`js/world.js` `BIOMES` — the table carries `tree`/`rock` densities (used by the
+generator) and a tint (used by the renderer), and nothing else. A desert costs
+the same to cross as grassland, a wetland does not slow anyone, and no biome
+changes what a Farm or a Quarry produces. This is deliberate for the
+groundwork pass, and the fields the mechanics will need (`map.temp`,
+`map.moist`, `map.elev`, `map.depth`, `map.biome`) are all generated and kept —
+but until they are wired in, a biome is a colour.
+**Plan:** TBD
+
 ### 1. Trade pact gets stuck forever if a route's Market is destroyed
 `js/diplomacy.js:196` — `tickRoutes` marks a route dead when either endpoint
 Market's HP hits 0, but never resets the pair's status from `trade` to
@@ -224,6 +289,26 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#43 AI invasions could never sail — overseas wars ended two minutes after
+  they were declared** — `js/ai.js` `aiDiplomacy`, `js/naval.js`
+  `aiCampaignAgainst`. A 50-minute unattended soak had every AI campaign reach
+  the fleet stage and abort; instrumenting the abort itself gave the reason
+  outright (`war=neutral deadlineIn=478s targetAlive=true`) and the diplomacy
+  log gave the mechanism: wars across water lasted 2-3 minutes. Nobody can draw
+  blood before the transports are built, so `lastBlood` never moves, both sides
+  accumulate weariness on schedule, and the bloodless "exhausted peace" clause
+  correctly identifies a stalemate — except it is not one, it is a war being
+  slowly prepared. Both peace paths now skip a pair with a live campaign
+  between them. It is bounded: a campaign that stops progressing times out on
+  its own (`INVASION_STAGE_TIME`), and on a one-landmass map no campaign is
+  ever created, so land wars are untouched. The same soak now runs all three
+  AIs through `building → fleet → loading → sailing` and lands 12 troops on a
+  foreign continent at t=60m. Three earlier fixes were needed to get that far
+  and are worth keeping in mind as the near-misses they were: an urgent-site
+  bias so the coastal shipyard attracts builders at all, a fleet gate that does
+  not wait forever for an escort, and a stage deadline checked after the stage
+  runs rather than before it.
 
 - **#35 Civilians were drawn with soldiers' art** — `js/assets.js`,
   `js/civilians.js`. The worker and builder borrowed `MiniShieldMan` and

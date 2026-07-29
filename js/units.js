@@ -96,6 +96,12 @@ class Unit {
     this.carry = { food: 0, wood: 0, stone: 0, gold: 0 };  // plunder being hauled
     this.carryCap = this.type.carry || 0;
     this.formSpeed = 0;        // >0 while marching in formation: the group's pace
+    // Naval (js/naval.js). `aboard` is the transport carrying this unit — while
+    // it is set the unit is off the map entirely: not ticked, not drawn, not
+    // separated, not targetable. `cargo` is the other half of that link, and is
+    // only an array on a hull that can carry anyone.
+    this.aboard = null;
+    this.cargo = this.type.naval && this.type.capacity ? [] : null;
     this.targetPriority = 'any';   // what this unit hunts on its own (TARGET_PRIORITIES)
     this.groupRole = null;         // null | 'offensive' | 'defensive' (GROUP_ROLES)
     this.defensivePost = null;     // [tx, ty] a defensive unit garrisons and returns to
@@ -123,10 +129,15 @@ class Unit {
   // why every caller that isn't `formationMove` can ignore the argument.
   orderMove(tx, ty, formSpeed = 0) {
     this.target = null;
+    this.mission = null;
     this.dest = [tx, ty];
     this.formSpeed = formSpeed;
-    this.path = findPath(game.map, this.tileX, this.tileY, tx, ty, this.faction);
+    this.path = this.pathTo(tx, ty);
   }
+
+  // Every repath in this class goes through here so a hull is never handed a
+  // route over dry land, nor an army one over open water (js/naval.js).
+  pathTo(tx, ty, iter = 6000) { return unitPathTo(this, tx, ty, iter); }
 
   orderAttack(target) {
     this.mission = null;
@@ -147,7 +158,7 @@ class Unit {
     let best = null, bd = Infinity;
     for (const b of game.factions[this.faction].buildings) {
       if (!b.done || b.hp <= 0 || !b.type.storage) continue;
-      const d = Math.hypot(b.cx - this.x, b.cy - this.y);
+      const d = wdist(this.x, this.y, b.cx, b.cy);
       if (d < bd) { bd = d; best = b; }
     }
     return best;
@@ -161,10 +172,13 @@ class Unit {
 
   distTo(t) {
     const [tx, ty] = targetCenter(t);
-    return Math.hypot(this.x - tx, this.y - ty) - (t instanceof Building ? t.type.size * 0.4 : 0);
+    return wdist(this.x, this.y, tx, ty) - (t instanceof Building ? t.type.size * 0.4 : 0);
   }
 
   tick(dt) {
+    // Below decks: a unit aboard a transport is off the map until it is put
+    // ashore (js/naval.js). It does not move, fight, or exist to anything else.
+    if (this.aboard) return;
     // Civilians have their own head entirely: they never acquire a target, never
     // take an order, and spend the whole game walking between a job and a store.
     if (this.type.civilian) return tickCivilian(this, dt);
@@ -177,6 +191,8 @@ class Unit {
     if (this.mission) {
       if (this.mission.kind === 'rob') return this.tickRob(dt);
       if (this.mission.kind === 'haul') return this.tickHaul(dt);
+      if (this.mission.kind === 'board') return tickBoard(this, dt);
+      if (this.mission.kind === 'landing') return tickLanding(this, dt);
       game.diplomacy.tickMission(this, dt);  // caravan / envoy
     }
 
@@ -206,7 +222,7 @@ class Unit {
       } else {
         if (this.path.length === 0 || this.repathT <= 0) {
           const [tx, ty] = targetCenter(this.target);
-          this.path = findPath(game.map, this.tileX, this.tileY, Math.floor(tx), Math.floor(ty), this.faction);
+          this.path = this.pathTo(Math.floor(tx), Math.floor(ty));
           this.repathT = 1.2;
         }
         this.followPath(dt);
@@ -225,7 +241,7 @@ class Unit {
   garrisoned() { return this.groupRole === 'defensive' && !!this.defensivePost && !this.mission; }
 
   postDist(x, y) {
-    return Math.hypot(x - (this.defensivePost[0] + 0.5), y - (this.defensivePost[1] + 0.5));
+    return wdist(x, y, this.defensivePost[0] + 0.5, this.defensivePost[1] + 0.5);
   }
 
   // Idle garrison duty: walk back if it has drifted off its ground, otherwise
@@ -282,7 +298,7 @@ class Unit {
     } else {
       if (this.path.length === 0 || this.repathT <= 0) {
         const [tx, ty] = targetCenter(b);
-        this.path = findPath(game.map, this.tileX, this.tileY, Math.floor(tx), Math.floor(ty), this.faction);
+        this.path = this.pathTo(Math.floor(tx), Math.floor(ty));
         this.repathT = 1.2;
       }
       this.followPath(dt);
@@ -304,7 +320,7 @@ class Unit {
     } else {
       if (this.path.length === 0 || this.repathT <= 0) {
         const [tx, ty] = targetCenter(home);
-        this.path = findPath(game.map, this.tileX, this.tileY, Math.floor(tx), Math.floor(ty), this.faction);
+        this.path = this.pathTo(Math.floor(tx), Math.floor(ty));
         this.repathT = 1.2;
       }
       this.followPath(dt);
@@ -329,7 +345,10 @@ class Unit {
     if (this.path.length === 0) return;
     const [nx, ny] = this.path[0];
     const gx = nx + 0.5, gy = ny + 0.5;
-    const dx = gx - this.x, dy = gy - this.y;
+    // The step toward the next tile takes the short way round the world, so a
+    // unit walking off the eastern edge keeps walking rather than about-facing
+    // and marching the whole width of the planet back to the same tile.
+    const dx = wdx(this.x, gx), dy = gy - this.y;
     const d = Math.hypot(dx, dy);
     // Terrain under the unit sets the pace: roads speed it up, forest and rocky
     // ground drag it down (js/map.js moveCost) without ever blocking it. A unit
@@ -346,7 +365,7 @@ class Unit {
       this.path.shift();
       if (this.path.length === 0) { this.dest = null; this.formSpeed = 0; this.setAnim('idle'); }
     } else {
-      this.x += dx / d * step;
+      this.x = wrapPos(this.x + dx / d * step);
       this.y += dy / d * step;
     }
   }
@@ -399,14 +418,14 @@ class Projectile {
       const [tx, ty] = targetCenter(this.target);
       this.tx = tx; this.ty = ty;
     }
-    const dx = this.tx - this.x, dy = this.ty - this.y;
+    const dx = wdx(this.x, this.tx), dy = this.ty - this.y;
     const d = Math.hypot(dx, dy);
     const step = this.speed * dt;
     if (d <= step) {
       this.x = this.tx; this.y = this.ty;
       this.impact();
     } else {
-      this.x += dx / d * step; this.y += dy / d * step;
+      this.x = wrapPos(this.x + dx / d * step); this.y += dy / d * step;
     }
   }
   impact() {
@@ -415,7 +434,7 @@ class Projectile {
       for (const f of game.factions) {
         if (!game.diplomacy.hostile(this.faction, f.id)) continue;
         for (const u of f.units) {
-          if (u.alive && Math.hypot(u.x - this.x, u.y - this.y) <= this.splash) {
+          if (u.alive && !u.aboard && wdist(this.x, this.y, u.x, u.y) <= this.splash) {
             u.takeDamage(this.dmg, this.source);
           }
         }
@@ -447,7 +466,7 @@ function effectiveDamage(attacker, target) {
   const f = game.factions[attacker.faction];
   if (f && f.kingAlive) {
     for (const u of f.units) {
-      if (u.alive && u.type.key === 'king' && Math.hypot(u.x - attacker.x, u.y - attacker.y) <= u.type.auraR) {
+      if (u.alive && u.type.key === 'king' && wdist(attacker.x, attacker.y, u.x, u.y) <= u.type.auraR) {
         dmg *= u.type.aura; break;
       }
     }
@@ -478,11 +497,13 @@ const SEP_RADIUS = 0.45;
 
 function separateUnits(dt) {
   const cells = new Map();
-  const key = (x, y) => x + y * 4096;
+  // Cell x is wrapped, so the columns either side of the seam are neighbours
+  // for jostling purposes just like every other pair.
+  const key = (x, y) => wrapX(x) + y * 4096;
   const all = [];
   for (const f of game.factions) {
     for (const u of f.units) {
-      if (!u.alive) continue;
+      if (!u.alive || u.aboard) continue;
       all.push(u);
       const k = key(Math.floor(u.x), Math.floor(u.y));
       let arr = cells.get(k);
@@ -499,7 +520,7 @@ function separateUnits(dt) {
         if (!arr) continue;
         for (const v of arr) {
           if (v.id <= u.id) continue;
-          let ox = v.x - u.x, oy = v.y - u.y;
+          let ox = wdx(u.x, v.x), oy = v.y - u.y;
           let d = Math.hypot(ox, oy);
           if (d >= SEP_RADIUS) continue;
           if (d < 1e-4) {  // perfectly stacked: split along a per-unit angle
@@ -517,10 +538,26 @@ function separateUnits(dt) {
 
 function nudgeUnit(u, mx, my) {
   const nx = u.x + mx, ny = u.y + my;
+  // A hull is jostled by the same rule as a soldier, just against a different
+  // definition of ground: open water instead of walkable land.
+  const ok = isNaval(u)
+    ? (x, y) => game.map.navigable(x, y)
+    : (x, y) => game.map.passable(x, y, u.faction);
   // allow the move onto passable ground — or any move at all if the unit is
   // somehow standing on impassable ground, so it can always escape
-  if (game.map.passable(Math.floor(nx), Math.floor(ny), u.faction)
-      || !game.map.passable(Math.floor(u.x), Math.floor(u.y), u.faction)) { u.x = nx; u.y = ny; }
+  if (ok(Math.floor(nx), Math.floor(ny)) || !ok(Math.floor(u.x), Math.floor(u.y))) {
+    u.x = wrapPos(nx); u.y = ny;
+  }
+}
+
+// Fold a fractional world x back into the map. Movement is the one place a
+// position can walk off the edge, and on a wrapping world it should come out
+// the other side rather than be clamped.
+function wrapPos(x) {
+  if (!WORLD_WRAP) return x;
+  if (x < 0) return x + MAP_W;
+  if (x >= MAP_W) return x - MAP_W;
+  return x;
 }
 
 // ---------- formation movement ----------
@@ -623,6 +660,16 @@ function freeSpotNear(x, y, fid, taken) {
 //
 // `ox`/`oy` default to the unit's own position; a defensive garrison passes its
 // post instead, so the circle it watches is anchored to the ground it holds.
+// Would picking this fight go anywhere? A ship and a soldier live in different
+// domains and neither can walk to the other, so across the waterline they only
+// take each other on when one is already within weapon reach — a galley rakes
+// the shore it is passing, archers shoot at the hull off their beach, and
+// neither spends the rest of the match wading toward something unreachable.
+function canEngage(unit, t, d) {
+  if (isNaval(unit) === targetIsNaval(t)) return true;
+  return d <= unit.type.range + 0.5;
+}
+
 function findEnemyNear(unit, radius, ox = unit.x, oy = unit.y) {
   const pr = unit.targetPriority || 'any';
   const wantsUnits = pr === 'any' || pr === 'units';
@@ -635,9 +682,9 @@ function findEnemyNear(unit, radius, ox = unit.x, oy = unit.y) {
         // Civilians are never hunted down on a unit's own initiative — an army
         // walks past the lumberjacks and goes for the soldiers. A direct attack
         // order still lands on them, and splash still catches them.
-        if (!u.alive || u.type.civilian) continue;
-        const d = Math.hypot(u.x - ox, u.y - oy);
-        if (d < bestD) { best = u; bestD = d; }
+        if (!u.alive || u.type.civilian || u.aboard) continue;
+        const d = wdist(ox, oy, u.x, u.y);
+        if (d < bestD && canEngage(unit, u, d)) { best = u; bestD = d; }
       }
     }
     if (wantsBuildings) {
@@ -647,8 +694,8 @@ function findEnemyNear(unit, radius, ox = unit.x, oy = unit.y) {
       for (const b of f.buildings) {
         if (b.hp <= 0 || b.type.key === 'bridge') continue;
         if (!matchesPriority(pr, b)) continue;
-        const d = Math.hypot(b.cx - ox, b.cy - oy);
-        if (d < bestD * bias) { best = b; bestD = d; }
+        const d = wdist(ox, oy, b.cx, b.cy);
+        if (d < bestD * bias && canEngage(unit, b, d)) { best = b; bestD = d; }
       }
     }
   }

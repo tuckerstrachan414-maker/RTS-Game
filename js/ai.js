@@ -251,6 +251,15 @@ function aiDiplomacy(f) {
   //    and let mutually exhausted, bloodless wars gutter out in a white peace
   for (const o of rivals) {
     if (dip.status(f.id, o.id) !== STATUS.WAR) continue;
+    // A war fought across water looks exactly like a stalemate from in here.
+    // No blood is drawn for as long as it takes to build a shipyard and load a
+    // fleet, so both clauses below — sue for peace, and the bloodless
+    // guttering-out — fire long before the first transport sails, and an
+    // overseas war ends about two minutes after it is declared, every time.
+    // A campaign under way is not exhaustion; it IS the war being prosecuted,
+    // so it holds the peace off. Bounded, because a campaign that stops making
+    // progress times out on its own (js/naval.js INVASION_STAGE_TIME).
+    if (aiCampaignAgainst(f, o.id) || aiCampaignAgainst(o, f.id)) continue;
     const dur = game.time - dip.warSince[f.id][o.id];
     const durLimit = prof.plunderGoal ? 90 : 240;   // raid wars are short by design
     const theirStr = f.brain.perception.estimatedStrength(o.id).value;
@@ -594,7 +603,7 @@ function aiCountNearSite(f, site, key) {
   let n = 0;
   for (const b of f.buildings) {
     if (b.type.key !== key) continue;
-    if (Math.hypot(b.cx - site.x, b.cy - site.y) <= SATELLITE_RADIUS) n++;
+    if (wdist(b.cx, b.cy, site.x, site.y) <= SATELLITE_RADIUS) n++;
   }
   return n;
 }
@@ -646,7 +655,7 @@ function aiPickExpansionSite(f, want) {
     const owner = t ? t.ownerAt(x, y) : -1;
     if (owner === f.id) continue;                             // already ours
     if (owner >= 0 && game.diplomacy.allied(f.id, owner)) continue;   // don't crowd allies
-    const dist = Math.hypot(x - th.cx, y - th.cy);
+    const dist = wdist(th.cx, th.cy, x, y);
     if (dist < 10 || dist > 45) continue;
     // ground is scored for what we came looking for, with a general-purpose
     // richness term so nations without a specific shortage still spread sensibly
@@ -730,7 +739,7 @@ function aiPlanWalls(f) {
     const cand = per.filter(([x, y]) => canPlace(game.map, 'gate', x, y, f.id));
     if (!cand.length) return;                           // can't take a gate: no walls either
     const [tx, ty] = targets[gatesOnRing];
-    cand.sort((p, q) => Math.hypot(p[0] - tx, p[1] - ty) - Math.hypot(q[0] - tx, q[1] - ty));
+    cand.sort((p, q) => wdist(p[0], p[1], tx, ty) - wdist(q[0], q[1], tx, ty));
     const spot = cand.find(([x, y]) => aiRingTileConnected(f, x, y));
     if (!spot) return;
     startConstruction(game, 'gate', spot[0], spot[1], f.id);
@@ -774,6 +783,16 @@ function aiReachInfo(f, o) {
   const a = f.townhall(), b = o.townhall();
   if (!a || !b) return { reachable: false, crossing: null };
   const bx = Math.floor(b.cx), by = Math.floor(b.cy);
+  // On a world of continents most pairs of nations are not walkable to each
+  // other at all, and running a 12000-node A* to rediscover that every time an
+  // AI thinks about war is pure waste. The continent labelling (js/map.js)
+  // answers it outright; only same-continent pairs go to the pathfinder, which
+  // is where woods, cliffs and walls can still make a route fail.
+  const ca = game.map.continentAt(Math.floor(a.cx), Math.floor(a.cy));
+  const cb = game.map.continentAt(bx, by);
+  if (ca >= 0 && cb >= 0 && ca !== cb) {
+    return { reachable: false, crossing: aiFindCrossing([Math.floor(a.cx), Math.floor(a.cy)], [bx, by]) };
+  }
   const path = findPath(game.map, Math.floor(a.cx), Math.floor(a.cy), bx, by, f.id, 12000);
   const end = path.length ? path[path.length - 1] : [Math.floor(a.cx), Math.floor(a.cy)];
   if (Math.abs(end[0] - bx) + Math.abs(end[1] - by) <= 4) return { reachable: true, crossing: null };

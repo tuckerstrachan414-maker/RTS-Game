@@ -2,6 +2,10 @@
 // Rendering, camera, input, HUD, build menu, selection, diplomacy panel, minimap.
 
 const ZOOMS = [1, 2, 3, 4];
+// How long the minimap's terrain layer is allowed to go stale (ms). Terrain
+// barely moves and territory only recomputes every five seconds, so rebuilding
+// it more often than this is a whole-world scan for nothing.
+const MINIMAP_BASE_PERIOD = 2000;
 
 // Pixel-art icon (assets/icons16x16.png via CSS sprite, see .icon-* rules) in place of an emoji glyph.
 const icon = key => `<span class="icon icon-${key}"></span>`;
@@ -27,6 +31,18 @@ const L_TREE = 0, L_BUILDING = 1, L_RAMPART = 2, L_UNIT = 3, L_LOOT = 4;
 // Deterministic per-tile noise: tileNoise(x, y)(k) is a stable 0..1 value for
 // slot k of that tile. Decoration placement has to be a pure function of the
 // tile, or the forest would reshuffle itself on every frame.
+// The sea floor falling away, as a ramp of translucent navy laid over the water
+// art. Index is (depth - 2), so a tile one step from the beach is untouched and
+// open ocean is the last entry. Precomputed because it is read per visible tile.
+const DEEP_SHADES = (() => {
+  const out = [];
+  for (let d = 0; d < 14; d++) {
+    const a = Math.min(0.46, d / 13 * 0.46);
+    out.push(`rgba(8,26,64,${a.toFixed(3)})`);
+  }
+  return out;
+})();
+
 function tileNoise(x, y) {
   return k => {
     let h = Math.imul(x + 0x9e37, 0x85ebca6b) ^ Math.imul(y + 0x79b9, 0xc2b2ae35) ^ Math.imul(k + 1, 0x27d4eb2f);
@@ -41,6 +57,12 @@ class UI {
     this.ctx = canvas.getContext('2d');
     this.ctx.imageSmoothingEnabled = false;
     this.cam = { x: 0, y: 0, zoom: 2 };
+    // Orbit view (js/globe.js). Null while the tile map is up; an object with a
+    // spin (longitude, in tiles), a tilt (radians) and a scale while the planet
+    // is on screen. Zooming out past the widest tile zoom enters it.
+    this.globe = null;
+    this.globeR = new GlobeRenderer();
+    this.stars = null;
     this.mouse = { x: 0, y: 0, down: false, dragStart: null };
     this.selection = { units: [], building: null, buildings: [] };
     this.placing = null;            // building type key while placing
@@ -57,6 +79,8 @@ class UI {
     this.minictx.imageSmoothingEnabled = false;
     this.mini = document.createElement('canvas');
     this.mini.width = MAP_W; this.mini.height = MAP_H;
+    this.miniBase = null;      // cached terrain/biome/territory layer, see renderMinimap
+    this.miniBaseT = -1e9;
     this.speed = 1;
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     this.tooltip = null;            // topbar stat key with an open info tooltip
@@ -71,9 +95,41 @@ class UI {
   }
 
   // ---------- coordinate helpers ----------
-  worldToScreen(wx, wy) { const s = TILE * this.cam.zoom; return [(wx - this.cam.x) * s, (wy - this.cam.y) * s]; }
-  screenToWorld(sx, sy) { const s = TILE * this.cam.zoom; return [sx / s + this.cam.x, sy / s + this.cam.y]; }
+  // On a wrapping world a world x has infinitely many screen positions, one per
+  // lap. `viewX` picks the one nearest the middle of the view, which is the
+  // right answer as long as the viewport is narrower than the planet — it always
+  // is, by a wide margin, even zoomed all the way out. Everything that turns a
+  // world position into a screen position goes through it, so a tile, a unit and
+  // a border all agree about which lap they are on.
+  viewX(wx) {
+    if (!WORLD_WRAP) return wx;
+    const c = this.cam.x + this.canvas.width / (2 * TILE * this.cam.zoom);
+    return c + wdx(c, wx);
+  }
+  worldToScreen(wx, wy) {
+    const s = TILE * this.cam.zoom;
+    return [(this.viewX(wx) - this.cam.x) * s, (wy - this.cam.y) * s];
+  }
+  screenToWorld(sx, sy) {
+    const s = TILE * this.cam.zoom;
+    return [wrapPos(sx / s + this.cam.x), sy / s + this.cam.y];
+  }
   screenToTile(sx, sy) { const [wx, wy] = this.screenToWorld(sx, sy); return [Math.floor(wx), Math.floor(wy)]; }
+
+  // Is a world position within `pad` tiles of the viewport? Wrap-aware, so an
+  // army standing just west of the seam is drawn by a camera looking just east
+  // of it rather than culled as being a world away.
+  onScreen(wx, wy, pad = 1) {
+    const [vw, vh] = this.viewTiles();
+    const cx = this.cam.x + vw / 2, cy = this.cam.y + vh / 2;
+    return Math.abs(wdx(cx, wx)) <= vw / 2 + pad && Math.abs(wy - cy) <= vh / 2 + pad;
+  }
+
+  // How many tiles across and down the viewport covers.
+  viewTiles() {
+    const s = TILE * this.cam.zoom;
+    return [this.canvas.width / s, this.canvas.height / s];
+  }
 
   centerOn(tx, ty) {
     const s = TILE * this.cam.zoom;
@@ -81,10 +137,13 @@ class UI {
     this.cam.y = ty - this.canvas.height / (2 * s);
     this.clampCam();
   }
+  // East-west the camera wraps rather than stopping; north-south it stops, because
+  // the poles are the top and bottom of the world and there is nothing past them.
   clampCam() {
     const s = TILE * this.cam.zoom;
     const vw = this.canvas.width / s, vh = this.canvas.height / s;
-    this.cam.x = Math.max(-2, Math.min(MAP_W - vw + 2, this.cam.x));
+    this.cam.x = WORLD_WRAP ? wrapPos(this.cam.x)
+      : Math.max(-2, Math.min(MAP_W - vw + 2, this.cam.x));
     this.cam.y = Math.max(-2, Math.min(MAP_H - vh + 2, this.cam.y));
   }
 
@@ -123,7 +182,10 @@ class UI {
     c.addEventListener('wheel', e => {
       e.preventDefault();
       const dir = e.deltaY > 0 ? -1 : 1;
+      if (this.globe) return this.globeZoom(dir, e.offsetX, e.offsetY);
       const i = ZOOMS.reduce((best, z, idx) => Math.abs(z - this.cam.zoom) < Math.abs(ZOOMS[best] - this.cam.zoom) ? idx : best, 0);
+      // Zooming out from the widest tile zoom lifts off the surface entirely.
+      if (dir < 0 && i === 0 && WORLD_WRAP) return this.enterGlobe();
       const ni = Math.max(0, Math.min(ZOOMS.length - 1, i + dir));
       if (ni !== i) {
         const [wx, wy] = this.screenToWorld(e.offsetX, e.offsetY);
@@ -136,6 +198,10 @@ class UI {
     }, { passive: false });
     c.addEventListener('mousedown', e => {
       this.mouse.x = e.offsetX; this.mouse.y = e.offsetY;
+      if (this.globe) {
+        if (e.button === 0) this.globe.drag = { x: e.offsetX, y: e.offsetY, moved: 0 };
+        return;
+      }
       if (e.button === 0) {
         if (this.placing) {
           if (this.isLinePlace()) this.beginPaint();  // drag to draw a run of walls/bridges
@@ -152,9 +218,29 @@ class UI {
     });
     c.addEventListener('mousemove', e => {
       this.mouse.x = e.offsetX; this.mouse.y = e.offsetY;
+      if (this.globe) {
+        const d = this.globe.drag;
+        if (d) {
+          this.globeDrag(e.offsetX - d.x, e.offsetY - d.y);
+          d.moved += Math.abs(e.offsetX - d.x) + Math.abs(e.offsetY - d.y);
+          d.x = e.offsetX; d.y = e.offsetY;
+        }
+        return;
+      }
       if (this.paint) this.paintTo(...this.screenToTile(e.offsetX, e.offsetY));
     });
     c.addEventListener('mouseup', e => {
+      if (this.globe) {
+        const d = this.globe.drag;
+        this.globe.drag = null;
+        // A click that did not spin the planet is "take me there".
+        if (e.button === 0 && d && d.moved < 6) {
+          const spot = this.globeR.pick(e.offsetX, e.offsetY, this.canvas.width, this.canvas.height,
+            this.globeRadius(), this.globe.spin, this.globe.tilt);
+          if (spot) this.exitGlobe(spot[0], spot[1]);
+        }
+        return;
+      }
       if (e.button !== 0) return;
       if (this.paint) { this.endPaint(); return; }
       if (!this.mouse.down) return;
@@ -219,6 +305,18 @@ class UI {
     }
     const ids = [...this.touches.keys()];
     clearTimeout(this.longPressTimer);
+    // In orbit there is nothing to select, place or box, so the gesture set is
+    // just the two that matter: one finger spins, two pinch the planet closer.
+    if (this.globe) {
+      const p = this.touches.get(ids[0]);
+      if (p) { p.lastX = p.x; p.lastY = p.y; }
+      this.gesture = ids.length >= 2 ? 'globePinch' : 'globeSpin';
+      if (ids.length >= 2) {
+        const [a, b] = ids.slice(0, 2).map(id => this.touches.get(id));
+        this.pinch = { ids: [ids[0], ids[1]], dist: Math.hypot(a.x - b.x, a.y - b.y), moved: false };
+      }
+      return;
+    }
     if (ids.length === 1) {
       this.gesture = 'pending';
       this.pinch = null;
@@ -254,6 +352,28 @@ class UI {
     }
     const ids = [...this.touches.keys()];
 
+    if (this.globe) {
+      if (this.gesture === 'globeSpin' && ids.length === 1) {
+        const p = this.touches.get(ids[0]);
+        this.globeDrag(p.x - p.lastX, p.y - p.lastY);
+        p.lastX = p.x; p.lastY = p.y;
+      } else if (this.gesture === 'globePinch' && this.pinch && ids.length >= 2) {
+        const pn = this.pinch;
+        const a = this.touches.get(pn.ids[0]), b = this.touches.get(pn.ids[1]);
+        if (a && b) {
+          const dist = Math.hypot(a.x - b.x, a.y - b.y);
+          if (Math.abs(dist - pn.dist) > 6) {
+            pn.moved = true;
+            this.globe.scale *= dist / pn.dist;
+            if (this.globe.scale > GLOBE_ZOOM_MAX) return this.exitGlobe();
+            this.globe.scale = Math.max(GLOBE_ZOOM_MIN, this.globe.scale);
+            pn.dist = dist;
+          }
+        }
+      }
+      return;
+    }
+
     if (this.gesture === 'pending' && ids.length === 1) {
       const p = this.touches.get(ids[0]);
       if (Math.hypot(p.x - p.startX, p.y - p.startY) > 10) {
@@ -284,6 +404,11 @@ class UI {
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
         const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
         if (Math.abs(dist - pn.dist) > 8 || Math.hypot(midX - pn.midX, midY - pn.midY) > 8) pn.moved = true;
+        // Pinching in past the widest tile zoom leaves the surface for orbit.
+        if (WORLD_WRAP && this.cam.zoom <= 1.001 && dist < pn.dist * 0.75) {
+          this.gesture = 'ignore';
+          return this.enterGlobe();
+        }
         const newZoom = Math.max(1, Math.min(4, this.cam.zoom * (dist / pn.dist)));
         const s = TILE * newZoom;
         this.cam.x = pn.anchor[0] - midX / s;
@@ -299,6 +424,21 @@ class UI {
   onTouchEnd(e) {
     e.preventDefault();
     const endedIds = [...e.changedTouches].map(t => t.identifier);
+
+    if (this.globe) {
+      if (this.gesture === 'globeSpin') {
+        const p = this.touches.get([...this.touches.keys()][0]);
+        // A tap that did not spin anything means "put me down here".
+        if (p && Math.abs(p.x - p.startX) + Math.abs(p.y - p.startY) < 8) {
+          const spot = this.globeR.pick(p.x, p.y, this.canvas.width, this.canvas.height,
+            this.globeRadius(), this.globe.spin, this.globe.tilt);
+          if (spot) this.exitGlobe(spot[0], spot[1]);
+        }
+      }
+      for (const id of endedIds) this.touches.delete(id);
+      if (this.touches.size === 0) { this.gesture = null; this.pinch = null; }
+      return;
+    }
 
     if (this.gesture === 'pending') {
       const id = [...this.touches.keys()][0];
@@ -376,6 +516,16 @@ class UI {
 
   tickInput(dt) {
     const pan = 22 * dt * (this.keys['shift'] ? 2.5 : 1);
+    // In orbit the same keys turn the planet instead of sliding a camera over it.
+    if (this.globe) {
+      const spin = pan * 1.2, tip = dt * (this.keys['shift'] ? 2 : 0.8);
+      if (this.keys['a'] || this.keys['arrowleft']) this.globe.spin -= spin;
+      if (this.keys['d'] || this.keys['arrowright']) this.globe.spin += spin;
+      if (this.keys['w'] || this.keys['arrowup']) this.globe.tilt = Math.min(1.2, this.globe.tilt + tip);
+      if (this.keys['s'] || this.keys['arrowdown']) this.globe.tilt = Math.max(-1.2, this.globe.tilt - tip);
+      this.globe.spin = ((this.globe.spin % MAP_W) + MAP_W) % MAP_W;
+      return;
+    }
     if (this.keys['w'] || this.keys['arrowup']) this.cam.y -= pan;
     if (this.keys['s'] || this.keys['arrowdown']) this.cam.y += pan;
     if (this.keys['a'] || this.keys['arrowleft']) this.cam.x -= pan;
@@ -399,8 +549,8 @@ class UI {
     // unit first
     let best = null, bestD = 0.8;
     for (const u of game.factions[0].units) {
-      if (!u.alive) continue;
-      const d = Math.hypot(u.x - wx, u.y - wy + 0.3);
+      if (!u.alive || u.aboard) continue;
+      const d = wdist(wx, wy - 0.3, u.x, u.y);
       if (d < bestD) { best = u; bestD = d; }
     }
     if (best) { this.selection.units = [best]; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); return; }
@@ -417,17 +567,22 @@ class UI {
     if (this.splitMode) return;
     const [wx0, wy0] = this.screenToWorld(Math.min(x0, x1), Math.min(y0, y1));
     const [wx1, wy1] = this.screenToWorld(Math.max(x0, x1), Math.max(y0, y1));
+    // Horizontally the box is tested against its own CENTRE rather than its two
+    // edges: a box drawn across the seam has wx0 > wx1, and an `x >= wx0 && x <=
+    // wx1` test then selects nothing at all.
+    const cx = wx0 + wdx(wx0, wx1) / 2, halfW = Math.abs(wdx(wx0, wx1)) / 2;
+    const inBox = (x, y, pad = 0) =>
+      Math.abs(wdx(cx, x)) <= halfW + pad && y >= wy0 - pad && y <= wy1 + pad;
     // Civilians are never box-selected: they take no orders, and sweeping a box
     // over your own town should pick up the garrison, not the farmhands.
     const picked = game.factions[0].units.filter(u =>
-      u.alive && !u.mission && !u.type.civilian && u.x >= wx0 && u.x <= wx1 && u.y >= wy0 && u.y <= wy1);
+      u.alive && !u.aboard && !u.mission && !u.type.civilian && inBox(u.x, u.y));
     if (picked.length) {
       this.selection.units = picked; this.selection.building = null; this.selection.buildings = [];
       this.refreshPanel();
       return;
     }
-    const buildings = game.factions[0].buildings.filter(b =>
-      b.x + b.type.size > wx0 && b.x < wx1 && b.y + b.type.size > wy0 && b.y < wy1);
+    const buildings = game.factions[0].buildings.filter(b => inBox(b.cx, b.cy, b.type.size / 2));
     if (buildings.length) {
       this.selection.buildings = buildings;
       this.selection.building = buildings.length === 1 ? buildings[0] : null;
@@ -442,21 +597,24 @@ class UI {
     const [wx, wy] = this.screenToWorld(sx, sy);
     const tx = Math.floor(wx), ty = Math.floor(wy);
     if (!game.map.inBounds(tx, ty)) return;
-    // set rally for selected own castle
-    if (this.selection.building && this.selection.building.faction === 0 && this.selection.building.type.key === 'castle') {
-      this.selection.building.rally = [tx, ty];
+    // set rally for a selected own castle or dock
+    const rallyOwner = this.selection.building;
+    if (rallyOwner && rallyOwner.faction === 0
+        && (rallyOwner.type.key === 'castle' || rallyOwner.type.key === 'dock')) {
+      rallyOwner.rally = [tx, ty];
       game.log('Rally point set.');
       return;
     }
     if (this.selection.units.length === 0) return;
     // a selected citizen is being looked at, not commanded
     if (this.selection.units.every(u => u.type.civilian)) return;
+    if (this.navalOrder(tx, ty, wx, wy)) return;
     // attack target?
     let target = null;
     for (const f of game.factions) {
       if (!game.diplomacy.hostile(0, f.id)) continue;
       for (const u of f.units) {
-        if (u.alive && Math.hypot(u.x - wx, u.y - wy) < 0.8) { target = u; break; }
+        if (u.alive && !u.aboard && wdist(wx, wy, u.x, u.y) < 0.8) { target = u; break; }
       }
     }
     if (!target) {
@@ -905,6 +1063,17 @@ class UI {
           ? 'Each one walks your materials to sites, 15 at a time, then raises them.'
           : 'Each one walks out to work, fills a 5-load and carries it to your nearest store.'}</div>`;
       }
+      if (own && b.done && b.type.key === 'dock') {
+        html += `<div class="dim">Shipyard. Right-click the water to set a rally point; right-click a hull with troops selected to send them aboard.</div>`;
+        html += `<div class="trainrow">` + NAVY_MENU.map(k => {
+          const t = UNIT_TYPES[k];
+          return `<button class="tbtn" data-s="${k}" title="${t.desc}\n${costText(t.cost)} · ${t.trainTime}s">${t.name}</button>`;
+        }).join('') + `</div>`;
+        if (b.trainQueue.length) {
+          const q = b.trainQueue[0];
+          html += `<div class="dim">Building ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / UNIT_TYPES[q.unitKey].trainTime * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
+        }
+      }
       if (own && b.done && b.type.key === 'market') html += this.marketPanelHTML();
       if (own && b.done && b.type.key === 'castle') {
         const f0 = game.factions[0];
@@ -957,6 +1126,14 @@ class UI {
         const minus = document.getElementById('wminus'), plus = document.getElementById('wplus');
         if (minus) minus.onclick = () => { if (b.workers > 0) b.workers--; this.refreshPanel(); };
         if (plus) plus.onclick = () => { if (b.workers < b.type.slots && n.idleWorkers() > 0) b.workers++; this.refreshPanel(); };
+      }
+      if (own && b.done && b.type.key === 'dock') {
+        p.querySelectorAll('.tbtn[data-s]').forEach(btn => {
+          btn.onclick = () => {
+            const err = trainShip(game.factions[0], btn.dataset.s);
+            if (err) game.log(err, 'bad'); else this.refreshPanel();
+          };
+        });
       }
       if (own && b.done && b.type.key === 'market') this.wireMarket(p);
       if (own && b.type.key === 'castle') {
@@ -1445,8 +1622,190 @@ class UI {
     if (fill) fill.style.width = `${Math.max(0, Math.min(100, (ev.expires - game.time) / ev.span * 100))}%`;
   }
 
+  // ---------- naval orders ----------
+  // Right-clicking with ships or troops selected means something different from
+  // "march there", and this is where that fork lives:
+  //   troops  + a friendly transport under the cursor  -> go aboard
+  //   ships   + dry land                               -> put the landing party ashore
+  //   ships   + open water                             -> sail there
+  // Anything else falls through to the ordinary land order.
+  navalOrder(tx, ty, wx, wy) {
+    const sel = this.selection.units.filter(u => u.alive);
+    if (!sel.length) return false;
+    const map = game.map;
+    const ships = sel.filter(u => u.type.naval);
+    const troops = sel.filter(u => !u.type.naval && !u.type.civilian);
+
+    // Board: is there one of our transports where they clicked?
+    if (troops.length) {
+      let hull = null;
+      for (const u of game.factions[0].units) {
+        if (!u.alive || !u.type.naval || !u.cargo) continue;
+        if (wdist(u.x, u.y, wx, wy) < 1.1) { hull = u; break; }
+      }
+      if (hull) {
+        let n = 0;
+        for (const u of troops) if (orderBoard(u, hull)) n++;
+        game.log(n ? `${n} ordered aboard the ${hull.type.name}.`
+                   : `The ${hull.type.name} is full.`, n ? '' : 'bad');
+        return true;
+      }
+    }
+    if (!ships.length) return false;
+
+    const onLand = map.inBounds(tx, ty) && map.terrain[map.idx(tx, ty)] !== T_WATER;
+    if (onLand) {
+      let landed = 0, empty = 0;
+      for (const sh of ships) {
+        if (!sh.cargo || !sh.cargo.length) { empty++; continue; }
+        if (orderUnload(sh, tx, ty)) landed++;
+      }
+      if (landed) { game.log(`${landed} transport${landed > 1 ? 's' : ''} making for the shore.`); return true; }
+      if (empty === ships.length) {
+        // Empty hulls sent at the coast just close on it rather than refusing.
+        const berth = nearestBerth(tx, ty);
+        if (berth) { for (const sh of ships) sh.orderMove(berth[0], berth[1]); return true; }
+      }
+      return true;
+    }
+    for (const sh of ships) sh.orderMove(tx, ty);
+    // Troops selected alongside ships still get their own land order.
+    return troops.length === 0;
+  }
+
+  // ---------- the globe ----------
+  // Leaving the surface. The planet is entered at whatever longitude the camera
+  // was looking at, so zooming out does not teleport you round the world, and
+  // tilted to put that latitude near the middle of the disc.
+  enterGlobe() {
+    const [vw, vh] = this.viewTiles();
+    const lonTiles = wrapPos(this.cam.x + vw / 2);
+    const lat = (this.cam.y + vh / 2) / MAP_H - 0.5;      // -0.5 .. 0.5
+    this.globe = {
+      spin: lonTiles - MAP_W / 2,
+      // Enough tilt to say which way up the planet is and to put the camera's
+      // latitude near the middle of the disc, but not so much that a temperate
+      // start lands you staring down at an ice cap.
+      tilt: Math.max(-0.6, Math.min(0.6, -lat * Math.PI * 0.5)),
+      scale: 0.85,
+      drag: null,
+    };
+    this.clearSelection();
+    this.placing = null;
+    game.log('Orbit view — drag to spin the planet, zoom in to return.');
+  }
+
+  // Coming back down, at whatever is under the middle of the disc.
+  exitGlobe(tx = null, ty = null) {
+    const g = this.globe;
+    if (!g) return;
+    const [w, h] = [this.canvas.width, this.canvas.height];
+    const spot = (tx === null)
+      ? this.globeR.pick(w / 2, h / 2, w, h, this.globeRadius(), g.spin, g.tilt)
+      : [tx, ty];
+    this.globe = null;
+    this.cam.zoom = ZOOMS[0];
+    if (spot) this.centerOn(spot[0] + 0.5, spot[1] + 0.5);
+  }
+
+  globeRadius() {
+    return Math.min(this.canvas.width, this.canvas.height) * 0.5 * this.globe.scale;
+  }
+
+  // Zooming on the globe pulls the planet closer until it fills the view, and
+  // then hands over to the tile map at the point you were looking at.
+  globeZoom(dir, px, py) {
+    const g = this.globe;
+    g.scale *= dir > 0 ? 1.35 : 1 / 1.35;
+    if (g.scale > GLOBE_ZOOM_MAX) {
+      const spot = this.globeR.pick(px, py, this.canvas.width, this.canvas.height,
+        this.globeRadius(), g.spin, g.tilt);
+      return this.exitGlobe(spot ? spot[0] : null, spot ? spot[1] : null);
+    }
+    g.scale = Math.max(GLOBE_ZOOM_MIN, g.scale);
+  }
+
+  // Dragging spins the planet under the cursor: a pixel of drag turns the globe
+  // by the angle that pixel subtends, so the ground follows the finger.
+  globeDrag(dx, dy) {
+    const g = this.globe;
+    const r = this.globeRadius();
+    g.spin -= dx / r * (MAP_W / Math.PI) * 0.5;
+    g.tilt = Math.max(-1.2, Math.min(1.2, g.tilt + dy / r * 1.4));
+    g.spin = ((g.spin % MAP_W) + MAP_W) % MAP_W;
+  }
+
+  renderGlobe() {
+    const ctx = this.ctx;
+    const w = this.canvas.width, h = this.canvas.height;
+    if (!this.stars || this.stars.width !== w || this.stars.height !== h) {
+      this.stars = bakeStarfield(w, h);
+    }
+    ctx.drawImage(this.stars, 0, 0);
+    const r = this.globeRadius();
+    // The globe is composited over the stars rather than drawn straight to the
+    // canvas: putImageData ignores what is underneath it, so painting the disc
+    // directly would punch a black square out of the sky around the planet.
+    const buf = this.globeBuffer(w, h);
+    this.globeR.draw(buf.ctx, w, h, r, this.globe.spin, this.globe.tilt, 1 - game.lightLevel());
+    ctx.drawImage(buf.canvas, 0, 0);
+    // atmosphere halo
+    const glow = ctx.createRadialGradient(w / 2, h / 2, r * 0.97, w / 2, h / 2, r * 1.1);
+    glow.addColorStop(0, 'rgba(130,190,255,0.35)');
+    glow.addColorStop(1, 'rgba(130,190,255,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(w / 2, h / 2, r * 1.1, 0, Math.PI * 2); ctx.fill();
+    // where your capital is, so the planet is navigable rather than pretty
+    this.drawGlobeMarkers(r);
+    this.minimapT -= 1;
+    if (this.minimapT <= 0) { this.minimapT = 20; this.renderMinimap(); }
+    this.blitMinimap();
+  }
+
+  globeBuffer(w, h) {
+    if (!this._gbuf || this._gbuf.canvas.width !== w || this._gbuf.canvas.height !== h) {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      this._gbuf = { canvas, ctx: canvas.getContext('2d') };
+    }
+    return this._gbuf;
+  }
+
+  // Capitals, drawn only where they are on the near side of the planet. The test
+  // is the z of the surface normal: negative means round the back.
+  drawGlobeMarkers(r) {
+    const ctx = this.ctx;
+    const g = this.globe;
+    const cx = this.canvas.width / 2, cy = this.canvas.height / 2;
+    const ct = Math.cos(g.tilt), st = Math.sin(g.tilt);
+    for (const f of game.factions) {
+      if (f.eliminated) continue;
+      const th = f.townhall();
+      if (!th) continue;
+      const lon = (wdx(g.spin + MAP_W / 2, th.cx) / MAP_W) * Math.PI * 2;
+      const lat = (th.cy / MAP_H - 0.5) * Math.PI;
+      // planet space -> view space (tilt about X), then orthographic
+      const px = Math.cos(lat) * Math.sin(lon);
+      const py = Math.sin(lat);
+      const pz = Math.cos(lat) * Math.cos(lon);
+      const vy = py * ct + pz * st;
+      const vz = -py * st + pz * ct;
+      if (vz <= 0.02) continue;
+      const sx = cx + px * r, sy = cy + vy * r;
+      ctx.fillStyle = f.color.css;
+      ctx.beginPath(); ctx.arc(sx, sy, Math.max(2.5, r * 0.016), 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+      if (f.isPlayer) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.beginPath(); ctx.arc(sx, sy, Math.max(6, r * 0.045), 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+  }
+
   // ---------- rendering ----------
   render() {
+    this.globeR.tick(1 / 60);
+    if (this.globe) return this.renderGlobe();
     const cancelBtn = document.getElementById('cancel-place');
     cancelBtn.style.display = (this.placing || this.copyBuffer) ? 'block' : 'none';
     document.getElementById('rotate-place').style.display = this.placing === 'bridge' ? 'block' : 'none';
@@ -1455,14 +1814,19 @@ class UI {
     const s = TILE * this.cam.zoom;
     ctx.fillStyle = '#2a3038';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    const x0 = Math.max(0, Math.floor(this.cam.x)), y0 = Math.max(0, Math.floor(this.cam.y));
-    const x1 = Math.min(MAP_W - 1, Math.ceil(this.cam.x + this.canvas.width / s));
+    // East-west the sweep is NOT clamped to the map: it runs past the seam and
+    // each tile is wrapped as it is read, so a view straddling the edge of the
+    // world draws continuous ground instead of stopping at a wall.
+    const y0 = Math.max(0, Math.floor(this.cam.y));
     const y1 = Math.min(MAP_H - 1, Math.ceil(this.cam.y + this.canvas.height / s));
+    let x0 = Math.floor(this.cam.x), x1 = Math.ceil(this.cam.x + this.canvas.width / s);
+    if (!WORLD_WRAP) { x0 = Math.max(0, x0); x1 = Math.min(MAP_W - 1, x1); }
     const map = game.map;
 
     // terrain: strictly tile-bound artwork first…
     for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
+      for (let xi = x0; xi <= x1; xi++) {
+        const x = wrapX(xi);
         const i = map.idx(x, y);
         const t = map.terrain[i];
         // Plateau tops get their own darker turf as the base coat; the rim pieces
@@ -1477,8 +1841,24 @@ class UI {
         if (t === T_GRASS) {
           if (map.road[i]) this.tile(AT.PATH_DOT, x, y);
           else if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
+        } else if (t === T_SAND) {
+          // Beach. The 3x3 set blends sand into whatever is inland of it; the
+          // waterline is left to the water tile's own baked shore.
+          const [ex, ey] = map.sandEdge(x, y);
+          this.drawTileCanvas(Assets.sand[ey * 3 + ex], x, y);
         } else if (t === T_WATER) {
+          // Every water tile keeps the shoreline autotile — it is the only art
+          // that knows how to meet a beach — and the sea floor falls away under
+          // it as a darkening wash keyed to distance from land. Swapping in a
+          // flat deep tile instead drew a hard blocky shelf a few tiles out,
+          // which read as a rendering seam rather than as depth.
           this.tile(map.waterTile(x, y), x, y);
+          const dp = map.depth[i];
+          if (dp > 1) {
+            const [bx, by] = this.worldToScreen(x, y);
+            ctx.fillStyle = DEEP_SHADES[Math.min(DEEP_SHADES.length - 1, dp - 2)];
+            ctx.fillRect(Math.floor(bx), Math.floor(by), Math.ceil(s), Math.ceil(s));
+          }
           // A planned span is drawn ghosted until the builders have finished it —
           // map.bridge (the flag that makes the water walkable) is only stamped
           // on completion, so this is the one thing that shows the work is coming.
@@ -1513,6 +1893,17 @@ class UI {
         // four sides that neighbouring ramp climbs from.
         const topDir = map.high[i] ? map.rampTopHere(x, y) : -1;
         if (topDir >= 0) this.tile(AT.RAMP_TOP[topDir], x, y);
+        // Biome wash. There is no per-biome terrain ART yet (see BIOMES in
+        // js/world.js), so a biome shows as a tint over the ground it covers —
+        // enough that a desert, a taiga and an ice cap are all legible on the
+        // map, and the hook the real art will replace. Grassland, beach and
+        // open water declare a wash of 0 and cost nothing here.
+        const bio = BIOMES[map.biome[i]];
+        if (bio.wash > 0) {
+          const [bx, by] = this.worldToScreen(x, y);
+          ctx.fillStyle = bio.washCss;
+          ctx.fillRect(Math.floor(bx), Math.floor(by), Math.ceil(s), Math.ceil(s));
+        }
       }
     }
     // …then boulders, which spill past their own tile. Stamped dead centre they lined up
@@ -1520,7 +1911,8 @@ class UI {
     // tile coordinates) makes a rocky patch read as scattered stone. Separate pass so a
     // boulder leaning right is not clipped by the next tile's grass.
     for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
+      for (let xi = x0; xi <= x1; xi++) {
+        const x = wrapX(xi);
         const i = map.idx(x, y);
         if (map.terrain[i] !== T_ROCK) continue;
         const rnd = tileNoise(x, y);
@@ -1535,7 +1927,7 @@ class UI {
     for (const f of game.factions) {
       for (const b of f.buildings) {
         if (!b.type.flat) continue;
-        if (b.x + b.type.size < x0 || b.x > x1 || b.y + b.type.size < y0 || b.y > y1) continue;
+        if (!this.onScreen(b.cx, b.cy, b.type.size)) continue;
         this.drawBuildingGround(b);
       }
     }
@@ -1596,11 +1988,12 @@ class UI {
     ctx.lineWidth = Math.max(1, this.cam.zoom);
     ctx.setLineDash([s * 0.25, s * 0.25]);
     for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
+      for (let xi = x0; xi <= x1; xi++) {
+        const x = wrapX(xi);
         const own = t.owner[y * MAP_W + x];
         if (own < 0) continue;
-        const sx = (x - this.cam.x) * s, sy = (y - this.cam.y) * s;
-        if (x < MAP_W - 1 && t.owner[y * MAP_W + x + 1] !== own) {
+        const [sx, sy] = this.worldToScreen(x, y);
+        if (t.owner[y * MAP_W + wrapX(x + 1)] !== own && (WORLD_WRAP || x < MAP_W - 1)) {
           ctx.strokeStyle = game.factions[own].color.css;
           ctx.beginPath(); ctx.moveTo(sx + s, sy); ctx.lineTo(sx + s, sy + s); ctx.stroke();
         }
@@ -1679,10 +2072,12 @@ class UI {
     // canopies are taller than their tile and spill upward and sideways, so sweep a
     // margin past the viewport or trees pop in at the edges
     const m = Math.ceil(TREE_CANOPY);
-    const yEnd = Math.min(MAP_H - 1, y1 + m), xEnd = Math.min(MAP_W - 1, x1 + m);
-    const xStart = Math.max(0, x0 - m), yStart = Math.max(0, y0 - 1);
+    const yEnd = Math.min(MAP_H - 1, y1 + m), yStart = Math.max(0, y0 - 1);
+    let xStart = x0 - m, xEnd = x1 + m;
+    if (!WORLD_WRAP) { xStart = Math.max(0, xStart); xEnd = Math.min(MAP_W - 1, xEnd); }
     for (let y = yStart; y <= yEnd; y++) {
-      for (let x = xStart; x <= xEnd; x++) {
+      for (let xi = xStart; xi <= xEnd; xi++) {
+        const x = wrapX(xi);
         const i = map.idx(x, y);
         if (map.terrain[i] !== T_TREE) continue;
         out.push({ d: y + TREE_BASE, kind: L_TREE, ref: i, alpha: fadeSet && fadeSet.has(i) ? 0.32 : 1 });
@@ -1693,7 +2088,7 @@ class UI {
         // bridges are terrain (map.bridge), drawn with the water they cross
         if (b.type.key === 'bridge') continue;
         const s = b.type.size;
-        if (b.x + s < x0 - 1 || b.x > x1 + 1 || b.y + s < y0 - 1 || b.y > y1 + 1) continue;
+        if (!this.onScreen(b.cx, b.cy, s + 1)) continue;
         const rampart = b.type.key === 'wall' || b.type.key === 'gate';
         out.push({ d: b.y + s, kind: rampart ? L_RAMPART : L_BUILDING, ref: b, alpha: 1 });
       }
@@ -1701,7 +2096,8 @@ class UI {
     for (const f of game.factions) {
       for (const u of f.units) {
         if (u.dead && u.deathT > 6) continue;
-        if (u.x < x0 - 1 || u.x > x1 + 1 || u.y < y0 - 1 || u.y > y1 + 1) continue;
+        if (u.aboard) continue;                 // below decks: not on the map
+        if (!this.onScreen(u.x, u.y, 2)) continue;
         out.push({ d: u.y + UNIT_FOOT, kind: L_UNIT, ref: u, alpha: 1 });
       }
     }
@@ -1889,6 +2285,7 @@ class UI {
   }
 
   drawUnit(u) {
+    if (u.type.naval) return this.drawShip(u);
     const ctx = this.ctx;
     const z = this.cam.zoom;
     const sheet = Assets.unitSheets[u.faction][u.spriteKey || u.type.spriteKey || u.type.key];
@@ -1953,6 +2350,45 @@ class UI {
       if (u.mission && u.mission.kind === 'caravan') badge('#fd5');
       else if (u.mission && u.mission.kind === 'envoy') badge('#fff');
       if (u.carryTotal() > 0) badge('#a6763a', '#ffd24a');   // hauling plunder
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // A ship is a single baked sprite rather than an animated sheet (js/assets.js
+  // bakeShips — there is no boat art in either tileset), mirrored to face its
+  // heading, with its load shown as pips along the gunwale.
+  drawShip(u) {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const art = Assets.ships[u.faction][u.type.key];
+    const [sx, sy] = this.worldToScreen(u.x, u.y);
+    const d = Math.ceil(TILE * z * (u.type.scale || 1));
+    const px = Math.round(sx), py = Math.round(sy - d * 0.55);
+    if (u.dead) ctx.globalAlpha = Math.max(0, 1 - u.deathT / 3);
+    if (this.selection.units.includes(u)) {
+      ctx.strokeStyle = '#8f8'; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(px, sy, d * 0.5, d * 0.24, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.save();
+    if (u.facing < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(art, 0, 0, TILE, TILE, Math.round(px - d / 2), py, d, d);
+    ctx.restore();
+    if (u.dead) { ctx.globalAlpha = 1; return; }
+    const gap = Math.max(2, Math.round(z));
+    let y = py - gap - Math.max(1, Math.round(1.5 * z));
+    ctx.fillStyle = game.factions[u.faction].color.css;
+    ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), Math.max(1, Math.round(1.5 * z)));
+    if (u.hp < u.type.hp) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.type.hp, '#5c5'); }
+    const load = u.cargo ? u.cargo.length : 0;
+    if (load) {
+      y -= gap + Math.max(2, Math.round(2 * z));
+      const pip = Math.max(2, Math.round(2 * z));
+      for (let k = 0; k < load; k++) {
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillRect(Math.round(px - (load * (pip + 1)) / 2 + k * (pip + 1)), y, pip, pip);
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -2101,35 +2537,24 @@ class UI {
     ctx.fillRect(x, y, w * Math.max(0, Math.min(1, frac)), 3);
   }
 
+  // The minimap is two layers. The expensive one — one pixel per tile of
+  // terrain, biome and territory — is a whole-world scan, so it is rebuilt on a
+  // clock rather than every refresh; at planet scale that loop is half a million
+  // pixels and running it per-frame cost more than drawing the game did. The
+  // cheap one, the towns and troops, is redrawn over it each time.
   renderMinimap() {
     const mctx = this.mini.getContext('2d');
-    const img = mctx.createImageData(MAP_W, MAP_H);
-    const map = game.map;
-    const colors = {
-      [T_GRASS]: [116, 196, 80], [T_WATER]: [64, 120, 200],
-      [T_TREE]: [40, 120, 50], [T_ROCK]: [130, 130, 130], [T_CAVE]: [80, 70, 70],
-      [T_CLIFF]: [96, 104, 74], [T_RAMP]: [150, 156, 128],
-    };
-    // territory tint: claimed tiles blend toward their owner's color
-    const ownerCols = game.factions.map(f => [
-      parseInt(f.color.css.slice(1, 3), 16),
-      parseInt(f.color.css.slice(3, 5), 16),
-      parseInt(f.color.css.slice(5, 7), 16),
-    ]);
-    for (let i = 0; i < MAP_W * MAP_H; i++) {
-      let c = colors[map.terrain[i]];
-      // Ground on top of a plateau keeps its own terrain colour but a shade
-      // deeper, so a mesa reads as one mass rather than as a ring of grey.
-      if (map.high[i]) c = [c[0] * 0.72, c[1] * 0.78, c[2] * 0.66];
-      if (map.road[i]) c = [200, 180, 120];
-      const own = game.territory ? game.territory.owner[i] : -1;
-      if (own >= 0) {
-        const oc = ownerCols[own], a = 0.28;
-        c = [c[0] * (1 - a) + oc[0] * a, c[1] * (1 - a) + oc[1] * a, c[2] * (1 - a) + oc[2] * a];
-      }
-      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
+    if (this.mini.width !== MAP_W || this.mini.height !== MAP_H) {
+      this.mini.width = MAP_W; this.mini.height = MAP_H;
+      this.miniBase = null;
     }
-    mctx.putImageData(img, 0, 0);
+    const now = performance.now();
+    if (!this.miniBase || now - this.miniBaseT > MINIMAP_BASE_PERIOD) {
+      this.renderMinimapBase();
+      this.miniBaseT = now;
+    }
+    mctx.clearRect(0, 0, MAP_W, MAP_H);
+    mctx.drawImage(this.miniBase, 0, 0);
     for (const f of game.factions) {
       mctx.fillStyle = f.color.css;
       for (const b of f.buildings) {
@@ -2139,8 +2564,71 @@ class UI {
         // covered its neighbour's tile
         mctx.fillRect(b.x, b.y, b.type.size, b.type.size);
       }
-      for (const u of f.units) if (u.alive) mctx.fillRect(Math.floor(u.x), Math.floor(u.y), 1, 1);
+      for (const u of f.units) if (u.alive && !u.aboard) mctx.fillRect(Math.floor(u.x), Math.floor(u.y), 1, 1);
     }
+  }
+
+  renderMinimapBase() {
+    if (!this.miniBase) {
+      this.miniBase = document.createElement('canvas');
+      this.miniBase.width = MAP_W; this.miniBase.height = MAP_H;
+    }
+    const mctx = this.miniBase.getContext('2d');
+    const img = mctx.createImageData(MAP_W, MAP_H);
+    const map = game.map;
+    // Terrain still sets the base colour, but it is blended toward the tile's
+    // biome tint so the minimap shows the same world the globe does: green
+    // belts, tan deserts, white caps. Water takes its colour from depth.
+    const colors = {
+      [T_GRASS]: [116, 196, 80], [T_WATER]: [64, 120, 200],
+      [T_TREE]: [40, 120, 50], [T_ROCK]: [130, 130, 130], [T_CAVE]: [80, 70, 70],
+      [T_CLIFF]: [96, 104, 74], [T_RAMP]: [150, 156, 128], [T_SAND]: [214, 194, 132],
+    };
+    // territory tint: claimed tiles blend toward their owner's color
+    const ownerCols = game.factions.map(f => [
+      parseInt(f.color.css.slice(1, 3), 16),
+      parseInt(f.color.css.slice(3, 5), 16),
+      parseInt(f.color.css.slice(5, 7), 16),
+    ]);
+    // Scalars, not a fresh [r,g,b] per pixel: at planet scale that is half a
+    // million array allocations per rebuild, and it dominated the cost of the
+    // whole minimap.
+    const px = img.data;
+    const terr = new Float32Array(24);
+    for (const k in colors) {
+      terr[k * 3] = colors[k][0]; terr[k * 3 + 1] = colors[k][1]; terr[k * 3 + 2] = colors[k][2];
+    }
+    for (let i = 0; i < MAP_W * MAP_H; i++) {
+      const t = map.terrain[i];
+      const bio = BIOMES[map.biome[i]];
+      let r, g, b;
+      if (t === T_WATER) {
+        const deep = Math.min(1, map.depth[i] / 14);
+        r = bio.tint[0] * (1 - deep * 0.5);
+        g = bio.tint[1] * (1 - deep * 0.42);
+        b = bio.tint[2] * (1 - deep * 0.18);
+      } else {
+        r = terr[t * 3]; g = terr[t * 3 + 1]; b = terr[t * 3 + 2];
+        const a = bio.wash;
+        if (a > 0) {
+          r = r * (1 - a) + bio.tint[0] * a;
+          g = g * (1 - a) + bio.tint[1] * a;
+          b = b * (1 - a) + bio.tint[2] * a;
+        }
+      }
+      // Ground on top of a plateau keeps its own terrain colour but a shade
+      // deeper, so a mesa reads as one mass rather than as a ring of grey.
+      if (map.high[i]) { r *= 0.72; g *= 0.78; b *= 0.66; }
+      if (map.road[i]) { r = 200; g = 180; b = 120; }
+      const own = game.territory ? game.territory.owner[i] : -1;
+      if (own >= 0) {
+        const oc = ownerCols[own], a = 0.28;
+        r = r * (1 - a) + oc[0] * a; g = g * (1 - a) + oc[1] * a; b = b * (1 - a) + oc[2] * a;
+      }
+      const o = i * 4;
+      px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255;
+    }
+    mctx.putImageData(img, 0, 0);
   }
 
   blitMinimap() {

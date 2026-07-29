@@ -1,2 +1,14 @@
 __pycache__/
 *.pyc
+
+# Verification tooling only. The game itself has no build step and no
+# dependencies (see README); playwright-core gets installed here ad hoc to
+# drive the headless checks described in docs/formations-tiers-ui.md.
+node_modules/
+package-lock.json
+
+# Ad hoc verification harnesses. docs/formations-tiers-ui.md describes the
+# pattern (headless Playwright driving the game/ui globals) and states these are
+# scratch files, not committed — this keeps the convention from being tripped
+# over. Underscore prefix by convention; nothing the game ships starts with one.
+_*.js

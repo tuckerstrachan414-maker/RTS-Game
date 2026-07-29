@@ -23,6 +23,12 @@ const CIV_TRIP_BUDGET = 8;
 // Least fraction of the old flat cycle a worker must spend actually working, so
 // that even a perfect haul cannot make a building produce without limit.
 const CIV_WORK_FLOOR = 0.35;
+// How much nearer an urgent site pretends to be when builders are choosing.
+// A multiplier rather than a hard override: an urgent site three times as far
+// away wins, one twenty times as far still does not, so marking something
+// urgent moves it up the queue instead of stopping every other build.
+const URGENT_SITE_BIAS = 0.2;
+
 const MAX_BUILDERS_PER_SITE = 3;
 const CIV_FLEE_RADIUS = 5;    // hostile soldiers this close send civilians running
 const CIV_RECONCILE = 0.5;    // seconds between population/job reconciliation passes
@@ -158,7 +164,7 @@ function reconcileJobs(f, civs) {
     // nearest free citizen takes the job, so people work where they already are
     let pick = 0, best = Infinity;
     for (let i = 0; i < idle.length; i++) {
-      const d = Math.hypot(idle[i].x - b.cx, idle[i].y - b.cy);
+      const d = wdist(idle[i].x, idle[i].y, b.cx, b.cy);
       if (d < best) { best = d; pick = i; }
     }
     assignJob(idle.splice(pick, 1)[0], b);
@@ -215,7 +221,7 @@ function civThreatNear(u) {
     if (!game.diplomacy.hostile(u.faction, f.id)) continue;
     for (const e of f.units) {
       if (!e.alive || e.type.civilian || e.type.envoy) continue;
-      if (Math.hypot(e.x - u.x, e.y - u.y) <= CIV_FLEE_RADIUS) return e;
+      if (wdist(u.x, u.y, e.x, e.y) <= CIV_FLEE_RADIUS) return e;
     }
   }
   return null;
@@ -228,7 +234,7 @@ function tickFlee(u, dt) {
   if (u.path.length) return u.followPath(dt);
   const home = nearestOwnBuilding(u);
   if (!home) { u.setAnim('idle'); return; }
-  if (Math.hypot(home.cx - u.x, home.cy - u.y) < 2) { u.setAnim('idle'); return; }
+  if (wdist(u.x, u.y, home.cx, home.cy) < 2) { u.setAnim('idle'); return; }
   // orderMove runs A*, and a civilian whose refuge is unreachable would run one
   // every tick for as long as the raid lasts
   if (u.repathT > 0) { u.setAnim('idle'); return; }
@@ -240,7 +246,7 @@ function nearestOwnBuilding(u) {
   let best = null, bd = Infinity;
   for (const b of game.factions[u.faction].buildings) {
     if (b.hp <= 0 || b.type.key === 'bridge') continue;
-    const d = Math.hypot(b.cx - u.x, b.cy - u.y);
+    const d = wdist(u.x, u.y, b.cx, b.cy);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -323,7 +329,7 @@ function tickGatherer(u, dt) {
     }
   }
   const [tx, ty] = u.spot;
-  if (Math.hypot(tx + 0.5 - u.x, ty + 0.5 - u.y) <= 1.2) { u.phase = 'work'; u.path = []; u.workT = 0; return; }
+  if (wdist(u.x, u.y, tx + 0.5, ty + 0.5) <= 1.2) { u.phase = 'work'; u.path = []; u.workT = 0; return; }
   walkTo(u, dt, tx, ty, () => { u.spot = null; });
 }
 
@@ -472,7 +478,15 @@ function claimSite(u, f) {
     // ready sites need hands; unready ones need hands only if there is still
     // something to carry that nobody else has already picked up
     if (!siteReady(b) && !siteHasWork(b, u.faction)) continue;
-    const d = Math.hypot(b.cx - u.x, b.cy - u.y);
+    // Nearest site wins — except that a site can declare itself urgent, and an
+    // urgent one is treated as if it were much closer than it is. Without this
+    // a site the nation genuinely needs but happens to have staked out on the
+    // far side of its territory never gets a single builder: there is always
+    // something nearer to work on, so it sits at zero delivered forever. The
+    // AI's invasion shipyard is the case that forced it — a Dock has to be on
+    // the coast, the coast is wherever it is, and a campaign that cannot get
+    // its yard built never sails.
+    const d = wdist(u.x, u.y, b.cx, b.cy) * (b.urgent ? URGENT_SITE_BIAS : 1);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -513,7 +527,7 @@ function nearestStoreWith(u, r) {
   let best = null, bd = Infinity;
   for (const b of game.factions[u.faction].buildings) {
     if (!b.done || b.hp <= 0 || !b.type.storage || (b.store[r] || 0) <= 0.01) continue;
-    const d = Math.hypot(b.cx - u.x, b.cy - u.y);
+    const d = wdist(u.x, u.y, b.cx, b.cy);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
