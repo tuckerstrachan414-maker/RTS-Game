@@ -32,30 +32,16 @@ systematic coastal survey. A proper coast-following patrol, and more than one
 hull, would fix both.
 **Plan:** TBD
 
-### 43. An AI invasion usually loses its war before the fleet is ready
-`js/naval.js` `aiRunInvasionStage` — the campaign is verified end to end (force
-a cross-ocean war open and it goes `building → fleet → loading → sailing` and
-puts a dozen troops on the enemy shore), but in an unforced 50-minute soak the
-AIs reached `fleet` and then aborted, because peace broke out while the
-shipyard was still turning out hulls. Getting from "no dock" to "two loaded
-transports" takes 20-25 sim-minutes on a Standard World, most of it waiting on
-free citizens to crew the ships, and that is longer than a typical war lasts.
-The gate has been loosened as far as is sensible (one transport is enough for a
-small army, and a campaign sails unescorted rather than not at all after
-`FLEET_PATIENCE`), so the rest of the fix is economic: the AI needs to keep a
-standing transport or two in peacetime the way it keeps a standing army, rather
-than starting a shipyard the day war is declared.
-**Plan:** TBD
-
-### 44. Population runs away on the big worlds
-Observed on a 50-minute unattended Standard World soak: nations finished at
-454-1072 population with 491-1109 units each, against 13-17 on the old 96×96
-map over a comparable run. Nothing is wrong with the growth rule — a nation
-grows by a fraction of its housing cap, and the big worlds simply give it four
-to six thousand tiles of land to fill instead of a shared few hundred — but
-nothing pushes back either, and a thousand-unit nation is both a balance
-problem and the reason a long soak crawls. Wants a real ceiling: land quality,
-food logistics, unrest, or an upkeep curve that bites.
+### 44. Population runs high on the big worlds
+On a 75-minute unattended Standard World soak nations finish around 100-180
+population with 143-219 units each, against 13-17 on the old 96×96 map over a
+comparable run. Nothing is wrong with the growth rule — a nation grows by a
+fraction of its housing cap, and the big worlds give it four to six thousand
+tiles to fill instead of a shared few hundred — but nothing pushes back on it
+either. (It was far worse, 454-1072 population, before overseas wars could
+actually be fought: the armies that die in them are most of what checks growth
+now. That is a fragile equilibrium to rely on.) Wants a real ceiling: land
+quality, food logistics, unrest, or an upkeep curve that bites.
 **Plan:** TBD
 
 ### 40. Ships have no formation, no group role, and no place in the panels
@@ -303,6 +289,26 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#43 AI invasions could never sail — overseas wars ended two minutes after
+  they were declared** — `js/ai.js` `aiDiplomacy`, `js/naval.js`
+  `aiCampaignAgainst`. A 50-minute unattended soak had every AI campaign reach
+  the fleet stage and abort; instrumenting the abort itself gave the reason
+  outright (`war=neutral deadlineIn=478s targetAlive=true`) and the diplomacy
+  log gave the mechanism: wars across water lasted 2-3 minutes. Nobody can draw
+  blood before the transports are built, so `lastBlood` never moves, both sides
+  accumulate weariness on schedule, and the bloodless "exhausted peace" clause
+  correctly identifies a stalemate — except it is not one, it is a war being
+  slowly prepared. Both peace paths now skip a pair with a live campaign
+  between them. It is bounded: a campaign that stops progressing times out on
+  its own (`INVASION_STAGE_TIME`), and on a one-landmass map no campaign is
+  ever created, so land wars are untouched. The same soak now runs all three
+  AIs through `building → fleet → loading → sailing` and lands 12 troops on a
+  foreign continent at t=60m. Three earlier fixes were needed to get that far
+  and are worth keeping in mind as the near-misses they were: an urgent-site
+  bias so the coastal shipyard attracts builders at all, a fleet gate that does
+  not wait forever for an escort, and a stage deadline checked after the stage
+  runs rather than before it.
 
 - **#35 Civilians were drawn with soldiers' art** — `js/assets.js`,
   `js/civilians.js`. The worker and builder borrowed `MiniShieldMan` and

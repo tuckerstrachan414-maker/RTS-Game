@@ -529,6 +529,17 @@ marginal-utility choice). Two jobs:
   behave as though it were five times nearer — enough to move it up the queue,
   not enough to stop everything else.
 
+  **And the campaign holds the peace off while it runs.** This is the one that
+  actually mattered. A war across water draws no blood until the transports
+  land, so from the diplomacy layer's point of view it is indistinguishable
+  from a stalemate — and `aiDiplomacy`'s bloodless "exhausted peace" clause
+  ended every overseas war two to three minutes after it was declared, long
+  before any fleet existed. Both peace paths now skip a pair with a live
+  campaign between them (`aiCampaignAgainst`, `js/naval.js`). It cannot deadlock
+  a war open: a campaign that stops making progress times out by itself, and on
+  a single-landmass world no campaign is ever created, so land wars behave
+  exactly as they always did.
+
 Where does an AI think a rival *is*, if it has never scouted one? Scouted
 memory first. Failing that, **the drawn territory borders** — which
 `CLAUDE.md` lists as public knowledge alongside the diplomacy matrices:

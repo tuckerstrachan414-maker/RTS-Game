@@ -251,6 +251,15 @@ function aiDiplomacy(f) {
   //    and let mutually exhausted, bloodless wars gutter out in a white peace
   for (const o of rivals) {
     if (dip.status(f.id, o.id) !== STATUS.WAR) continue;
+    // A war fought across water looks exactly like a stalemate from in here.
+    // No blood is drawn for as long as it takes to build a shipyard and load a
+    // fleet, so both clauses below — sue for peace, and the bloodless
+    // guttering-out — fire long before the first transport sails, and an
+    // overseas war ends about two minutes after it is declared, every time.
+    // A campaign under way is not exhaustion; it IS the war being prosecuted,
+    // so it holds the peace off. Bounded, because a campaign that stops making
+    // progress times out on its own (js/naval.js INVASION_STAGE_TIME).
+    if (aiCampaignAgainst(f, o.id) || aiCampaignAgainst(o, f.id)) continue;
     const dur = game.time - dip.warSince[f.id][o.id];
     const durLimit = prof.plunderGoal ? 90 : 240;   // raid wars are short by design
     const theirStr = f.brain.perception.estimatedStrength(o.id).value;

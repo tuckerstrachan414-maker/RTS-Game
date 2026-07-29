@@ -565,6 +565,13 @@ function aiInvasionStep(inv, state) {
   inv.deadline = game.time + INVASION_STAGE_TIME;
 }
 
+// Is this nation in the middle of an amphibious campaign against that one?
+// Read by the diplomacy layer, which otherwise cannot tell a war being slowly
+// prepared from a war nobody is fighting.
+function aiCampaignAgainst(f, fid) {
+  return !!(f && f.ai && f.ai.invasion && f.ai.invasion.targetFid === fid);
+}
+
 function aiAbortInvasion(f) {
   const inv = f.ai.invasion;
   if (inv) {
