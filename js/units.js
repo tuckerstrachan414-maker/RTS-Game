@@ -103,6 +103,7 @@ class Unit {
     // civilians only (js/civilians.js): where they work and how far through the
     // job they are. Declared here so every unit has one shape.
     this.job = null;               // {b, kind:'gather'|'build'} — follows building.workers
+    this.spriteKey = null;         // set from the job (`civSpriteFor`), overrides the type's
     this.phase = null;             // gatherer leg: 'out' | 'work' | 'home'
     this.spot = null;              // the tile being worked
     this.site = null;              // builder: the construction site it has claimed

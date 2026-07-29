@@ -28,22 +28,40 @@ const CIV_FLEE_RADIUS = 5;    // hostile soldiers this close send civilians runn
 const CIV_RECONCILE = 0.5;    // seconds between population/job reconciliation passes
 const CIV_WANDER_R = 5;       // how far an unemployed citizen strolls from a building
 
-// Two sheets orphaned by the roster cut (js/assets.js) carry the townsfolk.
 // Civilians keep their nation's colours — knowing whose lumberjacks those are
 // matters — but are drawn smaller than soldiers (`scale`) so a crowd of workers
 // never reads as an army.
 UNIT_TYPES.worker = {
-  key: 'worker', name: 'Worker', spriteKey: 'shieldman', civilian: true, scale: 0.85,
+  key: 'worker', name: 'Worker', spriteKey: 'civTownsfolk', civilian: true, scale: 0.85,
   cost: {}, hp: 30, dmg: 0, dmgType: 'melee', range: 0.9, speed: 2.0, cooldown: 1,
   trainTime: 0, carry: CIV_GATHER_LOAD, tier: 1,
   desc: 'A citizen at work. Gathers from the land and hauls it to your nearest store.',
 };
 UNIT_TYPES.builder = {
-  key: 'builder', name: 'Builder', spriteKey: 'crossbow', civilian: true, scale: 0.85,
+  key: 'builder', name: 'Builder', spriteKey: 'civBuilder', civilian: true, scale: 0.85,
   cost: {}, hp: 35, dmg: 0, dmgType: 'melee', range: 0.9, speed: 2.1, cooldown: 1,
   trainTime: 0, carry: CIV_BUILD_LOAD, tier: 1,
   desc: 'Carries 15 materials at a time from your stores to a construction site, then raises it.',
 };
+
+// Which sheet a citizen is drawn on. The unit type only knows worker/builder,
+// but there are five sets of townsfolk art and a trade is the most legible
+// thing about a civilian at 16 pixels — so the sprite follows the job rather
+// than the type, and a nation's economy can be read off the map without
+// clicking anything. Unemployed citizens carry no tool at all, which is the
+// point: a town full of empty hands is a town with work going undone.
+const CIV_SPRITES = {
+  farm: 'civFarmer', well: 'civFarmer',
+  lumber: 'civWoodcutter',
+  quarry: 'civMiner', mine: 'civMiner',
+  market: 'civTownsfolk',
+};
+
+function civSpriteFor(u) {
+  if (!u.job) return 'civTownsfolk';
+  if (u.job.kind === 'build') return 'civBuilder';
+  return CIV_SPRITES[u.job.b.type.key] || 'civTownsfolk';
+}
 
 // ---------------------------------------------------------------------------
 // Population embodiment and job assignment
@@ -70,6 +88,7 @@ function spawnCivilian(f, th) {
   const [x, y] = f.spawnPointNear(th);
   const u = new Unit('worker', f.id, x, y);
   u.aggressive = false;
+  u.spriteKey = 'civTownsfolk';   // no trade yet — reconcileJobs may give one this pass
   f.units.push(u);
   return u;
 }
@@ -108,7 +127,8 @@ function jobBuildingOk(f, b) {
 }
 
 function releaseCivilian(u) {
-  u.job = null; u.phase = null; u.spot = null; u.workTotal = 0;
+  u.job = null; u.spriteKey = 'civTownsfolk';
+  u.phase = null; u.spot = null; u.workTotal = 0;
   u.path = []; u.dest = null; u.wanderT = 0;
   u.site = null; u.fetch = null;
   releaseBuilderLoad(u);
@@ -149,6 +169,7 @@ function assignJob(u, b) {
   const wantType = b.type.builders ? 'builder' : 'worker';
   if (u.type.key !== wantType) retypeCivilian(u, wantType);
   u.job = { b, kind: b.type.builders ? 'build' : 'gather' };
+  u.spriteKey = civSpriteFor(u);
   u.phase = 'out'; u.spot = null; u.workTotal = 0; u.workT = 0;
   u.path = []; u.dest = null; u.site = null; u.stuck = 0;
 }

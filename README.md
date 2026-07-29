@@ -75,6 +75,12 @@ carry there. Farmhands work their own field, stonecutters the rock face,
 diggers the cave mouth, traders the Market. Citizens with no job wander the
 streets of your town, which is what an idle population looks like.
 
+**And you can see who is who.** Your people carry the tools of their trade —
+a scythe on the farms, an axe in the treeline, a pick at the rock face and the
+cave mouth, a hammer on every building site — so a glance across your land
+tells you where your economy actually is. Anyone with empty hands has no work
+to do.
+
 **So where you put your Storehouses is now a real decision.** A Lumber Camp
 with a Storehouse beside it earns nearly twice what the same camp earns hauling
 its wood twenty tiles home. Build storage out to your camps, or accept that

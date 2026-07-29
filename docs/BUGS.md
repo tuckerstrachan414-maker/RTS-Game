@@ -88,14 +88,6 @@ nation build a Storehouse at the satellite *first*, which is the actual fix
 would collapse the round trip).
 **Plan:** TBD
 
-### 35. Civilians are drawn with soldiers' art
-`js/assets.js` `UNIT_SHEETS` — the worker and builder borrow `MiniShieldMan` and
-`MiniCrossBowMan`, so a citizen is a figure holding a shield or a crossbow. The
-0.85 scale and the `drab` desaturation pass make them read as townsfolk at a
-glance, but up close they are still soldiers. There is no civilian art in the
-pack; this is a placeholder, and swapping it is a one-line change.
-**Plan:** TBD
-
 ### 36. A full storehouse leaves gatherers standing still holding their load
 `js/civilians.js` `gatherDeliver` — `Nation.deposit` returns what would not fit,
 and the worker keeps it rather than letting it evaporate, so with every store
@@ -103,6 +95,20 @@ full a worker walks to the Storehouse and then stands there retrying every tick
 until room appears. That is the intended behaviour (goods are not destroyed) but
 there is no visible signal beyond the existing "storage is full" log line, and a
 player with full stores sees idle workers with no explanation on their panel.
+**Plan:** TBD
+
+### 37. The civilian sheets are reconstructed from screenshots, not originals
+`assets/units/Civ*.png` — the art was delivered as five JPEG screenshots of a
+sprite viewer rather than as PNGs, so `tools/import-civilians.py` recovers the
+sheets by undoing the viewer's magnification (which is anisotropic: 4.7325×
+across, 5.1425× down) and snapping what is left to a clustered palette. The
+recovered geometry is exact — 32px frames in both axes, feet on row 30, the
+frame counts the artist drew — but the colours are within about 8% of the
+originals rather than equal to them, and the sheets demonstrably share the
+MinifolksHumans palette, so the tans in particular are a shade off from the
+soldiers standing next to them. Nobody will see it at 16 pixels; it is worth
+knowing before anyone edits these by hand. If the source PNGs ever turn up,
+drop them in and delete the tool.
 **Plan:** TBD
 
 ### 17. Units end up standing inside their own solid Town Hall
@@ -218,6 +224,18 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#35 Civilians were drawn with soldiers' art** — `js/assets.js`,
+  `js/civilians.js`. The worker and builder borrowed `MiniShieldMan` and
+  `MiniCrossBowMan`, so a citizen was a figure holding a shield or a crossbow,
+  muted by a `drab` desaturation pass to disguise it. Replaced with five
+  purpose-drawn sheets (`assets/units/Civ*.png`) and a per-job sprite:
+  `civSpriteFor` puts the scythe on the farm, the axe in the treeline, the pick
+  on rock and gold, the hammer on the scaffold, and empty hands on anyone
+  unemployed. `drab` is gone with the placeholder it was hiding — the art is
+  drawn as townsfolk, so it does not need to be washed out to read as them.
+  Note the art was delivered as screenshots rather than PNGs, so the sheets are
+  reconstructed by `tools/import-civilians.py` rather than copied; see #37.
 
 - **#16 `?seed=N` did not actually replay a match** — `js/factions.js:196`,
   `js/territory.js:200`, `js/ai.js:388`. Three `Math.random()` calls survived the

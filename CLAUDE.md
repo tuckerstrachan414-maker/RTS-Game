@@ -42,7 +42,8 @@ the code; stale docs are treated as bugs.
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
 - `js/units.js` — unit defs, combat, projectiles, rob/haul, formations, separation
 - `js/civilians.js` — the citizenry: population embodiment, job assignment,
-  gathering trips, builders and construction sites
+  gathering trips, builders and construction sites, per-job sprite
+  (`civSpriteFor`)
 - `js/factions.js` — Faction state, training, the AI executor (`aiTick`)
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
 - `js/events.js` — event-card queue (AI-initiated player choices, expiry)
@@ -101,6 +102,12 @@ the code; stale docs are treated as bugs.
 - `assets/tileset16x16_1.png` is 8×18 now, not 8×14. Rows 14-17 are the cliff
   set; re-splice with `tools/splice-cliffs.py` rather than editing pixels by
   hand. Appending kept every older `AT` coordinate valid — don't repack it.
+- `assets/units/Civ*.png` are **reconstructions** of screenshots, not original
+  art (BUGS #37) — regenerate with `tools/import-civilians.py` rather than
+  editing them, and read that script's docstring before assuming anything about
+  their provenance. A civilian's sheet comes from their *job*, via
+  `civSpriteFor` → `u.spriteKey`, not from their unit type; there are two
+  civilian types and five sheets.
 - **There are two runtime tilesets.** `assets/punyworld-overworld-tileset.png`
   (27×65 cells, art only to row 37) is loaded alongside the atlas; `PUNY`
   addresses it the way `AT` addresses the atlas. Walls, gates, both bridge

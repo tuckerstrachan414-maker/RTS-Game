@@ -1891,7 +1891,7 @@ class UI {
   drawUnit(u) {
     const ctx = this.ctx;
     const z = this.cam.zoom;
-    const sheet = Assets.unitSheets[u.faction][u.type.spriteKey || u.type.key];
+    const sheet = Assets.unitSheets[u.faction][u.spriteKey || u.type.spriteKey || u.type.key];
     const anim = sheet.anims[u.anim] || sheet.anims.idle;
     let frame;
     if (anim.loop) frame = Math.floor(u.animT * anim.fps) % anim.frames;

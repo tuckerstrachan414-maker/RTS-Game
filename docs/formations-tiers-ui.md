@@ -818,3 +818,35 @@ cost a wrong assumption first.
 - A church with a full crew finishes in **under 25 seconds**, so a test that
   ticks 25s before reading `site.delivered` reads `null` off a finished
   building. Poll for the condition instead of guessing a duration.
+- **A civilian's sprite follows their job, not their unit type.** There are two
+  civilian types (`worker`, `builder`) and five sheets, so `civSpriteFor`
+  writes the sheet key onto `u.spriteKey` every time the job changes and
+  `drawUnit` prefers it. Anything that hands a citizen a new job — `assignJob`,
+  `releaseCivilian`, `spawnCivilian` — has to set it, and the check that
+  catches a miss is `civs.filter(u => !Assets.unitSheets[u.faction][u.spriteKey])`
+  after a few thousand ticks, not a screenshot.
+
+## Rebuilding the civilian sheets
+
+`assets/units/Civ*.png` are reconstructions, not originals — the art arrived as
+JPEG screenshots of a sprite viewer. `python3 tools/import-civilians.py --src
+DIR` rebuilds them from those screenshots; `--check` prints the recovered grid
+and the recolour audit without writing anything. Three things about it are
+worth knowing before touching it:
+
+- **The screenshots are anisotropically scaled** (4.7325× across, 5.1425×
+  down). Assume one uniform zoom and the frames come out 32×33, which looks
+  fine on the first row and is a whole row out by the fifth.
+- **Cut the backdrop before clustering the palette, and key it tightly.** The
+  panel and the figures' outline are both near-black about 17 units apart, so a
+  loose test (dark, and blue at least as strong as red) says yes to a third of
+  the outline, the flood fill pours through the holes, and the figures come out
+  with their edges chewed to a speckle. Cluster-first is not the fix — the
+  panel outnumbers the outline enough to swallow it, and then the fill takes
+  the outline away entirely.
+- **Anchor the frame grid on the boots, not on the bounding box or the
+  gutter.** Every tool is carried out to the left, so no figure is centred in
+  its own frame; and the gutter-hunting version worked only while a tool made
+  the margins uneven, which put the one toolless sheet a pixel off from the
+  other four. `FOOT_ROW`/`FOOT_CENTRE` come from the MinifolksHumans sheets, so
+  a civilian stands on a tile exactly the way a swordsman does.

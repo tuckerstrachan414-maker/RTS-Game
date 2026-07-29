@@ -162,11 +162,17 @@ materials to the Church site", "Carrying wood to the nearest store" — and righ
 click does nothing. You direct the economy by deciding what to build and who
 staffs it.
 
-Art: the two unit sheets orphaned by the roster cut (`MiniShieldMan`,
-`MiniCrossBowMan`) are the worker and the builder, drawn at 0.85 scale and run
-through a `drab` pass at load (`js/assets.js`) that mutes saturation to ~42% —
-without it, at 16px, a crowd of workers reads as a crowd of troops. They keep
-their nation's hue, so whose lumberjacks those are is still legible.
+Art: **five sheets of townsfolk, and the sprite follows the job rather than the
+unit type.** `civSpriteFor` (js/civilians.js) reads `u.job` and picks the
+scythe for a farm or a well, the axe for a Lumber Camp, the pick for a Quarry
+or a Gold Mine, the hammer for anyone quartered as a builder, and empty hands
+for the unemployed; the choice is written to `u.spriteKey`, which `drawUnit`
+prefers over the type's. So a nation's economy can be read straight off the
+map — where the axes are is where the wood is coming from, and a town full of
+empty hands is a town with work going undone. All five are drawn at 0.85 scale
+and keep their nation's hue, so whose lumberjacks those are is still legible.
+The sheets are reconstructed from the design team's screenshots by
+`tools/import-civilians.py` (see BUGS #37).
 
 ## Construction & builders — Deep
 
@@ -801,7 +807,10 @@ finished and the tile would otherwise be invisible water.
 **Civilians in the selection model**: box-select and Select Army skip them,
 a single click opens a read-only card describing what that citizen is doing, and
 a right click with only civilians selected does nothing at all.
-**Unit overlays** (`drawUnit`): civilians are drawn at `type.scale` (0.85), and
+**Unit overlays** (`drawUnit`): the sheet comes from `u.spriteKey ||
+u.type.spriteKey || u.type.key` — the per-unit key exists so a civilian's
+sprite can follow their trade rather than their unit type (see Civilians &
+labour). Civilians are drawn at `type.scale` (0.85), and
 every overlay measurement scales with the figure rather than the camera, so the
 faction flash still sits on a worker's head. the faction flash, health bar, caravan/envoy
 badge and plunder sack stack upward from the top of the *figure*, measured per
@@ -852,15 +861,33 @@ figure inside its frame (`top`/`bottom`, used to place unit overlays and the
 selection ring), projectile sheet, pixel-art icon CSS sprites replacing emoji
 throughout the HUD.
 
-**Civilian art is the roster cut's leftovers.** `MiniShieldMan` and
-`MiniCrossBowMan` — no unit type has been keyed to either since the roster went
-from 13 to 9 — are the worker and the builder. They take the ordinary per-faction
-`recolor` and then a `drab` pass (saturation ×0.42, lightness ×0.9) baked once
-per faction at load, because at 16px a smaller figure alone does not read as a
-non-combatant; the nation's hue survives it, which it must, since whose workers
-those are is a targeting decision. Placeholder-grade: they are still soldiers'
-silhouettes, and swapping in drawn civilian art would touch nothing but
-`UNIT_SHEETS`.
+**Civilians have their own art, and pick it per job.** Five sheets
+(`assets/units/Civ*.png`: farmer, woodcutter, miner, builder, plain townsfolk)
+take the ordinary per-faction `recolor` alongside the soldiers — same blue
+band, so a civilian wears their nation's colours and whose workers those are
+stays a targeting decision. Which sheet a given citizen uses is not fixed by
+their unit type: `civSpriteFor` derives it from the job and stores it on
+`u.spriteKey`, and `drawUnit` reads `u.spriteKey || u.type.spriteKey ||
+u.type.key`.
+
+The `drab` pass is gone with the placeholder it existed for. While civilians
+borrowed `MiniShieldMan` and `MiniCrossBowMan`, they were soldiers' silhouettes
+and needed muting (saturation ×0.42) to stop a crowd of workers reading as a
+crowd of troops. Art that is drawn as townsfolk does not need to be washed out
+to look like them, and washing it out cost real information — the farmer's
+tunic is a light blue, and desaturating "pale blue" indiscriminately is exactly
+what flattens it.
+
+These sheets came from the design team as phone screenshots of a sprite viewer
+rather than as PNGs, so `tools/import-civilians.py` rebuilds them: it undoes
+the viewer's magnification (4.7325× across, 5.1425× down — the screenshots are
+stretched, and resampling both axes the same way yields 32×33 frames and a
+sheet that drifts out of alignment by the bottom row), floods the backdrop
+away from the edges, clusters what is left down to the ~12 colours the artist
+drew with, and cuts the frames on the soldier sheets' own convention (feet on
+row 30, centred on column 16). Re-runnable, and `--check` reports the recovered
+grid plus which colours the faction recolour will move. See BUGS #37 for what
+is exact and what is approximate.
 
 The two hue knobs used to be one. `hue: null` meant "leave the art alone",
 which is right for the player's units (the Minifolks art is already blue) but

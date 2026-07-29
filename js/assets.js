@@ -124,12 +124,17 @@ const UNIT_SHEETS = {
   cavalier: 'MiniCavalierMan.png',
   king:     'MiniKingMan.png',
   prince:   'MiniPrinceMan.png',
-  // Civilians (js/civilians.js). Two sheets left over from the roster cut — no
-  // unit type is keyed `shieldman` or `crossbow` any more — put back to work as
-  // the townsfolk. They are drawn at UNIT_TYPES.scale (0.85), so a worker reads
-  // as smaller than a soldier at a glance even before you look at what it carries.
-  shieldman: 'MiniShieldMan.png',
-  crossbow:  'MiniCrossBowMan.png',
+  // Civilians (js/civilians.js): five sheets of townsfolk, drawn for this game
+  // rather than borrowed off the roster, and picked per job by `civSpriteFor`
+  // so a nation's trades are legible at a glance — the scythe is at the farm,
+  // the axe is in the treeline, the hammer is on the scaffold. Still drawn at
+  // UNIT_TYPES.scale (0.85), so a worker reads as smaller than a soldier too.
+  // See tools/import-civilians.py for where the art came from.
+  civFarmer:     'CivFarmer.png',
+  civWoodcutter: 'CivWoodcutter.png',
+  civMiner:      'CivMiner.png',
+  civBuilder:    'CivBuilder.png',
+  civTownsfolk:  'CivTownsfolk.png',
 };
 
 // Faction palettes. `hue` recolors the blue clothing on the unit sheets (null = leave the
@@ -174,8 +179,7 @@ const Assets = {
       const punySheet = roofHue === null ? toCanvas(puny) : recolor(puny, roofHue, 'warm');
       this.unitSheets[f] = {};
       for (const [key, img] of Object.entries(rawUnits)) {
-        let canvas = hue === null ? toCanvas(img) : recolor(img, hue, 'cool');
-        if (CIVILIAN_SHEETS.includes(key)) canvas = drab(canvas);
+        const canvas = hue === null ? toCanvas(img) : recolor(img, hue, 'cool');
         this.unitSheets[f][key] = describeSheet(canvas);
       }
       this.rampart[f] = bakeRamparts(punySheet, roofHue);
@@ -408,27 +412,6 @@ function toCanvas(img) {
   c.width = img.width; c.height = img.height;
   c.getContext('2d').drawImage(img, 0, 0);
   return c;
-}
-
-// Working clothes. The two sheets the civilians borrow (js/civilians.js) are
-// soldiers' art, and at 16px a smaller figure alone does not say "not a soldier"
-// — so a citizen's palette is muted and slightly darkened. The nation's colour
-// still shows, because whose lumberjacks those are matters, but a crowd of
-// workers no longer reads as a crowd of troops.
-const CIVILIAN_SHEETS = ['shieldman', 'crossbow'];
-
-function drab(canvas, satMul = 0.42, lightMul = 0.9) {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const px = data.data;
-  for (let i = 0; i < px.length; i += 4) {
-    if (px[i + 3] === 0) continue;
-    const [h, s, l] = rgbToHsl(px[i], px[i + 1], px[i + 2]);
-    const [r, g, b] = hslToRgb(h, s * satMul, Math.min(1, l * lightMul));
-    px[i] = r; px[i + 1] = g; px[i + 2] = b;
-  }
-  ctx.putImageData(data, 0, 0);
-  return canvas;
 }
 
 // Recolor: shift blue hues (units, 'cool') or orange hues (roofs, 'warm') to target hue.
