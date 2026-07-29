@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# Verification tooling only. The game itself has no build step and no
+# dependencies (see README); playwright-core gets installed here ad hoc to
+# drive the headless checks described in docs/formations-tiers-ui.md.
+node_modules/
+package-lock.json
