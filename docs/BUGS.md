@@ -55,7 +55,12 @@ everyone). Arguably charming, but unintended.
 Market** (30 wood), which is the only way to buy wood. A nation whose forest is
 worked out before it raises a Market can never build anything again, however
 much stone, food and gold it holds: no Market to trade with, no Lumber Camp
-(20 wood) to restart production. The AI now sidesteps this by reserving the
+(20 wood) to restart production. Adding the Builder House (30 wood) does not change the shape of this — it is
+one more wood cost on the pile — but it does add a second way to be stranded:
+lose every builder with no wood to raise a Builder House and nothing can be
+built even where the materials exist. The Town Hall's two builder slots are the
+guard against that, since they need no building of their own.
+The AI now sidesteps the original trap by reserving the
 price of a Market in timber (`AIUtilityEngine.respectsWoodFloor`,
 `js/ai-utility.js`), but **the player has no such guard** and can still strand
 themselves. A Town Hall barter option, or a wood-free Market recipe, would fix
@@ -72,12 +77,38 @@ silently froze AI scouts until `AICombatManager.orderScoutTo` was written to
 clear `dest` and retry; anything else issuing move orders is still exposed.
 **Plan:** TBD
 
-### 16. AI decisions no longer use `Math.random`, but the sim still is not seeded
-`js/ai.js`, `js/ai-*.js` and `js/factions.js` now draw from `game.rng`
-(mulberry32 from the map seed), so personalities, ambitions and build choices
-replay. Combat, projectiles and unit spawn jitter still call global
-`Math.random()`, so `?seed=N` reproduces the map and the opening but not a whole
-match.
+### 34. Remote expansion is very slow now that materials have to be carried
+`js/ai.js` `aiPlanExpansion` picks satellite sites up to ~45 tiles from the
+town, which cost nothing to raise when construction was a timer. Builders now
+walk it: one 15-material load per ~90s round trip, so a four-building satellite
+can take many minutes and ties up builders the home town wants.
+`aiCanBreakGround` stops the queue from running away, but nothing makes a
+nation build a Storehouse at the satellite *first*, which is the actual fix
+(builders fetch from the nearest store to themselves, so one store on site
+would collapse the round trip).
+**Plan:** TBD
+
+### 36. A full storehouse leaves gatherers standing still holding their load
+`js/civilians.js` `gatherDeliver` — `Nation.deposit` returns what would not fit,
+and the worker keeps it rather than letting it evaporate, so with every store
+full a worker walks to the Storehouse and then stands there retrying every tick
+until room appears. That is the intended behaviour (goods are not destroyed) but
+there is no visible signal beyond the existing "storage is full" log line, and a
+player with full stores sees idle workers with no explanation on their panel.
+**Plan:** TBD
+
+### 37. The civilian sheets are reconstructed from screenshots, not originals
+`assets/units/Civ*.png` — the art was delivered as five JPEG screenshots of a
+sprite viewer rather than as PNGs, so `tools/import-civilians.py` recovers the
+sheets by undoing the viewer's magnification (which is anisotropic: 4.7325×
+across, 5.1425× down) and snapping what is left to a clustered palette. The
+recovered geometry is exact — 32px frames in both axes, feet on row 30, the
+frame counts the artist drew — but the colours are within about 8% of the
+originals rather than equal to them, and the sheets demonstrably share the
+MinifolksHumans palette, so the tans in particular are a shade off from the
+soldiers standing next to them. Nobody will see it at 16 pixels; it is worth
+knowing before anyone edits these by hand. If the source PNGs ever turn up,
+drop them in and delete the tool.
 **Plan:** TBD
 
 ### 17. Units end up standing inside their own solid Town Hall
@@ -121,6 +152,29 @@ heuristic.
 **Plan:** TBD
 
 ## Design quirks (intentional-ish, documented so nobody "fixes" them blind)
+
+- **Where you put a Storehouse changes how much a camp earns** — production is
+  a round trip now (`js/civilians.js`), so a Lumber Camp beside a Storehouse
+  delivers ~1.8× what the same camp delivers hauling twenty tiles. That is the
+  feature, not drift: `gatherWorkTime` centres the curve on a reference 8-tile
+  round trip, where a worker earns what it always did.
+- **Food is more abundant than it used to be** — farms work their own field and
+  are built near the granary, so they sit at the short-haul end of that same
+  curve (~1.9× nominal) while lumber camps sit below it. `CIV_WORK_FLOOR` caps
+  how far the bonus can run; the remaining surplus is the honest consequence of
+  farming being close-in work. Population growth is gated by housing and
+  happiness, not food, so the surplus mostly piles up or gets sold.
+- **A citizen killed is a citizen gone** — civilians have no combat value and
+  no unit picks a fight with one on its own, but they are killable by direct
+  order and by splash, and each death decrements `nation.pop`. Killing a
+  nation's workers is a legitimate (and slow) way to strangle it.
+- **The Town Hall quarters two builders it did not have to be given** — without
+  them the Builder House could never be built, and a nation that lost its last
+  builder could never build another. It is a bootstrap, and it is why the Town
+  Hall has `slots` at all.
+- **Civilians take no orders** — they are selectable for information only.
+  Directing the economy is done by choosing what to build and who staffs it,
+  not by driving individual villagers around.
 
 - **Dev mode writes past storage capacity on purpose** — `Game.devTopOff`
   (`js/main.js`) sets the player's Town Hall `store` values directly to
@@ -170,6 +224,30 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#35 Civilians were drawn with soldiers' art** — `js/assets.js`,
+  `js/civilians.js`. The worker and builder borrowed `MiniShieldMan` and
+  `MiniCrossBowMan`, so a citizen was a figure holding a shield or a crossbow,
+  muted by a `drab` desaturation pass to disguise it. Replaced with five
+  purpose-drawn sheets (`assets/units/Civ*.png`) and a per-job sprite:
+  `civSpriteFor` puts the scythe on the farm, the axe in the treeline, the pick
+  on rock and gold, the hammer on the scaffold, and empty hands on anyone
+  unemployed. `drab` is gone with the placeholder it was hiding — the art is
+  drawn as townsfolk, so it does not need to be washed out to read as them.
+  Note the art was delivered as screenshots rather than PNGs, so the sheets are
+  reconstructed by `tools/import-civilians.py` rather than copied; see #37.
+
+- **#16 `?seed=N` did not actually replay a match** — `js/factions.js:196`,
+  `js/territory.js:200`, `js/ai.js:388`. Three `Math.random()` calls survived the
+  AI overhaul in decision paths — the spiral search in `findBuildSpot` (i.e.
+  *where every AI building goes*), the border-dispute merchant branch, and an
+  ultimatum roll — so two runs of the same seed diverged within a minute and no
+  A/B comparison of an AI change meant anything. All three now draw from
+  `game.rng`. Verified by running the same seed twice for 10 sim-minutes and
+  diffing every faction's population, buildings, units, stores and castle tier:
+  identical after, divergent before. (This entry previously claimed the AI was
+  already clean and blamed combat jitter; combat never called `Math.random` —
+  the only remaining call in the codebase is the seed fallback in `boot`.)
 
 - **#32 The pause menu was taller than a landscape phone and clipped its own
   buttons** — `index.html`. `#pause-menu .menu-box` had no `max-height` and no
@@ -375,10 +453,12 @@ heuristic.
   (`js/main.js`) only logs when the player is a belligerent or has living
   troops within 20 tiles of the spill.
 - **#6 Resource income ignored forest depletion** — `estimateIncome` moved from
-  `js/ui.js` to `js/economy.js` (beside the production math it mirrors) and now
-  runs the same read-only tree check as `buildingProduction`, so an exhausted
-  Lumber Camp reports 0. This also removed the layering inversion where the AI
-  brain depended on the render layer.
+  `js/ui.js` to `js/economy.js` and gained the tree check, so an exhausted Lumber
+  Camp reports 0. This also removed the layering inversion where the AI brain
+  depended on the render layer. The duplication that caused the drift is gone
+  entirely now: production is defined once, by `workerYieldRate`
+  (`js/buildings.js`), and nothing mutates state to report a rate, because
+  gathering is done by civilians rather than by the function that measures it.
 - **Every AI declared war seconds into the match** — `aiConsiderWar` gated on
   `f.strength() <= o.strength() * ratio`, and `strength()` is 0 for everyone at
   game start, so the first nation to finish a single swordsman "found an

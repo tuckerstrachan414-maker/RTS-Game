@@ -357,7 +357,11 @@
     #log { max-width: min(360px, 52vw); }
     #place-bar .hud { padding: 9px 13px; min-height: 40px; }
     #buildbar { gap: 3px; padding: 5px; }
-    .bbtn { padding: 7px 6px; }
+    /* Fourteen buildings have to fit 852px of landscape phone (the Builder House
+       made it fourteen). Tighter than the desktop bar by a couple of pixels a
+       side and one point of type — still a 40px-high tap target. */
+    .bbtn { padding: 7px 4px; font-size: 11px; }
+    .bbtn span { font-size: 9px; }
     /* A phone in landscape is ~390px tall: the build panel already owns the bottom-left
        strip, so the card moves to the top row rather than fighting it (and the minimap)
        for the same corner. */
@@ -510,6 +514,7 @@
 <script src="js/economy.js"></script>
 <script src="js/market.js"></script>
 <script src="js/units.js"></script>
+<script src="js/civilians.js"></script>
 <script src="js/factions.js"></script>
 <script src="js/diplomacy.js"></script>
 <script src="js/events.js"></script>

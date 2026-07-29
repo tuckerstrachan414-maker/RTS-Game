@@ -16,7 +16,8 @@ armies instead of a pile of clipped sprites.
 
 **`formationMove(units, tx, ty)`** replaces the old "spread into a grid square"
 logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
-1. Filters to movable units (alive, no active mission, not an envoy/Prince).
+1. Filters to movable units (alive, no active mission, not an envoy/Prince,
+   not a civilian — citizens are never commanded, see `js/civilians.js`).
 2. Computes the group's centroid and the travel angle (`atan2` from centroid
    to target).
 3. Sorts units by the *player's* marching order (`game.formations.order`, an
@@ -312,13 +313,13 @@ idle|happy"`. `buildHud()` wires a click handler on each that calls
 - `tooltipHTML(key)` builds the per-resource explainer: what the resource
   is, which buildings/tiles produce it, and live income/consumption via
   `estimateIncome(f, res)`.
-- **`estimateIncome(f, res)`** (bottom of `js/ui.js`) is a deliberately
-  side-effect-free re-implementation of the math in `buildingProduction`
-  (the real per-tick production function). It exists because the real
-  function *mutates* state as a side effect (tree tiles deplete when
-  harvested, etc.) — calling it just to read a number for a tooltip would
-  double-harvest resources. If production math changes, update both
-  functions or the tooltip numbers will drift from actual income.
+- **`estimateIncome(f, res)`** lives in `js/economy.js` now, and no longer
+  duplicates anything: `workerYieldRate` (`js/buildings.js`) is the single
+  definition of what a worker earns, and nothing depletes a tree tile just to
+  report a number — gathering is something civilians do, not something the
+  estimator does. What the tooltip shows is a building's *measured* delivery
+  rate where it has one (`b.yieldRate`), so the number reflects the walk to the
+  Storehouse and not just the theory.
 
 Adding a new tooltip-able stat: add `data-tip="key"` to the HTML element, add
 a `case 'key':` branch (or equivalent) in `tooltipHTML`.
@@ -364,6 +365,14 @@ the build bar). `--topbar-h`/`--sidebar-w`/`--buildbar-h` are kept live by
 its neighbours automatically. Panels that hung off `var(--topbar-h) + 8px`
 without adding the topbar's *own* 8px inset sat flush against it (or 2px under
 it, for `#diplomacy`).
+
+**1b. The build bar is at its width limit.** The Builder House made it fourteen
+buttons, which overflowed an 852×393 landscape phone by 86px. The coarse-pointer
+rule now uses `padding: 7px 4px` and 11px type (9px for the cost line) on
+`.bbtn`, which brings the row to exactly the viewport width — measured
+`scrollWidth === clientWidth === 808`. It still scrolls if it overflows, and the
+40px tap target is unchanged, but **a fifteenth building will not fit**: the next
+one needs either shorter labels or an icon-only bar on touch.
 
 **2. A centred absolutely-positioned box uses `left:0; right:0; margin:0 auto`,
 never `left:50%` + `translateX(-50%)`.** An abspos box anchored only by `left`
@@ -765,8 +774,79 @@ Things worth re-checking after any change in this area:
 - Place a wall ring with a gate on each side at zoom 4 and check the corners,
   the vertical run's width against the towers, and that the gate arches read.
 - Boot at 852×393 and assert `#buildbar.scrollWidth === clientWidth` — the full
-  row of 13 build buttons has to fit a landscape phone.
+  row of **14** build buttons has to fit a landscape phone (it now does so with
+  no margin at all; see HUD layout rule 1b).
 - Run several sim-minutes of `game.tick` with AI factions funded, confirm at
   least one climbs past tier 1 without the game crashing (`game.over` stays
   false unless the player's Town Hall actually fell — the only thing that can
   set it).
+
+## Civilians, hauling and construction sites — testing notes
+
+Everything below was found by measuring rather than by reading, and each one
+cost a wrong assumption first.
+
+- **Measure a rate over a fixed window, never between two events.** The first
+  version of `b.yieldRate` divided a delivery by the gap since the previous
+  delivery. A building's workers walk home together, so consecutive deliveries
+  can land in the same tick and the implied rate came out **6–9× the truth** —
+  which then fed `estimateIncome`, i.e. the AI's whole sense of whether it was
+  rich. `sampleYields` now accumulates into `b.yieldTotal` and divides by a
+  25-second wall-clock window. If a measured number looks impossible, suspect
+  the estimator before the simulation.
+- **Balance the gathering loop against distance explicitly, on a cleared map.**
+  Flatten a patch, plant a stand of trees with `treeWood` topped up, place a
+  camp and a Storehouse `d` tiles apart, one worker, pin `pop` and food so
+  nothing else moves, and run 400 sim-seconds per distance. The current curve is
+  1.84× / 1.25× / 0.97× / 0.69× / 0.62× of the old flat rate at d = 2 / 5 / 8 /
+  12 / 20. **Zero the Town Hall's `workers` in that test** or its two builder
+  slots take your only citizen and every reading comes back 0.
+- **A "stalled site" metric that counts `progress === 0` counts every site that
+  is still waiting for its materials, which is most of them.** Dump each site's
+  `delivered/needs/inbound`, its `wait`, `siteReachable`, and each builder's
+  `site`/`carry`/`fetch`/`path.length` instead. That is what showed the real
+  problems: expansion sites 45 tiles out, and three builders parked on one gate
+  whose whole shortfall was already on a fourth builder's back.
+- **The construction assertions worth keeping**: placing a site withdraws
+  nothing; `reserved`/`available` move immediately; `progress` stays 0 until
+  `siteReady`; exactly `floor(stock / cost)` sites can be started; a bridge span
+  is unwalkable while pending and walkable tile-by-tile as it completes;
+  cancelling a site refunds the delivered materials rather than 75% of the cost.
+- **Kill a civilian and check `nation.pop`, not just the unit list** — the two
+  are supposed to be the same number, and `syncCivilians` will happily paper
+  over a leak by respawning whoever went missing.
+- A church with a full crew finishes in **under 25 seconds**, so a test that
+  ticks 25s before reading `site.delivered` reads `null` off a finished
+  building. Poll for the condition instead of guessing a duration.
+- **A civilian's sprite follows their job, not their unit type.** There are two
+  civilian types (`worker`, `builder`) and five sheets, so `civSpriteFor`
+  writes the sheet key onto `u.spriteKey` every time the job changes and
+  `drawUnit` prefers it. Anything that hands a citizen a new job — `assignJob`,
+  `releaseCivilian`, `spawnCivilian` — has to set it, and the check that
+  catches a miss is `civs.filter(u => !Assets.unitSheets[u.faction][u.spriteKey])`
+  after a few thousand ticks, not a screenshot.
+
+## Rebuilding the civilian sheets
+
+`assets/units/Civ*.png` are reconstructions, not originals — the art arrived as
+JPEG screenshots of a sprite viewer. `python3 tools/import-civilians.py --src
+DIR` rebuilds them from those screenshots; `--check` prints the recovered grid
+and the recolour audit without writing anything. Three things about it are
+worth knowing before touching it:
+
+- **The screenshots are anisotropically scaled** (4.7325× across, 5.1425×
+  down). Assume one uniform zoom and the frames come out 32×33, which looks
+  fine on the first row and is a whole row out by the fifth.
+- **Cut the backdrop before clustering the palette, and key it tightly.** The
+  panel and the figures' outline are both near-black about 17 units apart, so a
+  loose test (dark, and blue at least as strong as red) says yes to a third of
+  the outline, the flood fill pours through the holes, and the figures come out
+  with their edges chewed to a speckle. Cluster-first is not the fix — the
+  panel outnumbers the outline enough to swallow it, and then the fill takes
+  the outline away entirely.
+- **Anchor the frame grid on the boots, not on the bounding box or the
+  gutter.** Every tool is carried out to the left, so no figure is centred in
+  its own frame; and the gutter-hunting version worked only while a tool made
+  the margins uneven, which put the one toolless sheet a pixel off from the
+  other four. `FOOT_ROW`/`FOOT_CENTRE` come from the MinifolksHumans sheets, so
+  a civilian stands on a tile exactly the way a swordsman does.

@@ -100,6 +100,17 @@ class Unit {
     this.groupRole = null;         // null | 'offensive' | 'defensive' (GROUP_ROLES)
     this.defensivePost = null;     // [tx, ty] a defensive unit garrisons and returns to
     this.patrolT = 0;              // countdown to the next patrol leg
+    // civilians only (js/civilians.js): where they work and how far through the
+    // job they are. Declared here so every unit has one shape.
+    this.job = null;               // {b, kind:'gather'|'build'} — follows building.workers
+    this.spriteKey = null;         // set from the job (`civSpriteFor`), overrides the type's
+    this.phase = null;             // gatherer leg: 'out' | 'work' | 'home'
+    this.spot = null;              // the tile being worked
+    this.site = null;              // builder: the construction site it has claimed
+    this.fetch = null;             // builder: the store it is walking to, and for what
+    this.inbound = null;           // builder: the load a site is counting on
+    this.workT = 0; this.workTotal = 0;
+    this.wanderT = 0; this.scanT = 0; this.threat = null; this.stuck = 0; this.searchT = 0;
   }
 
   get tileX() { return Math.floor(this.x); }
@@ -154,6 +165,9 @@ class Unit {
   }
 
   tick(dt) {
+    // Civilians have their own head entirely: they never acquire a target, never
+    // take an order, and spend the whole game walking between a job and a store.
+    if (this.type.civilian) return tickCivilian(this, dt);
     this.animT += dt;
     if (this.dead) { this.deathT += dt; return; }
     if (this.cool > 0) this.cool -= dt;
@@ -350,8 +364,9 @@ class Unit {
       onUnitDeath(this, attacker);
     } else {
       if (this.anim === 'idle') this.setAnim('hurt', true);
-      // fight back if idle
-      if (!this.target && !this.type.envoy && attacker && game.diplomacy.hostile(this.faction, targetFaction(attacker))) {
+      // fight back if idle — civilians have no fight to give and run instead
+      if (!this.target && !this.type.envoy && !this.type.civilian
+          && attacker && game.diplomacy.hostile(this.faction, targetFaction(attacker))) {
         this.target = attacker;
       }
     }
@@ -552,7 +567,7 @@ function formationSlots(n, shape) {
 }
 
 function formationMove(units, tx, ty) {
-  const movers = units.filter(u => u.alive && !u.mission && !u.type.envoy);
+  const movers = units.filter(u => u.alive && !u.mission && !u.type.envoy && !u.type.civilian);
   if (movers.length === 0) return;
   const cfg = (movers[0].faction === 0 && game && game.formations)
     || { shape: 'diamond', order: DEFAULT_FORMATION_ORDER };
@@ -617,7 +632,10 @@ function findEnemyNear(unit, radius, ox = unit.x, oy = unit.y) {
     if (!game.diplomacy.hostile(unit.faction, f.id)) continue;
     if (wantsUnits) {
       for (const u of f.units) {
-        if (!u.alive) continue;
+        // Civilians are never hunted down on a unit's own initiative — an army
+        // walks past the lumberjacks and goes for the soldiers. A direct attack
+        // order still lands on them, and splash still catches them.
+        if (!u.alive || u.type.civilian) continue;
         const d = Math.hypot(u.x - ox, u.y - oy);
         if (d < bestD) { best = u; bestD = d; }
       }

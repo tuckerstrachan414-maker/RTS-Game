@@ -113,18 +113,32 @@ class Nation {
     for (const k in cost) this.withdraw(k, cost[k]);
   }
 
+  // ---------- earmarked materials ----------
+  // A construction site is a claim on goods that are still sitting in the
+  // Storehouse: its builders have not fetched them yet. Without netting those
+  // out, one pile of timber could be promised to five different sites and every
+  // one of them would stall half-built.
+  reserved(r) {
+    let s = 0;
+    for (const b of this.faction.buildings) if (b.site) s += siteOutstanding(b, r);
+    return s;
+  }
+  available(r) { return this.total(r) - this.reserved(r); }
+  // Affordability for STARTING something, as opposed to paying for it outright
+  // (training, upgrades and market orders still use canAfford — they take the
+  // goods there and then).
+  canStart(cost) {
+    for (const k in cost) if (this.available(k) < cost[k]) return false;
+    return true;
+  }
+
   tick(dt) {
-    const f = this.faction;
-    // production from worked buildings; construction progress
-    for (const b of f.buildings) {
-      if (!b.done) {
-        b.progress = Math.min(1, b.progress + dt / b.type.buildTime);
-        if (b.done) onBuildingCompleted(b);   // may spark a border dispute (js/territory.js)
-        continue;
-      }
-      const out = buildingProduction(game.map, b, dt);
-      if (out) this.deposit(out.resource, out.amount);
-    }
+    // Production and construction are no longer bookkeeping: both are carried out
+    // by civilians walking around the map (js/civilians.js). What used to be a
+    // per-building deposit here is now a gatherer banking a load at a Storehouse,
+    // and what used to be `progress += dt / buildTime` is a builder standing on
+    // the site with the materials already delivered.
+    syncCivilians(this.faction, dt);
     // taxes
     this.deposit('gold', this.pop * this.tax * 0.06 * dt);
     // eating
@@ -196,39 +210,34 @@ class Nation {
   }
 }
 
-// Side-effect-free estimate of a faction's production rate for one resource.
-// It mirrors buildingProduction's math because the real function consumes tree
-// tiles as it runs — but it mirrors the WHOLE of it, exhausted forests
-// included. That matters beyond the resource tooltip it was written for: the AI
-// decides "my wood is structurally gone, so I must trade or take it" from this
-// number, and a Lumber Camp reporting phantom income would hide the shortage
-// forever. (Was js/ui.js:1317, which drifted from buildingProduction — BUGS #6.)
+// Estimate of a faction's real income for one resource. It no longer
+// re-implements the production maths — `workerYieldRate` (js/buildings.js) is the
+// only copy of that now — but a nominal rate is only half the answer since
+// workers started walking: a Lumber Camp on the far side of the map from any
+// Storehouse genuinely earns less per worker than one built beside it. So a
+// building that has actually been delivering reports what it measured
+// (`b.yieldRate`, written in js/civilians.js), and only a camp with no recent
+// delivery falls back to the nominal figure.
+//
+// The AI decides "my wood is structurally gone, so I must trade or take it" from
+// this number, so an exhausted forest must still read as zero — that comes from
+// workerYieldRate returning 0 when the reach holds no trees. (BUGS #6.)
+const YIELD_STALE = 45;   // seconds without a delivery before measured throughput is ignored
+
 function estimateIncome(f, res) {
   let rate = 0;
   for (const b of f.buildings) {
     if (!b.done || b.type.produces !== res || !b.workers) continue;
-    if (b.type.key === 'lumber' && !lumberHasForest(game.map, b)) continue;
-    let r = b.type.rate * b.workers;
-    if (b.type.key === 'farm') {
-      let bonus = 1;
-      if (game.map.countAdjacent(b.x, b.y, T_WATER, 2) > 0) bonus += 0.5;
-      for (const [tx, ty] of b.footprint()) {
-        if (nearBuilding(game.map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
-      }
-      r *= bonus;
-    }
-    rate += r;
+    const nominal = workerYieldRate(game.map, b) * b.workers;
+    if (nominal <= 0) continue;   // worked-out forest: no phantom income
+    // measured throughput can legitimately beat nominal (a Storehouse right next
+    // door means a short walk), so it is trusted — but clamped, so one unusually
+    // quick trip cannot convince a nation it has twice the income it has
+    rate += (b.yieldRate != null && game.time - b.lastDeliver < YIELD_STALE)
+      ? Math.min(b.yieldRate, nominal * 2) : nominal;
   }
   return rate;
 }
 
-// Read-only twin of the tree search in buildingProduction (js/buildings.js).
-function lumberHasForest(map, b) {
-  for (let dy = -LUMBER_RADIUS; dy <= LUMBER_RADIUS; dy++) {
-    for (let dx = -LUMBER_RADIUS; dx <= LUMBER_RADIUS; dx++) {
-      const tx = b.x + dx, ty = b.y + dy;
-      if (map.t(tx, ty) === T_TREE && map.treeWood[map.idx(tx, ty)] > 0) return true;
-    }
-  }
-  return false;
-}
+// Has this Lumber Camp any forest left in reach? (js/ai-utility.js staffs on it.)
+function lumberHasForest(map, b) { return !!findWorkTile(map, b); }

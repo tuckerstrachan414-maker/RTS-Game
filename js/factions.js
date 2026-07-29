@@ -21,7 +21,11 @@ class Faction {
   }
 
   townhall() { return this.buildings.find(b => b.type.key === 'townhall' && b.hp > 0); }
-  armyUnits() { return this.units.filter(u => u.alive && !u.type.envoy && !u.mission); }
+  // Civilians are the nation, not its army: they never count toward strength,
+  // never join a wave, and are never what a rival is measuring when it decides
+  // whether it can take you (js/ai-perception.js).
+  armyUnits() { return this.units.filter(u => u.alive && !u.type.envoy && !u.mission && !u.type.civilian); }
+  civilians() { return this.units.filter(u => u.alive && u.type.civilian); }
   strength() {
     let s = 0;
     for (const u of this.armyUnits()) s += u.type.dmg * 2 + u.hp * 0.1;
@@ -164,12 +168,11 @@ function aiTick(f, dt) {
   f.brain.utility.tick();
 }
 
+// Net food per second. Goes through estimateIncome rather than summing farm
+// rates itself: a farm's real output now depends on how far its hands carry the
+// harvest, and a nation that thinks it is fed when it is not will starve.
 function estimateFoodRate(f) {
-  let rate = -f.nation.pop * EAT_RATE;
-  for (const b of f.buildings) {
-    if (b.done && b.type.key === 'farm') rate += b.type.rate * b.workers;
-  }
-  return rate;
+  return estimateIncome(f, 'food') - f.nation.pop * EAT_RATE;
 }
 
 // richestEnemyStorage and maxThreatAgainst are gone: both read every rival's
@@ -190,7 +193,7 @@ function findBuildSpot(f, typeKey, site = null) {
   for (const [cx, cy] of anchors) {
     for (let r = 2; r <= 14; r++) {
       for (let attempt = 0; attempt < 14; attempt++) {
-        const a = Math.random() * Math.PI * 2;
+        const a = game.rng() * Math.PI * 2;
         const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
         if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
       }

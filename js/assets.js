@@ -124,6 +124,17 @@ const UNIT_SHEETS = {
   cavalier: 'MiniCavalierMan.png',
   king:     'MiniKingMan.png',
   prince:   'MiniPrinceMan.png',
+  // Civilians (js/civilians.js): five sheets of townsfolk, drawn for this game
+  // rather than borrowed off the roster, and picked per job by `civSpriteFor`
+  // so a nation's trades are legible at a glance — the scythe is at the farm,
+  // the axe is in the treeline, the hammer is on the scaffold. Still drawn at
+  // UNIT_TYPES.scale (0.85), so a worker reads as smaller than a soldier too.
+  // See tools/import-civilians.py for where the art came from.
+  civFarmer:     'CivFarmer.png',
+  civWoodcutter: 'CivWoodcutter.png',
+  civMiner:      'CivMiner.png',
+  civBuilder:    'CivBuilder.png',
+  civTownsfolk:  'CivTownsfolk.png',
 };
 
 // Faction palettes. `hue` recolors the blue clothing on the unit sheets (null = leave the
@@ -275,6 +286,19 @@ function bakeBuildings(plain, sheet, roofHue, puny) {
     }),
     castle: bakeArt({ sheet, at: AT.CASTLE }, (px, strip, g) => {
       if (roofHue !== null) shiftHue(g, VIOLET, roofHue);
+    }),
+    // The builders' yard: the house silhouette with the trade's kit against it —
+    // a ladder up the near wall and a stack of sawn planks in the yard. It has to
+    // read as "a house that builds things" next to an ordinary House at 16px, so
+    // the ladder breaks the roofline rather than sitting flat on the wall.
+    builderhouse: bakeArt({ sheet, at: AT.HOUSE[1] }, px => {
+      px(WOOD.dark, 1, 3, 1, 12); px(WOOD.dark, 3, 3, 1, 12);   // ladder rails
+      px(WOOD.lit, 1, 3, 1, 1); px(WOOD.lit, 3, 3, 1, 1);
+      for (let y = 5; y < 15; y += 3) px(WOOD.mid, 1, y, 3, 1);  // rungs
+      px(WOOD.dim, 9, 13, 6, 1); px(WOOD.lit, 9, 12, 6, 1);      // plank stack
+      px(WOOD.mid, 10, 11, 5, 1); px(WOOD.lit, 10, 10, 5, 1);
+      px(WOOD.dark, 9, 14, 6, 1);
+      px('#8d8d92', 6, 8, 1, 5); px('#c8c8cf', 5, 7, 3, 2);      // mallet leaning on the wall
     }),
   };
 }

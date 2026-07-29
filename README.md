@@ -56,16 +56,50 @@ rather than snapping. The top bar shows the day count and whether it's day
 
 | Resource | Comes from | Via |
 |---|---|---|
-| 🍞 Food | crop fields (bonus next to water/wells) | Farm workers |
-| 🪵 Wood | tree tiles within 25 tiles of the camp (they deplete!) | Lumber Camp workers |
-| 🪨 Stone | rock tiles | Quarry workers |
-| 🪙 Gold | cave tiles, taxes, trade, plunder | Gold Mine, Market |
+| 🍞 Food | crop fields (bonus next to water/wells) | Farmhands, hauled to your stores |
+| 🪵 Wood | tree tiles within 25 tiles of the camp (they deplete!) | Lumberjacks, hauled to your stores |
+| 🪨 Stone | rock tiles within 4 tiles of the quarry | Stonecutters, hauled to your stores |
+| 🪙 Gold | cave tiles, taxes, trade, plunder | Diggers and traders, plus taxes |
 
 Click a finished building and use **+/−** to assign idle citizens to its worker
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
 happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, and
 the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
+
+**Your people are on the map.** Every citizen you have is a person walking
+around down there. Put one in a Lumber Camp and a lumberjack walks out to a
+tree, chops until they are carrying five wood, and walks it back to your Town
+Hall or nearest Storehouse — nothing enters your stores that somebody did not
+carry there. Farmhands work their own field, stonecutters the rock face,
+diggers the cave mouth, traders the Market. Citizens with no job wander the
+streets of your town, which is what an idle population looks like.
+
+**And you can see who is who.** Your people carry the tools of their trade —
+a scythe on the farms, an axe in the treeline, a pick at the rock face and the
+cave mouth, a hammer on every building site — so a glance across your land
+tells you where your economy actually is. Anyone with empty hands has no work
+to do.
+
+**So where you put your Storehouses is now a real decision.** A Lumber Camp
+with a Storehouse beside it earns nearly twice what the same camp earns hauling
+its wood twenty tiles home. Build storage out to your camps, or accept that
+distant ground pays less.
+
+**And you need builders to build anything.** Placing a building no longer
+raises it — it stakes out a **site**, and the cost is not paid yet. Builders
+walk to your stores, pick up **15 materials at a time**, carry them to the
+site, and only once everything the site needs is physically there do they start
+raising it. Up to three builders can work one site. You start with two builders
+quartered in the **Town Hall**; a **Builder House** (30 wood) quarters three
+more, and staffing it is how you build faster. Materials on a builder's back
+are real: kill the builder and the load spills on the ground. A site shows an
+amber bar for materials delivered and the usual blue bar for construction, and
+calling one off returns everything already carried there.
+
+> Watch out: with no builders, nothing you place will ever be built. If your
+> Town Hall's builder slots are empty and you have no Builder House, the game
+> tells you so the first time you place something.
 
 **Everything on the map looks like what it is.** A Farm is a field — ploughed
 soil while it is being cleared, standing crop once it is finished — a
@@ -169,6 +203,11 @@ At war, you don't just burn buildings — you rob them.
   there and rot. A laden Bandit must physically carry the plunder home to a storehouse
   to keep it; cut one down and the loot spills again for anyone to grab. Idle Bandits
   near spilled loot will move to collect it.
+- **Their people are targets too.** Enemy civilians are unarmed and will run for
+  cover rather than fight, and no unit picks a fight with one on its own — but a
+  direct attack order kills them, and every one you kill is a citizen that nation
+  no longer has, working no field and hauling no timber. Splash damage does not
+  discriminate.
 
 ## Your army
 
@@ -353,6 +392,8 @@ Plain `<script>` modules, no build step:
 - `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
 - `js/market.js` — supply/demand commodity pricing, buy/sell, barter
 - `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
+- `js/civilians.js` — the citizenry: workers, builders, wanderers, gathering trips
+  and construction sites
 - `js/factions.js` — faction state, rolled personalities, the AI tick dispatcher
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
 - `js/ai.js` — ambitions, proactive diplomacy, war waves, expansion, bridge and

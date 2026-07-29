@@ -132,7 +132,8 @@ class AIPerception {
       let seenValue = 0, sawAnything = false;
 
       for (const u of o.units) {
-        if (!u.alive || u.type.envoy) continue;
+        // seeing a rival's farmhands tells you nothing about their army
+        if (!u.alive || u.type.envoy || u.type.civilian) continue;
         if (!this.visible(u.x, u.y)) continue;
         seenValue += u.type.dmg * 2 + u.hp * 0.1;
         sawAnything = true;

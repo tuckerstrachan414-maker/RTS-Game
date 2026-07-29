@@ -386,7 +386,8 @@ class UI {
   clearSelection() { this.splitMode = null; this.selection.units = []; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); }
 
   selectArmy() {
-    const units = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy && u.groupRole !== 'defensive');
+    const units = game.factions[0].units.filter(u =>
+      u.alive && !u.mission && !u.type.envoy && !u.type.civilian && u.groupRole !== 'defensive');
     if (units.length === 0) { game.log('No army to select.'); return; }
     this.selection.units = units; this.selection.building = null; this.selection.buildings = [];
     this.refreshPanel();
@@ -416,8 +417,10 @@ class UI {
     if (this.splitMode) return;
     const [wx0, wy0] = this.screenToWorld(Math.min(x0, x1), Math.min(y0, y1));
     const [wx1, wy1] = this.screenToWorld(Math.max(x0, x1), Math.max(y0, y1));
+    // Civilians are never box-selected: they take no orders, and sweeping a box
+    // over your own town should pick up the garrison, not the farmhands.
     const picked = game.factions[0].units.filter(u =>
-      u.alive && !u.mission && u.x >= wx0 && u.x <= wx1 && u.y >= wy0 && u.y <= wy1);
+      u.alive && !u.mission && !u.type.civilian && u.x >= wx0 && u.x <= wx1 && u.y >= wy0 && u.y <= wy1);
     if (picked.length) {
       this.selection.units = picked; this.selection.building = null; this.selection.buildings = [];
       this.refreshPanel();
@@ -446,6 +449,8 @@ class UI {
       return;
     }
     if (this.selection.units.length === 0) return;
+    // a selected citizen is being looked at, not commanded
+    if (this.selection.units.every(u => u.type.civilian)) return;
     // attack target?
     let target = null;
     for (const f of game.factions) {
@@ -491,10 +496,55 @@ class UI {
       game.log(`Cannot build here${type.reqText ? ' — ' + type.reqText : ''}.`, 'bad');
       return;
     }
-    if (!nation.canAfford(type.cost)) { game.log('Not enough resources.', 'bad'); return; }
-    nation.pay(type.cost);
-    placeBuilding(game, key, tx, ty, 0, orient);
+    // Nothing is paid here: staking out a site only reserves the materials
+    // (Nation.canStart), and builders withdraw them a load at a time as they
+    // carry them over.
+    if (!nation.canStart(type.cost)) { game.log('Not enough unreserved resources.', 'bad'); return; }
+    startConstruction(game, key, tx, ty, 0, orient);
+    this.warnNoBuilders();
     if (!this.keys['shift']) this.placing = null;
+  }
+
+  // What one of your citizens is doing right now, in words. Civilians cannot be
+  // commanded, so this is the whole of their panel — but seeing "walking 14 wood
+  // to the Storehouse" is what makes the economy legible as a thing happening on
+  // the map rather than a number going up.
+  civilianHTML(u) {
+    const load = RES_KEYS.filter(r => u.carry[r] > 0.5)
+      .map(r => `${icon(r)}${Math.floor(u.carry[r])}`).join(' ');
+    let doing;
+    if (u.threat) doing = 'Fleeing for cover!';
+    else if (!u.job) doing = 'No work — idling in town. Assign them to a building.';
+    else if (u.job.kind === 'build') {
+      doing = !u.site ? 'Waiting for something to build'
+        : u.carryTotal() > 0.5 ? `Hauling materials to the ${u.site.type.name} site`
+        : siteReady(u.site) ? `Raising the ${u.site.type.name} (${Math.round(u.site.progress * 100)}%)`
+        : `Fetching materials for the ${u.site.type.name} site`;
+    } else {
+      const what = u.job.b.type.produces || 'goods';
+      doing = u.phase === 'work' ? `Working — gathering ${what}`
+        : u.phase === 'home' ? `Carrying ${what} to the nearest store`
+        : `Walking out to work for the ${u.job.b.type.name}`;
+    }
+    return `<h3><span class="dot" style="background:${game.factions[u.faction].color.css}"></span> ${u.type.name}</h3>`
+      + `<div>HP ${Math.max(0, Math.ceil(u.hp))}/${u.type.hp}</div>`
+      + `<div class="desc">${doing}</div>`
+      + (load ? `<div class="good">Carrying ${load}</div>` : '')
+      + (u.job ? `<div class="dim">Employed at your ${u.job.b.type.name}.</div>` : '')
+      + `<div class="dim">Citizens work on their own — change who works where with the +/− on a building.</div>`;
+  }
+
+  // A site with nobody to raise it simply sits there, so say so once rather than
+  // leaving the player to wonder why the foundation never becomes a building.
+  warnNoBuilders() {
+    const f = game.factions[0];
+    if (f.units.some(u => u.alive && u.type.key === 'builder')) return;
+    if (game.time - (this.builderWarnT || -99) < 20) return;
+    this.builderWarnT = game.time;
+    const vacancy = f.buildings.some(b => b.done && b.hp > 0 && b.type.builders && b.workers < b.type.slots);
+    game.log(vacancy
+      ? 'You have no builders — fill the builder slots at your Town Hall or a Builder House.'
+      : 'You have no builders — raise a Builder House and put citizens to work in it.', 'bad');
   }
 
   // ---------- click-drag placement (walls, gates, bridges) ----------
@@ -545,10 +595,12 @@ class UI {
       const orient = key === 'bridge' ? (this.paint.horizontal ? 1 : 2) : 1;
       for (const [x, y] of this.paint.line) {
         if (!canPlace(game.map, key, x, y, 0, orient)) continue;
-        if (!nation.canAfford(type.cost)) break;
-        nation.pay(type.cost);
-        placeBuilding(game, key, x, y, 0, orient);
+        // each tile in the run reserves its own materials, so a drag stops at
+        // what the nation can actually supply rather than promising it twice
+        if (!nation.canStart(type.cost)) break;
+        startConstruction(game, key, x, y, 0, orient);
       }
+      this.warnNoBuilders();
     }
     this.paint = null;
     if (!this.keys['shift']) this.placing = null;
@@ -685,12 +737,11 @@ class UI {
       const type = BUILDING_TYPES[part.key];
       const x = cx + part.dx, y = cy + part.dy;
       if (!canPlace(game.map, part.key, x, y, 0)) continue;
-      if (!nation.canAfford(type.cost)) continue;
-      nation.pay(type.cost);
-      placeBuilding(game, part.key, x, y, 0);
+      if (!nation.canStart(type.cost)) continue;
+      startConstruction(game, part.key, x, y, 0);
       placed++;
     }
-    if (placed) game.log(`Pasted ${placed} building${placed > 1 ? 's' : ''}.`, 'good');
+    if (placed) { game.log(`Pasted ${placed} site${placed > 1 ? 's' : ''} — your builders will raise them.`, 'good'); this.warnNoBuilders(); }
     else game.log('Nothing could be pasted here.', 'bad');
   }
 
@@ -829,13 +880,30 @@ class UI {
       let html = `<h3><span class="dot" style="background:${game.factions[b.faction].color.css}"></span> ${b.type.name}${own ? '' : ' — ' + game.factions[b.faction].name}</h3>`;
       html += `<div>HP ${Math.max(0, Math.ceil(b.hp))}/${b.type.hp}${b.done ? '' : ` — building ${Math.round(b.progress * 100)}%`}</div>`;
       html += `<div class="desc">${b.type.desc}</div>`;
+      // A site's materials ledger: what its builders have carried here so far,
+      // and what they still owe it. Until it is full nobody starts hammering.
+      if (!b.done && b.site) {
+        const rows = Object.entries(b.site.needs).filter(([, v]) => v > 0).map(([r, v]) =>
+          `${icon(r)}${Math.floor(b.site.delivered[r])}/${v}`).join(' ');
+        html += `<div class="${siteReady(b) ? 'good' : 'dim'}">Materials on site: ${rows || 'none needed'}</div>`;
+        const crew = own ? game.factions[0].units.filter(u => u.alive && u.site === b).length : 0;
+        if (own) {
+          html += `<div class="dim">${siteReady(b)
+            ? `${crew} builder${crew === 1 ? '' : 's'} working`
+            : `${crew} builder${crew === 1 ? '' : 's'} hauling materials (15 per trip)`}</div>`;
+        }
+      }
       if (b.type.storage && b.done) {
         const s = b.store;
         html += `<div class="dim">Stored here: ${icon('food')}${Math.floor(s.food)} ${icon('wood')}${Math.floor(s.wood)} ${icon('stone')}${Math.floor(s.stone)} ${icon('gold')}${Math.floor(s.gold)}</div>`;
         if (!own) html += `<div class="dim">Send Bandits to rob it, or an army to raze it and grab the loot.</div>`;
       }
       if (own && b.done && b.type.slots) {
-        html += `<div class="workers">Workers: <button id="wminus">−</button> <b>${b.workers}/${b.type.slots}</b> <button id="wplus">+</button> <span class="dim">(idle: ${game.factions[0].nation.idleWorkers()})</span></div>`;
+        const label = b.type.builders ? 'Builders' : 'Workers';
+        html += `<div class="workers">${label}: <button id="wminus">−</button> <b>${b.workers}/${b.type.slots}</b> <button id="wplus">+</button> <span class="dim">(idle: ${game.factions[0].nation.idleWorkers()})</span></div>`;
+        html += `<div class="dim">${b.type.builders
+          ? 'Each one walks your materials to sites, 15 at a time, then raises them.'
+          : 'Each one walks out to work, fills a 5-load and carries it to your nearest store.'}</div>`;
       }
       if (own && b.done && b.type.key === 'market') html += this.marketPanelHTML();
       if (own && b.done && b.type.key === 'castle') {
@@ -919,12 +987,16 @@ class UI {
           game.log('Construction of the Grand Castle has begun!', 'good');
         };
       }
+    } else if (us.length && us.every(u => u.type.civilian)) {
+      // Civilians take no orders — this panel is a window onto what one of your
+      // people is doing, not a command interface.
+      p.innerHTML = this.civilianHTML(us[0]);
     } else if (this.splitMode) {
       p.innerHTML = this.splitHTML(us);
       this.wireSplit(p, us);
     } else {
       // Build type map: pool = all alive non-envoy player units, partitioned into selected vs available
-      const pool = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy);
+      const pool = game.factions[0].units.filter(u => u.alive && !u.mission && !u.type.envoy && !u.type.civilian);
       const selIds = new Set(us.map(u => u.id));
       const typeMap = {};
       for (const u of pool) {
@@ -1407,15 +1479,21 @@ class UI {
           else if (map.decor[i] >= 0) this.tile(AT.GRASS_VARS[map.decor[i] % 3], x, y);
         } else if (t === T_WATER) {
           this.tile(map.waterTile(x, y), x, y);
-          if (map.bridge[i] === 2) this.drawTileCanvas(Assets.bridgeVmid, x, y);
-          else if (map.bridge[i]) this.drawTileCanvas(Assets.bridgeH, x, y);
-          // damaged span, one tile from collapse: show it same as any other building
-          if (map.bridge[i]) {
-            const br = map.bridgeAt[i];
-            if (br && br.hp < br.type.hp) {
-              const [bsx, bsy] = this.worldToScreen(x, y);
-              this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.type.hp), '#5c5');
-            }
+          // A planned span is drawn ghosted until the builders have finished it —
+          // map.bridge (the flag that makes the water walkable) is only stamped
+          // on completion, so this is the one thing that shows the work is coming.
+          const pending = !map.bridge[i] && map.bridgeAt[i];
+          if (pending) this.ctx.globalAlpha = 0.4;
+          if (map.bridge[i] === 2 || (pending && map.bridgeAt[i].orient === 2)) this.drawTileCanvas(Assets.bridgeVmid, x, y);
+          else if (map.bridge[i] || pending) this.drawTileCanvas(Assets.bridgeH, x, y);
+          if (pending) this.ctx.globalAlpha = 1;
+          // damaged span, one tile from collapse: show it same as any other
+          // building — and an unfinished one shows how far along it is instead
+          const br = map.bridgeAt[i];
+          if (br && (br.hp < br.type.hp || !br.done)) {
+            const [bsx, bsy] = this.worldToScreen(x, y);
+            if (!br.done) this.bar(bsx, bsy - 5, s, br.progress, '#7ac');
+            else this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.type.hp), '#5c5');
           }
         } else if (t === T_TREE) {
           // canopy is drawn in the depth pass below so it can overlap neighbours
@@ -1703,8 +1781,17 @@ class UI {
       }
       if (b.type.key === 'house' && b.done) this.drawHouseGlow(px, py, s);
     }
-    // construction progress
+    // Construction: an amber bar for materials carried here so far, and the blue
+    // progress bar underneath it, which cannot move until the amber one is full.
     if (!b.done) {
+      if (b.site && !siteReady(b)) {
+        let need = 0, got = 0;
+        for (const r of RES_KEYS) {
+          need += b.site.needs[r] || 0;
+          got += Math.min(b.site.delivered[r], b.site.needs[r] || 0);
+        }
+        this.bar(px, py - 10, s * b.type.size, need > 0 ? got / need : 1, '#d9a441');
+      }
       this.bar(px, py - 5, s * b.type.size, b.progress, '#7ac');
     } else if (b.hp < b.type.hp) {
       this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.type.hp), '#5c5');
@@ -1804,7 +1891,7 @@ class UI {
   drawUnit(u) {
     const ctx = this.ctx;
     const z = this.cam.zoom;
-    const sheet = Assets.unitSheets[u.faction][u.type.spriteKey || u.type.key];
+    const sheet = Assets.unitSheets[u.faction][u.spriteKey || u.type.spriteKey || u.type.key];
     const anim = sheet.anims[u.anim] || sheet.anims.idle;
     let frame;
     if (anim.loop) frame = Math.floor(u.animT * anim.fps) % anim.frames;
@@ -1813,13 +1900,16 @@ class UI {
       if (u.anim !== 'death' && frame >= anim.frames - 1 && u.animT * anim.fps > anim.frames) u.setAnim('idle');
     }
     const [sx, sy] = this.worldToScreen(u.x, u.y);
-    const size = UF * z;
+    // Civilians are drawn a little smaller than soldiers (UNIT_TYPES.scale), so a
+    // working town never reads as an army massing.
+    const size = UF * z * (u.type.scale || 1);
     // Rounded before the mirror transform: flooring the destination and then reflecting
     // it around a fractional sx left a left-facing unit landing half a pixel off a
     // right-facing one, so a unit shimmered every time it turned around.
     const px = Math.round(sx), drawY = Math.round(sy - size * 0.72);
-    const headY = drawY + sheet.top * z;      // top of the art, not of the 32px frame
-    const footY = drawY + sheet.bottom * z;   // where the figure meets the ground
+    const fs = z * (u.type.scale || 1);       // the figure's own scale, not the camera's
+    const headY = drawY + sheet.top * fs;     // top of the art, not of the 32px frame
+    const footY = drawY + sheet.bottom * fs;  // where the figure meets the ground
     if (u.dead && u.deathT > 3) ctx.globalAlpha = Math.max(0, 1 - (u.deathT - 3) / 3);
     // selection ring, on the feet rather than around the shins
     if (this.selection.units.includes(u)) {
@@ -1972,7 +2062,7 @@ class UI {
         let afford = true;
         for (const [r, v] of Object.entries(type.cost || {})) {
           spent[r] = (spent[r] || 0) + v;
-          if (spent[r] > nation.total(r)) afford = false;
+          if (spent[r] > nation.available(r)) afford = false;
         }
         this.drawGhostTile(key, x, y, placeable && afford, !this.paint.horizontal);
       }
@@ -1980,7 +2070,7 @@ class UI {
     }
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
     const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
-    const ok = canPlace(game.map, key, tx, ty, 0, orient) && nation.canAfford(type.cost);
+    const ok = canPlace(game.map, key, tx, ty, 0, orient) && nation.canStart(type.cost);
     this.drawGhostTile(key, tx, ty, ok, this.placeVertical);
   }
 
@@ -1997,7 +2087,7 @@ class UI {
       let afford = true;
       for (const [r, v] of Object.entries(type.cost || {})) {
         spent[r] = (spent[r] || 0) + v;
-        if (spent[r] > nation.total(r)) afford = false;
+        if (spent[r] > nation.available(r)) afford = false;
       }
       this.drawGhostTile(part.key, x, y, placeable && afford, false);
     }
@@ -2065,9 +2155,9 @@ class UI {
   }
 }
 
-// estimateIncome moved to js/economy.js — production math belongs beside
-// buildingProduction, and the AI reads it too (it used to live here, which made
-// the AI brain depend on the render layer).
+// estimateIncome moved to js/economy.js — production math belongs beside the
+// buildings it describes, and the AI reads it too (it used to live here, which
+// made the AI brain depend on the render layer).
 
 function costText(cost) {
   const icons = { food: icon('food'), wood: icon('wood'), stone: icon('stone'), gold: icon('gold') };
