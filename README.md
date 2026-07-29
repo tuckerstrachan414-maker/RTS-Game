@@ -5,8 +5,9 @@ asset packs in this repo: two 16×16 top-down tilesets
 (`assets/tileset16x16_1.png` and `assets/punyworld-overworld-tileset.png`)
 and the **Minifolks: Humans** unit pack (`assets/units/`).
 
-You lead the blue nation of **Azuria** on a procedurally generated continent shared
-with three AI nations — **Crimson**, **Violeta** and **Aurelia**. Who they *are*
+You lead the blue nation of **Azuria** on a procedurally generated **planet**
+shared with three AI nations — **Crimson**, **Violeta** and **Aurelia** — each
+of them on a continent of its own, an ocean away. Who they *are*
 is rolled fresh every match: the warlord on your border in one game is a
 walled-up trader in the next. Each pursues its own **evolving ambition** — one
 may drill a conquering army, another chase riches and its own Grand Castle,
@@ -26,8 +27,43 @@ python3 -m http.server 8000
 
 Any static file server works (assets are loaded with `fetch`-less `<img>`, but
 canvas pixel access requires HTTP, not `file://`). Add `?seed=123` to the URL to
-replay a specific map; the chosen difficulty is added as `&difficulty=` so a
-copied URL reproduces the whole setup.
+replay a specific map; the chosen difficulty and world are added as
+`&difficulty=` and `&world=` so a copied URL reproduces the whole setup.
+
+## The world
+
+**Before you pick a difficulty you pick a world.** The planet is generated from
+plates, so it has real continents with bays and headlands and island chains off
+their coasts, rivers running from the hills to the sea, and a sandy beach on
+every shore.
+
+| World | Size | What it is |
+|---|---|---|
+| **Duel Island** | 96×96 | The original close-quarters map: one island, four neighbours, nowhere to hide |
+| **Small World** | 256×128 | A compact planet — a fleet crosses between continents in good time |
+| **Standard World** | 384×192 | Four continents, real oceans. The default |
+| **Large World** | 768×384 | Room to lose an army in. Long voyages, deep interiors |
+| **Planet** | 1024×512 | Full planetary scale |
+
+Every world except Duel Island **wraps east to west**. Walk west far enough and
+you come back from the east; there is no edge of the map, only the ice caps at
+the poles. Your army, your pathfinding, your borders and your camera all know
+it.
+
+**And you can look at the whole thing.** Zoom out past the widest map view and
+you leave the surface: the planet is drawn as a globe hanging in space, with
+its oceans, its ice caps, its biomes and every nation's territory painted on
+it. Drag to spin it, and click anywhere — or zoom back in — to drop straight
+down onto that spot. Your capital is ringed in white so you can always find
+your way home.
+
+**The land is not all the same.** Temperature falls from the equator to the
+poles and with altitude; rain falls near the coasts and dries out inland. Where
+those two meet decides what grows: dense rainforest and woodland, open
+grassland and savanna, bare steppe and desert, cold taiga and tundra, and ice
+at the caps. Woodland is thick with timber, desert has almost none, highlands
+are strewn with stone. (Biomes tint the ground today rather than having their
+own artwork — dunes, jungle and snow are still to come.)
 
 **Before the game starts you choose how hard the rivals come at you:**
 
@@ -63,7 +99,8 @@ rather than snapping. The top bar shows the day count and whether it's day
 
 Click a finished building and use **+/−** to assign idle citizens to its worker
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
-happiness, the Castle trains units, Walls/Gates/Bridges shape the battlefield, and
+happiness, the Castle trains units, the Dock builds ships, Walls/Gates/Bridges
+shape the battlefield, and
 the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
@@ -208,6 +245,37 @@ At war, you don't just burn buildings — you rob them.
   direct attack order kills them, and every one you kill is a citizen that nation
   no longer has, working no field and hauling no timber. Splash damage does not
   discriminate.
+
+## The sea
+
+**Your neighbours are across the water.** On every world but Duel Island each
+nation starts on its own continent, so an army that cannot embark is an army
+that can never meet another nation.
+
+**Build a Dock** (70 wood, 20 stone) on the shore — it needs open water right
+against its footprint — and it builds two ships:
+
+| Ship | What it's for |
+|---|---|
+| **Transport** | Carries up to 6 troops. Unarmed: send a Galley with it |
+| **War Galley** | Fighting ship — escorts transports and rakes anything near the shore |
+
+**To invade:** select the troops you want to send, right-click one of your
+Transports, and they march to the quay and go aboard (the pips over the hull
+show how many are loaded). Then select the Transport and right-click where you
+want them — even a spot far inland; the fleet finds the nearest coast to it,
+sails there and puts them ashore. Select ships and right-click open water to
+sail without landing.
+
+Troops aboard a ship are *inside* it — nothing can shoot them, and nothing can
+be shot by them. **If the hull goes down, everyone aboard goes with it.** A
+Galley can shell troops on a beach and archers on a beach can shoot back at a
+hull, but neither will go chasing the other across the waterline.
+
+The AI nations do all of this too. They build shipyards, send a galley off to
+chart the oceans and find out who else is out there, and when they decide on a
+war across water they assemble a fleet, load an army onto it, and land it on
+your coast.
 
 ## Your army
 
@@ -386,14 +454,18 @@ Plain `<script>` modules, no build step:
 - `js/assets.js` — atlas coordinates for both tilesets, animation auto-detection,
   faction palette-swap (the blue Minifolks art, orange roofs and castle stone are
   hue-shifted per nation at load)
-- `js/map.js` — seeded map generation, water and cliff autotiling, plateaus and
-  their stairs, A* pathfinding
+- `js/world.js` — world size/presets, the east-west wrap helpers, the biome table
+- `js/map.js` — seeded world generation (plates, oceans, rivers, beaches,
+  climate, biomes), water and cliff autotiling, plateaus and their stairs,
+  A* pathfinding (land and sea)
 - `js/buildings.js` — building defs/placement, incl. physical storage buildings
 - `js/economy.js` — the nation sim; `res` is a Proxy over per-building stockpiles
 - `js/market.js` — supply/demand commodity pricing, buy/sell, barter
 - `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
 - `js/civilians.js` — the citizenry: workers, builders, wanderers, gathering trips
   and construction sites
+- `js/naval.js` — docks, ships, boarding and landings, and the AI's navy
+- `js/globe.js` — the orbit view: world texture, sphere projection, starfield
 - `js/factions.js` — faction state, rolled personalities, the AI tick dispatcher
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
 - `js/ai.js` — ambitions, proactive diplomacy, war waves, expansion, bridge and

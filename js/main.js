@@ -42,6 +42,10 @@ class Game {
   constructor(seed, diffKey = 'ramped') {
     this.diffKey = DIFFICULTIES[diffKey] ? diffKey : 'ramped';
     this.diff = DIFFICULTIES[this.diffKey];
+    // The world must be configured before anything sizes an array off MAP_W.
+    // boot() normally does it from the URL; this is the safety net for a Game
+    // constructed some other way (a headless verification script, say).
+    if (!WORLD) configureWorld({});
     this.devMode = false;   // cheat toggle: infinite resources + free/unlimited training for the player
     this.map = new GameMap(seed);
     this.factions = [];
@@ -155,8 +159,8 @@ class Game {
       for (const f of this.factions) {
         for (const u of f.units) {
           // spoils are a raider's business — civilians have their own loads to carry
-          if (!u.alive || u.type.envoy || u.type.civilian || u.carryCap - u.carryTotal() <= 0) continue;
-          const d = Math.hypot(u.x - pile.x, u.y - pile.y);
+          if (!u.alive || u.aboard || u.type.envoy || u.type.civilian || u.carryCap - u.carryTotal() <= 0) continue;
+          const d = wdist(u.x, u.y, pile.x, pile.y);
           if (d < bd) { bd = d; best = u; }
         }
       }
@@ -174,9 +178,9 @@ class Game {
         let cand = null, cd = 5;
         for (const f of this.factions) {
           for (const u of f.units) {
-            if (!u.alive || u.type.envoy || u.type.civilian || u.mission || u.target || u.path.length > 0) continue;
+            if (!u.alive || u.aboard || u.type.envoy || u.type.civilian || u.mission || u.target || u.path.length > 0) continue;
             if (u.carryCap - u.carryTotal() <= 0) continue;
-            const d = Math.hypot(u.x - pile.x, u.y - pile.y);
+            const d = wdist(u.x, u.y, pile.x, pile.y);
             if (d < cd) { cd = d; cand = u; }
           }
         }
@@ -277,6 +281,20 @@ function saveFormations(name, cfg) {
 
 function onUnitDeath(unit, attacker) {
   const f = game.factions[unit.faction];
+  // A hull going down takes everyone below decks with it. They are not on the
+  // map to be killed individually, so the sinking is the only thing that can.
+  if (unit.cargo && unit.cargo.length) {
+    const lost = unit.cargo.slice();
+    unit.cargo.length = 0;
+    for (const p of lost) {
+      p.aboard = null;
+      if (!p.dead) { p.dead = true; p.hp = 0; onUnitDeath(p, attacker); }
+    }
+    game.log(unit.faction === 0
+      ? `Your ${unit.type.name} goes down with ${lost.length} aboard!`
+      : `${f.name}'s ${unit.type.name} is sunk with all hands.`,
+      unit.faction === 0 ? 'bad' : '');
+  }
   // a killed civilian is a citizen the nation no longer has
   if (unit.type.civilian) onCivilianDeath(unit);
   if (unit.type.key === 'king') {
@@ -310,7 +328,7 @@ function dropLoot(b) {
   // only tempt the player when it's actually their fight (or their troops are close)
   if (b.faction !== 0) {
     const relevant = game.diplomacy.hostile(0, b.faction)
-      || game.factions[0].units.some(u => u.alive && Math.hypot(u.x - b.cx, u.y - b.cy) < 20);
+      || game.factions[0].units.some(u => u.alive && wdist(u.x, u.y, b.cx, b.cy) < 20);
     if (relevant) game.log(`${game.factions[b.faction].name}'s ${b.type.name} spills its stores — grab the loot!`, 'good');
   }
 }
@@ -330,7 +348,7 @@ function onBuildingDestroyed(b, attacker) {
     if (b.faction === 0) game.log('Your bridge collapses into the water!', 'bad');
     else {
       const relevant = game.diplomacy.hostile(0, b.faction)
-        || game.factions[0].units.some(u => u.alive && Math.hypot(u.x - b.cx, u.y - b.cy) < 20);
+        || game.factions[0].units.some(u => u.alive && wdist(u.x, u.y, b.cx, b.cy) < 20);
       if (relevant) game.log(`${game.factions[b.faction].name}'s bridge collapses into the water!`, 'good');
     }
   } else {
@@ -382,12 +400,17 @@ async function boot() {
   }
   status.style.display = 'none';
   const params = new URLSearchParams(location.search);
+  // Size and shape the planet before anything else — every array in the game is
+  // allocated from MAP_W/MAP_H, and `game` is not built until a difficulty is
+  // picked, so this is safely ahead of all of it.
+  worldFromQuery(params);
   const seed = parseInt(params.get('seed')) || (Math.random() * 1e9 | 0);
   const diffKey = params.get('difficulty');
   if (DIFFICULTIES[diffKey]) return startGame(seed, diffKey);
   // no difficulty chosen yet: show the pre-game screen; the sim does not start
   // (and `game` stays null) until a mode is picked
   const overlay = document.getElementById('difficulty');
+  buildWorldPicker(overlay);
   overlay.querySelectorAll('button[data-diff]').forEach(btn => {
     const d = DIFFICULTIES[btn.dataset.diff];
     btn.querySelector('.diff-desc').textContent = d.desc;
@@ -396,9 +419,35 @@ async function boot() {
   overlay.style.display = 'flex';
 }
 
+// The world picker on the pre-game screen. Deliberately thin: it re-runs
+// `configureWorld` with a preset name and nothing else, so the eventual
+// creator screen can add sea level, continent count and the rest as further
+// controls over the same call rather than as a second code path.
+function buildWorldPicker(overlay) {
+  const row = overlay.querySelector('.world-row');
+  const desc = overlay.querySelector('.world-desc');
+  if (!row) return;
+  row.innerHTML = '';
+  const paint = () => {
+    row.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.world === WORLD.preset));
+    desc.textContent = `${WORLD.w}×${WORLD.h} tiles — ${WORLD.desc}`;
+  };
+  for (const [key, preset] of Object.entries(WORLD_PRESETS)) {
+    const b = document.createElement('button');
+    b.dataset.world = key;
+    b.textContent = preset.label;
+    b.onclick = () => { configureWorld({ preset: key }); paint(); };
+    row.appendChild(b);
+  }
+  paint();
+}
+
 function startGame(seed, diffKey) {
   // the URL round-trips both seed and difficulty, so replays reproduce the game
-  try { history.replaceState(null, '', `?seed=${seed}&difficulty=${diffKey}`); } catch (e) {}
+  try {
+    const w = WORLD.preset === 'standard' ? '' : `&world=${WORLD.preset}`;
+    history.replaceState(null, '', `?seed=${seed}&difficulty=${diffKey}${w}`);
+  } catch (e) {}
   game = new Game(seed, diffKey);
   ui = new UI(document.getElementById('game'));
   ui.centerOn(game.map.startZones[0].x, game.map.startZones[0].y);

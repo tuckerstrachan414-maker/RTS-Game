@@ -33,10 +33,15 @@ the code; stale docs are treated as bugs.
 
 ## Code layout
 
+- `js/world.js` — world presets + `configureWorld` (`MAP_W`/`MAP_H` live here),
+  the east-west wrap helpers (`wrapX`, `wdx`, `wdist`), the `BIOMES` table
 - `js/assets.js` — atlas coords for both tilesets (`AT`, `PUNY`), animation
   auto-detection, faction palette swap
-- `js/map.js` — seeded generation, water + cliff autotiling, plateaus/ramps, A*
-  (`findPath`)
+- `js/map.js` — seeded world generation (plates → sea → depth → rivers →
+  climate → beaches → biomes → vegetation → homelands → plateaus → caves),
+  water + cliff autotiling, A* (`findPath`, land and sea)
+- `js/naval.js` — docks, ships, boarding/landings, the AI's navy (`aiNavalTick`)
+- `js/globe.js` — the orbit view: world texture, cached sphere projection
 - `js/buildings.js` — building defs, placement, castle upgrades, production
 - `js/economy.js` — Nation sim; `res` is a Proxy over per-building `store`s
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
@@ -58,9 +63,33 @@ the code; stale docs are treated as bugs.
 - `js/ai-combat.js` — `AICombatManager`: scouting, army, defence, war gating
 - `js/ui.js` — rendering, input (mouse + touch), HUD, panels, minimap, event card
 - `js/main.js` — Game class, fixed-timestep loop (SIM_DT 0.1), victory, loot
-  piles, `DIFFICULTIES` + pre-game difficulty overlay
+  piles, `DIFFICULTIES` + pre-game difficulty/world overlay
 
 ## Gotchas worth knowing before editing
+
+- **`MAP_W`/`MAP_H` are `let`, not `const`.** `configureWorld` (js/world.js)
+  sets them from a preset in `boot()`, before `new Game()`. Never cache them at
+  script-load time, and never size an array off them outside a constructor.
+- **The world wraps east-west** (`WORLD_WRAP`, false only on Duel Island).
+  `map.idx` folds x, so neighbour loops wrap for free — but any *distance* or
+  *bounding* test written as `b.x - a.x` is a bug near the seam. Use `wdx`,
+  `wdist`, `wmanhattan`, `wrapX`, `wrapPos`, and `ui.onScreen`/`ui.viewX` for
+  anything on screen.
+- Beaches (`T_SAND`) are walkable and buildable and sit between every coast and
+  the sea. Anything that enumerates "open ground" — `openAt`, `canPlace`,
+  `carveLine`, `carveShortestLink` — has to include them, or the shoreline
+  becomes a wall.
+- **Nations start on separate continents** and `connectStartZones` no longer
+  links them; `map.continent`/`continentSize` is the cheap "can this army walk
+  there?" answer, and crossing water is `js/naval.js`'s job. Duel Island sets
+  `oneContinent` and keeps the old guarantee.
+- Ships are ordinary `Unit`s with `type.naval`. They path with
+  `findPath(..., 'sea')` — always via `Unit.pathTo`, never by calling
+  `findPath` directly. A unit with `u.aboard` set is off the map entirely:
+  skip it in ticking, drawing, separation, targeting and the minimap.
+- The AI may still not read live rival state. The navy obeys this: ships
+  observe like any other unit, and where an unscouted rival *is* comes from the
+  drawn territory borders (public knowledge), never from their buildings list.
 
 - `nation.res.gold -= x` works — it's a Proxy that withdraws from physical
   building stores (Town Hall drained first, Storehouses filled first).

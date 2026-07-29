@@ -158,7 +158,7 @@ function reconcileJobs(f, civs) {
     // nearest free citizen takes the job, so people work where they already are
     let pick = 0, best = Infinity;
     for (let i = 0; i < idle.length; i++) {
-      const d = Math.hypot(idle[i].x - b.cx, idle[i].y - b.cy);
+      const d = wdist(idle[i].x, idle[i].y, b.cx, b.cy);
       if (d < best) { best = d; pick = i; }
     }
     assignJob(idle.splice(pick, 1)[0], b);
@@ -215,7 +215,7 @@ function civThreatNear(u) {
     if (!game.diplomacy.hostile(u.faction, f.id)) continue;
     for (const e of f.units) {
       if (!e.alive || e.type.civilian || e.type.envoy) continue;
-      if (Math.hypot(e.x - u.x, e.y - u.y) <= CIV_FLEE_RADIUS) return e;
+      if (wdist(u.x, u.y, e.x, e.y) <= CIV_FLEE_RADIUS) return e;
     }
   }
   return null;
@@ -228,7 +228,7 @@ function tickFlee(u, dt) {
   if (u.path.length) return u.followPath(dt);
   const home = nearestOwnBuilding(u);
   if (!home) { u.setAnim('idle'); return; }
-  if (Math.hypot(home.cx - u.x, home.cy - u.y) < 2) { u.setAnim('idle'); return; }
+  if (wdist(u.x, u.y, home.cx, home.cy) < 2) { u.setAnim('idle'); return; }
   // orderMove runs A*, and a civilian whose refuge is unreachable would run one
   // every tick for as long as the raid lasts
   if (u.repathT > 0) { u.setAnim('idle'); return; }
@@ -240,7 +240,7 @@ function nearestOwnBuilding(u) {
   let best = null, bd = Infinity;
   for (const b of game.factions[u.faction].buildings) {
     if (b.hp <= 0 || b.type.key === 'bridge') continue;
-    const d = Math.hypot(b.cx - u.x, b.cy - u.y);
+    const d = wdist(u.x, u.y, b.cx, b.cy);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -323,7 +323,7 @@ function tickGatherer(u, dt) {
     }
   }
   const [tx, ty] = u.spot;
-  if (Math.hypot(tx + 0.5 - u.x, ty + 0.5 - u.y) <= 1.2) { u.phase = 'work'; u.path = []; u.workT = 0; return; }
+  if (wdist(u.x, u.y, tx + 0.5, ty + 0.5) <= 1.2) { u.phase = 'work'; u.path = []; u.workT = 0; return; }
   walkTo(u, dt, tx, ty, () => { u.spot = null; });
 }
 
@@ -472,7 +472,7 @@ function claimSite(u, f) {
     // ready sites need hands; unready ones need hands only if there is still
     // something to carry that nobody else has already picked up
     if (!siteReady(b) && !siteHasWork(b, u.faction)) continue;
-    const d = Math.hypot(b.cx - u.x, b.cy - u.y);
+    const d = wdist(u.x, u.y, b.cx, b.cy);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -513,7 +513,7 @@ function nearestStoreWith(u, r) {
   let best = null, bd = Infinity;
   for (const b of game.factions[u.faction].buildings) {
     if (!b.done || b.hp <= 0 || !b.type.storage || (b.store[r] || 0) <= 0.01) continue;
-    const d = Math.hypot(b.cx - u.x, b.cy - u.y);
+    const d = wdist(u.x, u.y, b.cx, b.cy);
     if (d < bd) { bd = d; best = b; }
   }
   return best;

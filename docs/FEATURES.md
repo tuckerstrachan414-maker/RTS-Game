@@ -11,61 +11,127 @@ Player-facing behavior is described in `README.md`; implementation notes for the
 formations/tiers/gestures batch are in `docs/formations-tiers-ui.md`. Known bugs
 are tracked in `docs/BUGS.md`.
 
-## Map & terrain — Deep
+## The world — Deep
 
-`js/map.js`. Seeded procedural generation (mulberry32 + smoothed value noise)
-of a 96×96 continent: water, grass, depleting forests (`treeWood` per tile),
-rocks, plateaus, and 14 sprinkled cave tiles. Four cleared start zones, each
-guaranteed trees/rocks/a cave within reach. Water autotiling picks from a
-9-slice + strip set by neighbor inspection. A* pathfinding (4-directional, min-heap, capped
-iterations, partial-path fallback) with road tiles costing 0.7 to steer traffic
-onto trade roads; per-faction passability (gates open for owner + allies,
-walls/keeps solid, other buildings walkable). **A bridge tile only admits
-movement along its own axis** — `findPath` refuses to enter a horizontal
-(orient 1) span except moving east/west, and a vertical (orient 2) one except
-north/south — so a unit can never turn from one span onto a perpendicular one,
-even where two independently-built bridges happen to touch. `canPlace`
-(`js/buildings.js`) backs this up at build time: a bridge tile that would sit
-next to a differently-oriented bridge tile is refused outright, so two spans
-can never physically join into a junction in the first place. **Forest and rock are rough
-ground, not walls**: troops push through both, at `TREE_MOVE_COST` 2.4× / 
-`ROCK_MOVE_COST` 1.9× the time (`map.moveCost`, which divides unit speed in
-`followPath` and multiplies the A* step cost), so the pathfinder skirts a wood
-when the detour is short and cuts through when it isn't. Only water without a
-bridge, caves, walls and keeps still block outright. **Buildings can be placed
-on forest and rock too** (`canPlace`, `js/buildings.js`) — the footprint clears
-whatever it lands on (terrain → grass, `treeWood` zeroed), the same way
-`carveLine` clears a track — so a wall ring can seal all the way around a
-wooded perimeter instead of stopping at the treeline; unit muster/formation
-slots still deliberately prefer `moveCost === 1` tiles so ranks don't form up
-inside a thicket. **Plateaus are the one piece of terrain that is a wall.** A
-second noise field (`generatePlateaus`, `PLATEAU_LEVEL` 0.63) raises masses of
-high ground, majority-smoothed three passes so they settle into shapes with an
-outline rather than fraying into single-tile spurs. Each mass is split into a
-rim of `T_CLIFF` — impassable, unbridgeable, uncuttable, the only terrain with
-no way through it at all — and a top of ordinary ground flagged in `map.high`,
-which builds, harvests and fights exactly like low ground. The way up is
-`T_RAMP`, one to three stairs per mass, cut into *any* of its four rims
-(`RAMP_DIRS` in `js/map.js`: each entry is a climb direction `d` and a
-perpendicular `p` for the jambs, plus how many 90°-clockwise turns the
-tileset's one staircase sprite needs to face that way — the pack only drew a
-south-facing stair, so the other three orientations are that same art rotated
-losslessly by `tools/splice-cliffs.py`, not a runtime transform). A candidate
-tile needs open ground on the outside, plateau top on the inside, and rim
-either side for the jambs, in whichever of the 4 directions satisfies that;
-`map.rampDir` records which one so the renderer (`cliffTile`, `rampTopHere`)
-and generation (`pickRamps`) agree on which rotated art and which neighbour
-tiles apply. Crossed at `RAMP_MOVE_COST` 1.7×. That makes every mesa a
-chokepoint approachable from more than one side: ~360 cliff tiles, ~19 ramps
-split roughly evenly across the 4 directions, and ~760 tiles of high ground
-per map. Rim membership is decided by 4-connectivity, not 8 — a tile whose four
-sides are all plateau is inside it however its corners fall — which matches the
-orthogonal pathfinder. That rule governs *movement*; it does **not** mean the
-eight outer rim pieces are enough to draw with, which was assumed once and was
-wrong. A 4-connected interior tile can still touch open ground at a corner, and
-every rim piece is transparent on its outward side by design, so wherever a
-plateau's edge ran diagonally the tile inside the step painted flat turf against
-grass with nothing between: a staircase of disconnected rim fragments (BUGS #31).
+`js/world.js`. **The map is a configuration, not a constant.** `MAP_W`/`MAP_H`
+are `let` globals published by `configureWorld`, which runs from `boot()`
+before anything sizes an array off them; every consumer reads them at call
+time. Five presets ship (`WORLD_PRESETS`): **Duel Island** 96×96 non-wrapping
+one-landmass (the historical map), **Small World** 256×128, **Standard World**
+384×192, **Large World** 768×384, **Planet** 1024×512. Each carries sea level,
+target continent count, river density and plateau density, and every one of
+those is individually overridable — `configureWorld({preset:'large',
+seaLevel:0.55})` is a valid world nobody had to add a preset for. The pre-game
+screen has a **world picker** (`buildWorldPicker`, `js/main.js`) that re-runs
+`configureWorld` with a preset name; `?world=large`, `?mapw=`, `?maph=`,
+`?sea=`, `?continents=`, `?rivers=` do the same from the URL, and the chosen
+preset round-trips into the replay URL beside the seed. That split — a form
+over `configureWorld` on one side, one generator on the other — is the
+groundwork for a fuller world-creator screen: it should grow controls, not a
+second code path.
+
+**The world is a cylinder.** East-west it wraps: walk west far enough and you
+arrive from the east. North-south it does not — the poles are ice and the ends
+of the world. Wrapping is not a rendering trick; it goes all the way down.
+`map.idx` folds x, so every "for each of my four neighbours" loop in the game
+wraps for free; `wrapX`, `wdx`, `wdist`, `wmanhattan` and `wrapPos`
+(`js/world.js`, `js/units.js`) are the wrap-aware primitives, and A*, crowd
+separation, territory influence, scout memory, target acquisition, civilian
+job assignment, loot pickup and the camera all go through them. `WORLD_WRAP`
+is false on Duel Island and every one of those helpers degrades to plain
+arithmetic, so the old map behaves exactly as it did.
+
+## Map generation — Deep
+
+`js/map.js`. A pipeline, each stage writing a layer the next one reads:
+tectonics → sea → depth → rivers → climate → beaches → biomes → vegetation →
+homelands → plateaus → caves.
+
+**Tectonics.** Continents come from plates, not from thresholded noise. A
+handful of soft elliptical blobs (`seedPlates`, rejection-sampled so two
+continents cannot land on top of each other, each with its own skew so they
+are not all ovals) set *where* land is; four octaves of value noise
+(`makeFbm`) decide what its coastline looks like, eating bays and throwing
+islands off the shelf. Weighting the plate more heavily than the noise is what
+keeps a continent one continent rather than an archipelago. A latitude term
+pulls the caps under water so no landmass runs off the top of the world, which
+would look wrong the moment the globe is drawn. **The noise grid closes on
+itself in x** (`makeNoise` picks a cell count that divides `MAP_W` exactly and
+wraps the lookup modulo it) — without that, the seam shows as a straight
+north-south cliff of mismatched terrain running the height of the planet.
+
+**Depth.** One BFS from the whole coastline at once gives every water tile its
+distance from land (`map.depth`). It drives the deep-water shading, the
+ocean/coast biome split, the moisture field, and where beaches go.
+
+**Rivers.** A river is a walk downhill from a source in the hills
+(`traceRiver`): steepest descent with a little noise so it meanders, and when
+it walks into a hollow it floods the hollow and keeps going, which is how
+lakes get made. A course that neither reaches the sea nor grows long enough to
+be a lake chain is rolled back — a watercourse that simply stops in a field
+reads as a bug. Count scales with land area × `riverDensity`.
+
+**Climate.** Two fields, both the obvious physics: `map.temp` falls with
+latitude (cosine — broad tropics, a fast drop through the temperate band, a
+long cold tail) and with altitude; `map.moist` falls with distance from water
+(a second BFS) and rises with temperature. Fractal noise on top of each stops
+the bands reading as stripes.
+
+**Beaches.** Every shore gets sand (`T_SAND`, walkable, `SAND_MOVE_COST` 1.15,
+buildable). Doing it *everywhere* rather than only on gentle coasts is a
+rendering decision as much as a terrain one: with sand always between grass and
+sea, the water only ever has to draw one kind of edge, and the atlas's water
+set already has a sand-coloured lip baked into it, so the two meet with no new
+art. Width follows the land — a flat warm coast gets a second rank of strand, a
+steep or cold one gets a single tile of shingle.
+
+**Homelands.** `chooseHomelands` labels the continents (`labelContinents`,
+4-connected components of walkable land, kept on `map.continent` /
+`map.continentSize`), ranks them by usable size, and seats **one nation per
+continent**, each capital sited well inland by a sampled search that weights
+distance from the sea, from the other capitals, and away from the peaks. If the
+world did not produce four big enough continents the leftovers double up on the
+largest. `connectStartZones` still guarantees no capital is marooned on a
+sandbar — but it no longer joins the nations to each other. On a world of
+continents they are *supposed* to start apart; crossing the ocean is what the
+navy is for. Only Duel Island, which declares `oneContinent`, keeps the old
+"every nation must be able to walk to every other" guarantee.
+
+Plateaus, ramps, caves, water autotiling, `openAt` connectivity and the A*
+pathfinder are unchanged in substance from the pre-world version and are
+described below; the differences are that the plateau field is now biased by
+elevation (so mesas cluster in continental interiors rather than scattering
+over farmland and beach alike), that its passes run right round the seam on a
+wrapping world, that beach and sand count as open ground everywhere
+connectivity is tested, and that `findPath` takes a `mode` — `'land'` or
+`'sea'` (see Naval).
+
+**Plateaus.** A second noise field (`generatePlateaus`, `PLATEAU_LEVEL` 0.63,
+divided by `plateauDensity`) raises masses of high ground, majority-smoothed
+three passes so they settle into shapes with an outline rather than fraying
+into single-tile spurs. Each mass is split into a rim of `T_CLIFF` —
+impassable, unbridgeable, uncuttable, the only terrain with no way through it
+at all — and a top of ordinary ground flagged in `map.high`, which builds,
+harvests and fights exactly like low ground. The way up is `T_RAMP`, one to
+three stairs per mass, cut into *any* of its four rims (`RAMP_DIRS`: each entry
+is a climb direction `d` and a perpendicular `p` for the jambs, plus how many
+90°-clockwise turns the tileset's one staircase sprite needs to face that way —
+the pack only drew a south-facing stair, so the other three orientations are
+that same art rotated losslessly by `tools/splice-cliffs.py`, not a runtime
+transform). A candidate tile needs open ground on the outside, plateau top on
+the inside, and rim either side for the jambs, in whichever of the 4 directions
+satisfies that; `map.rampDir` records which one so the renderer (`cliffTile`,
+`rampTopHere`) and generation (`pickRamps`) agree on which rotated art and
+which neighbour tiles apply. Crossed at `RAMP_MOVE_COST` 1.7×. That makes every
+mesa a chokepoint approachable from more than one side. Rim membership is
+decided by 4-connectivity, not 8 — a tile whose four sides are all plateau is
+inside it however its corners fall — which matches the orthogonal pathfinder.
+That rule governs *movement*; it does **not** mean the eight outer rim pieces
+are enough to draw with, which was assumed once and was wrong. A 4-connected
+interior tile can still touch open ground at a corner, and every rim piece is
+transparent on its outward side by design, so wherever a plateau's edge ran
+diagonally the tile inside the step painted flat turf against grass with
+nothing between: a staircase of disconnected rim fragments (BUGS #31).
 `plateauTopTile` fixes it by giving such a tile one of the four concave corners
 instead, and `cliffTile` reads the far diagonal too, so a rim that reverses
 direction mid-run resolves as the corner it really is rather than as the one
@@ -79,31 +145,54 @@ walkable from a stair (`rampsReachAll`, else the mass is abandoned whole), no
 cave placed on a top or at any ramp's footing in any direction — a cave is a
 hole in a rock face, not ground, and is the one thing placed after the plateaus
 that could strand ground behind them — and nothing one tile thick anywhere in
-the mask. **Start zones are guaranteed
-traversable** (`connectStartZones`/`linkStartZones`): the 7×7 clearing is
-stamped wherever the quadrant centre lands, which could leave a nation on a
-grass island in a lake or sealed behind planted forest, so the generator floods
-each zone, cuts a track to real country when the region is too small, and links
-every start zone into one landmass at the narrowest crossing it can find
-(Dijkstra weighting grass cheap, forest and rock a little, water heavily, and
-refusing caves and cliffs outright — a breach would leave plateau top beside open
-ground with no rock between, which no rim piece can paint, so the link pass tries
-once going *round* every mesa and only re-runs with `allowCliff` if there is
-genuinely no route at all; `lineCost` refuses cliffs unconditionally). That
-connectivity runs on
-clear ground plus ramps (`openAt`), so it is stricter than movement requires:
-forest and rock are walkable but do not count toward it — which includes a
-plateau-top tile that still has its original tree or boulder, so a forced
-corridor is allowed to simplify one to grass exactly like it would off the
-plateau. It must never touch `map.high` while doing that, though: clearing a
-top tile *and* clobbering its `high` flag together would quietly shrink the
+the mask. A forced connectivity corridor must never touch `map.high`: clearing
+a top tile *and* clobbering its `high` flag together would quietly shrink the
 plateau by one tile rather than just tidy its ground (BUGS #30) — `high` is
 plateau membership, decided once by `generatePlateaus` and never revisited.
-Adding plateaus changed what a given seed generates — the same seed still
-replays identically, it just replays a different map than it did before the
-mesas existed. `?seed=N` URL replay. Notably absent: tree regrowth (the
-`SAPLING` atlas entry is unused), map
-sizes, biomes.
+
+**Terrain and movement.** Water autotiling picks from a 9-slice + strip set by
+neighbour inspection. A* (4-directional, min-heap, capped iterations,
+partial-path fallback, wrap-aware heuristic) with road tiles costing 0.7 to
+steer traffic onto trade roads; per-faction passability (gates open for owner +
+allies, walls/keeps solid, other buildings walkable). **A bridge tile only
+admits movement along its own axis** — `findPath` refuses to enter a horizontal
+(orient 1) span except moving east/west, and a vertical (orient 2) one except
+north/south — so a unit can never turn from one span onto a perpendicular one,
+even where two independently-built bridges happen to touch. `canPlace`
+(`js/buildings.js`) backs this up at build time. **Forest and rock are rough
+ground, not walls**: troops push through both, at `TREE_MOVE_COST` 2.4× /
+`ROCK_MOVE_COST` 1.9× the time (`map.moveCost`, which divides unit speed in
+`followPath` and multiplies the A* step cost). Only water without a bridge,
+caves, cliffs, walls and keeps still block outright. **Buildings can be placed
+on forest, rock and sand** — the footprint clears whatever it lands on — so a
+wall ring can seal all the way around a wooded perimeter and a Dock can stand
+on a beach; unit muster/formation slots still prefer `moveCost === 1` tiles so
+ranks don't form up inside a thicket.
+
+Notably absent: tree regrowth (the `SAPLING` atlas entry is unused).
+
+## Biomes — Moderate
+
+`js/world.js` (`BIOMES`, `classifyBiome`) and `js/map.js` (`classifyBiomes`).
+Fourteen biomes — ocean, coastal waters, beach, grassland, woodland,
+rainforest, savanna, desert, steppe, taiga, tundra, ice cap, highlands,
+wetland — classified per tile from the three climate layers and stored in
+`map.biome`. Every one of them is generated today and does two things: it sets
+how densely the generator plants trees and boulders (`b.tree` / `b.rock`
+scaling `plantVegetation`, so a rainforest is dense because its row says 2.2,
+not because of a special case), and it tints its ground.
+
+This is **groundwork, and honest about being groundwork.** What is deliberately
+not here yet is per-biome *art*: there are no dunes, no jungle canopy, no snow,
+so a desert is sand-toned grassland rather than a different-looking place. The
+tint (`b.wash`, drawn as one `fillRect` over the ground coat, skipped entirely
+where a biome declares 0) is the hook that art will replace. The intended shape
+of adding a real biome later is: add a row to `BIOMES`, adjust `classifyBiome`,
+add an art hook in `js/assets.js` — and touch nothing in the generator. The
+climate layers `map.temp`, `map.moist`, `map.elev` and `map.depth` are kept on
+the map after generation for exactly that reason. Biomes do **not** yet affect
+movement cost, yields, or unit behaviour; `PUNY.PALM` is catalogued for the
+tropical biomes and unused.
 
 ## Civilians & labour — Deep
 
@@ -282,7 +371,8 @@ or spillable as loot. This underpins the entire raiding design.
 
 ## Buildings — Moderate
 
-`js/buildings.js`. 14 types: Town Hall, Storehouse, House, Builder House
+`js/buildings.js` (+ the Dock, added by `js/naval.js`). 15 types: Town Hall,
+Storehouse, House, Builder House
 (3 builder slots — see Construction & builders), Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles anywhere in a 25-tile square — up/down/left/right — around it; idles only
@@ -291,7 +381,8 @@ Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
 rendered as one connected structure in both axes — see the renderer entry),
 Bridge (water-only, rotatable, drag to lay a span, one plank-deck sprite that
 tiles seamlessly in both axes; straight runs only — a horizontal and a vertical bridge can never touch or
-join, see Map & terrain and Units & combat).
+join, see Map generation and Units & combat), Dock (2×2, must have open water
+against its footprint, builds Transports and War Galleys — see Naval).
 Placement validation with per-type requirements, construction time, HP/damage,
 demolish with 75% refund (except Town Hall — and except an unfinished site,
 which refunds its delivered materials in full instead). **Placement no longer
@@ -345,6 +436,126 @@ the corner and `canPlace` would refuse it (`aiFindCrossing`/
 building upgrades outside the Castle, no repair, and pasted layouts don't
 rotate/mirror (a copied bridge always pastes horizontal, regardless of the
 orientation it was copied from — see BUGS).
+
+## Naval — docks, ships, invasions — Moderate
+
+`js/naval.js`. A world of continents is unplayable without a way across the
+water, so this is the minimum viable navy: a place to build hulls, a hull that
+carries troops, a hull that fights, and an AI that will mount a landing.
+
+**Dock** (2×2, 70 wood / 20 stone). `placeReq` demands open water against the
+footprint — not merely nearby, or you get shipyards two tiles inland with no
+way for a hull to reach them. It queues ships exactly the way a Castle queues
+troops: `Faction.tickTraining` now runs for docks as well as castles, and the
+only difference is where the finished unit is put down. `shipSpawnNear` finds
+the nearest navigable tile; if the berth has silted up (a bridge thrown across
+the harbour mouth) the order waits rather than launching a ship onto dry land.
+
+**Ships** are ordinary `Unit`s with `naval: true`, merged into `UNIT_TYPES` at
+load. **Transport** (130hp, unarmed, carries 6) and **War Galley** (160hp,
+pierce 11 at range 4, no capacity). They path with `findPath(..., 'sea')` —
+same A*, same wrap handling, `map.navigable` instead of `map.passable`, and a
+bridge deck blocks a hull exactly as a river blocks an army. They fight with
+the ordinary combat code and die the ordinary way. `Unit.pathTo` is the single
+seam: every repath in `js/units.js` goes through it, so a hull can never be
+handed a route over land nor an army one over water.
+
+**Boarding.** A land unit ordered aboard walks to the shore beside the hull and
+steps on; from then it is `u.aboard` and off the map entirely — not ticked, not
+drawn, not separated, not targetable, not counted by the minimap — while still
+sitting in its faction's roster, so it still counts as army strength. Unloading
+picks dry tiles outward from the landing point and leaves anyone with nowhere
+to stand aboard rather than dropping them in the sea. **A hull going down takes
+everyone below decks with it** (`onUnitDeath`, `js/main.js`) — they are not on
+the map to be killed individually, so the sinking is the only thing that can.
+
+**Orders.** With troops selected, right-click a friendly transport to send them
+aboard. With ships selected, right-click dry land to make a landing and open
+water to sail. The point given is an *objective*, not a beach: `orderUnload`
+finds the nearest water to it (`nearestBerth`, searching out to 120 tiles) and
+lands on the shore beside that berth, so a fleet aimed at an inland capital
+puts its troops on the nearest coast and marches.
+
+**Cross-domain targeting.** A ship and a soldier live in different domains and
+neither can walk to the other, so `canEngage` (`js/units.js`) only lets them
+pick each other as *proactive* targets when one is already within weapon reach
+— a galley rakes the shore it is passing, archers shoot at the hull off their
+beach, and neither spends the rest of the match wading toward something
+unreachable. A direct order still lands whatever it was aimed at.
+
+**The AI's navy** (`aiNavalTick`, called from `aiTick` alongside the utility
+brain, because getting an army across an ocean is a campaign rather than a
+marginal-utility choice). Two jobs:
+
+- **Exploration.** A nation on its own continent cannot scout its way to
+  knowing anybody, and an AI that knows nobody never does anything. So the
+  navy's first job is discovery: once the nation is on its feet, build a dock,
+  build a galley, and keep it working outward through water it has never seen
+  (`aiSeaScoutTarget`, biased to a middle distance so it works away from home
+  rather than circling its own harbour). Everything it learns it learns by
+  looking — a ship is in `f.units` and so observes exactly like any other unit
+  (`AIPerception.gatherObservers`), so no rule about reading rival state is
+  bent to make this work.
+- **Invasion.** A small state machine on `f.ai.invasion`: `building` (waiting
+  on a Dock) → `fleet` (waiting on enough hulls plus an escort) → `loading`
+  (army walking aboard) → `sailing`, and it dissolves the moment the war does.
+  On landing it hands the party to `formationMove` and the ordinary war
+  machinery, which presses an attack far better than this does.
+
+Where does an AI think a rival *is*, if it has never scouted one? Scouted
+memory first. Failing that, **the drawn territory borders** — which
+`CLAUDE.md` lists as public knowledge alongside the diplomacy matrices:
+you can see from your own coast that somebody has claimed the land over there,
+even if you have never counted their soldiers. `aiTerritoryAnchor` reservoir-
+samples one tile of their claim off the seeded stream. Threat and confidence
+still come only from observation, so a nation that has seen nothing still
+hesitates. `considerWar`'s reachability gate was relaxed to match: an ocean is
+no longer a veto, but only a nation that could actually mount a landing
+(`aiCanInvadeBySea` — have we a coast, have they a coast, is there sea between)
+is allowed to declare across one.
+
+Not here: blockades, naval supply, boarding actions, coastal forts, fishing,
+ferrying civilians, or a player-facing "load these and go there" one-click
+order. Ships are also not yet part of `estimateIncome`, event cards or the
+Formations panel.
+
+## Orbit view — the globe — Moderate
+
+`js/globe.js`. Zoom out past the widest tile zoom and the world stops being a
+rectangle and becomes what it has been since `js/world.js`: a cylinder wrapped
+round a sphere. The planet is drawn as a real orthographic projection, spinnable,
+with lambert shading, an atmosphere rim, capitals marked, and stars behind it.
+
+The projection is inverted per pixel — screen (x, y) → surface normal →
+latitude/longitude → texel — which is far too much trigonometry to do every
+frame. The trick that makes it cheap: **with the camera fixed and the planet
+spinning about its own axis, the mapping from a screen pixel to a texture ROW
+and a longitude OFFSET never changes.** Spinning only adds a constant to the
+longitude. So `buildProjection` computes the row, the column and the shading
+once per (radius, tilt) and caches them; each frame is then an add, a compare
+and three multiplies per pixel. Only the disc's bounding box is projected,
+buffered and blitted — walking the rest of the canvas to write transparent
+pixels was most of the cost of the view. Measured ~5ms for the projection pass
+at a 614px disc.
+
+The world texture is one texel per tile — biome tint, depth-shaded water,
+elevation hill-shading, territory blended in, capitals stamped brighter than
+their surroundings so a town does not vanish at planetary scale — rebuilt on a
+2.5s clock rather than per frame. The globe is composited over the starfield
+through an offscreen buffer, because `putImageData` ignores what is underneath
+it and would punch a black square out of the sky.
+
+Entering and leaving are continuous with the tile map. Zooming out from zoom 1
+lifts off *at the longitude the camera was looking at*, tilted to put that
+latitude near the middle of the disc, so it does not teleport you round the
+world. Drag (or one finger) spins and tips it; a pixel of drag turns the globe
+by the angle that pixel subtends, so the ground follows the cursor. Wheel or
+pinch pulls the planet closer until it fills the view and then hands back to
+the tiles at the point you were looking at; a click or tap that did not spin
+anything drops you straight onto that spot. WASD works too. The HUD, minimap
+and panels stay live throughout, and the sim keeps running.
+
+The globe is only offered on wrapping worlds — Duel Island has no far side.
 
 ## Market & commodity trading — Deep
 
@@ -577,7 +788,9 @@ the war-versus-trade call), `js/ai-combat.js` (scouting, army, war gating).
 war waves, bridge and wall engineering, coalitions, event cards. `aiTick`
 (`js/factions.js`) is now a thin dispatcher; ticks are phase-staggered by
 faction id rather than randomly, so nations never tick together and a seed
-replays identically.
+replays identically. `js/naval.js` (`aiNavalTick`) hangs off the same
+dispatcher for sea exploration and amphibious invasion — see Naval for why it
+sits beside the utility brain rather than inside it.
 
 **Nothing is read from global state.** Civilians are invisible to all of it —
 seeing a rival's farmhands says nothing about their army, so `observe` and
@@ -838,14 +1051,18 @@ watching battles. Fixed-timestep sim (0.1s) decoupled from rendering.
 `js/ui.js`, `index.html`. Full parallel input scheme: one-finger drag pans,
 pinch zooms about the gesture midpoint, tap selects, hold-then-drag
 box-selects, double-tap or two-finger tap issues the command (move/attack/
-rob/rally) with deferred-select logic so double-taps don't drop the selection.
+rob/rally/board/land) with deferred-select logic so double-taps don't drop the
+selection. **Pinching in past the widest tile zoom leaves the surface for the
+orbit view**, where the gesture set collapses to the two that mean anything up
+there: one finger spins and tips the planet, two pinch it closer, and a tap
+that did not spin anything puts you down on that spot.
 Safe-area insets, coarse-pointer sizing, portrait rotate prompt with a
 persisted "play anyway" choice, orientation/visualViewport resize handling.
 Panel placement is driven by shared `--hud-*` custom properties rather than
 per-panel arithmetic, so every floating block clears the resource bar and the
 build bar by the same margin and each owns one screen slot (see "HUD layout &
 stacking" in `docs/formations-tiers-ui.md`). On a landscape phone the build bar
-fits its full row of 13 buttons, the diplomacy panel becomes a centred sheet
+fits its full row of 14 buttons, the diplomacy panel becomes a centred sheet
 with a backdrop and outranks the build bar and log in the stacking order, the
 event card moves to the top row rather than fighting the build panel for the
 bottom-left corner, and the pre-game/end overlays scroll instead of clipping.
@@ -877,6 +1094,32 @@ crowd of troops. Art that is drawn as townsfolk does not need to be washed out
 to look like them, and washing it out cost real information — the farmer's
 tunic is a light blue, and desaturating "pale blue" indiscriminately is exactly
 what flattens it.
+
+**Terrain added for the world pass.** The beach is a 3×3 sand set off the
+punyworld sheet (`PUNY.SAND`), baked from the *plain* sheet rather than a
+faction-recoloured one — a beach belongs to the world, not to whoever owns the
+tile — and picked per tile by `GameMap.sandEdge` from its neighbours, with
+water counting as sand so the strand runs to the waterline and the water's own
+baked lip covers the join. Depth is a ramp of translucent navy (`DEEP_SHADES`,
+`js/ui.js`) laid over the ordinary shoreline autotile; the first attempt swapped
+in a flat dark tile past a depth threshold and drew a hard blocky shelf a few
+tiles out, which read as a rendering seam rather than as water getting deeper.
+The biome tint is one `fillRect` per visible tile, skipped where a biome
+declares a wash of 0.
+
+**Ships are baked, not spritesheets.** There is no boat anywhere in either
+tileset, so `bakeShips` draws the Transport and the War Galley the same way the
+Quarry and the Storehouse are drawn — as pixel runs — taking the nation's
+colour on the sail. `drawShip` is a separate path from `drawUnit`: one static
+sprite mirrored to its heading, a health bar, and pips along the gunwale for
+the troops aboard.
+
+**The minimap is two layers now.** The expensive one — one pixel per tile of
+terrain, biome and territory — is a whole-world scan, so it is cached and
+rebuilt on a 2s clock (`renderMinimapBase`); at planet scale that loop is half a
+million pixels and running it per refresh cost more than drawing the game did.
+The towns and troops are redrawn over it each time. The per-pixel work uses
+scalars rather than a fresh `[r,g,b]` array per tile, which was most of its cost.
 
 These sheets came from the design team as phone screenshots of a sprite viewer
 rather than as PNGs, so `tools/import-civilians.py` rebuilds them: it undoes
