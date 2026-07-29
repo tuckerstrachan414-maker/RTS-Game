@@ -639,8 +639,9 @@ project — see README's "no build step" philosophy). Verification for this
 batch was done with ad hoc headless Playwright scripts driving the
 already-running `game`/`ui` globals via `page.evaluate`, fast-forwarding
 with `game.tick(0.1)` in a loop for deterministic time control. Those
-scripts were scratch files, not committed — if you need to re-verify this
-area, the pattern is:
+scripts were scratch files, not committed (name them `_something.js` in the repo
+root — `.gitignore` covers that prefix so they never end up in a commit) — if
+you need to re-verify this area, the pattern is:
 
 ```js
 const { chromium } = require('playwright-core');
