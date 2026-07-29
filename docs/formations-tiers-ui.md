@@ -877,6 +877,25 @@ search too small to reach an inland objective (it returned false and the order
 silently did nothing), and a sea path iteration cap too low for an ocean
 crossing.
 
+**The AI's navy is the part that needs a forced harness, not a soak.** An
+unattended run tells you almost nothing here: whether an AI ever lands troops
+depends on whether it happens to be at war with somebody overseas for long
+enough, which on most seeds it is not. The harness that actually found the bugs
+does four things — tick a few sim-minutes so the AIs have an economy, pick two
+AIs whose town halls sit on different `map.continentAt` values, re-declare war
+between them *every tick* (peace aborts the campaign and hides the result), and
+top up the aggressor's Town Hall store each minute so the test measures the
+invasion rather than the economy. Then log `f.ai.invasion.state` on every change
+and assert the sequence reaches `building -> fleet -> loading -> sailing` and
+that units end up with `continentAt` equal to the target's. Three separate
+faults only showed up under it: the shipyard never being built at all (builders
+prefer nearer sites), the fleet gate waiting for an escort that never came, and
+the stage deadline preempting a transition that was ready in the same tick.
+When a stage stalls, log the stage's own inputs — transports, army size, free
+citizens, the dock's queue — rather than guessing; "free citizens: 1" is what
+explains a shipyard that builds nothing for twenty minutes, and no amount of
+staring at the state machine would have said so.
+
 **The globe.** Cheap to check numerically, because `GlobeRenderer.pick` is the
 exact inverse of the projection: for a spread of screen points inside the disc,
 `pick` then re-project and assert you land back within a pixel or two. For

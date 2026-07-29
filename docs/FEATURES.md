@@ -307,6 +307,17 @@ sites at its builder count (min 2) across every path it can place from —
 without it, turtles queued 14 wall segments they had no hands for, and every one
 held a reservation against the stone.
 
+**Sites can be marked urgent.** Builders take the nearest site with work, which
+is right almost always and catastrophic in one case: a building the nation
+genuinely needs but which has to be sited far from the town centre never
+attracts a single builder, because there is always something nearer, so it sits
+at zero delivered for as long as the town keeps building. `b.urgent` multiplies
+the distance a builder sees by `URGENT_SITE_BIAS` (0.2), so an urgent site three
+times as far away wins and one twenty times as far still does not — it moves up
+the queue rather than stopping everything else. The AI's invasion shipyard is
+the case that forced it (a Dock must be on the coast; see Naval), and it is the
+only thing that sets the flag today.
+
 ## Economy & population — Deep
 
 `js/economy.js`. Citizens eat continuously; population grows once per dawn
@@ -497,10 +508,26 @@ marginal-utility choice). Two jobs:
   (`AIPerception.gatherObservers`), so no rule about reading rival state is
   bent to make this work.
 - **Invasion.** A small state machine on `f.ai.invasion`: `building` (waiting
-  on a Dock) → `fleet` (waiting on enough hulls plus an escort) → `loading`
-  (army walking aboard) → `sailing`, and it dissolves the moment the war does.
-  On landing it hands the party to `formationMove` and the ordinary war
-  machinery, which presses an attack far better than this does.
+  on a Dock) → `fleet` (waiting on hulls) → `loading` (army walking aboard) →
+  `sailing`, and it dissolves the moment the war does. On landing it hands the
+  party to `formationMove` and the ordinary war machinery, which presses an
+  attack far better than this does.
+
+  Three things about it are the way they are because a soak said so. **The
+  fleet it waits for is small** — one transport for a small army, two for a
+  big one, and it sails unescorted after `FLEET_PATIENCE` rather than not at
+  all: holding out for a proper fleet meant every campaign was still counting
+  hulls when its war ended (BUGS #43). **The stage clock is refreshed on
+  progress** (`aiInvasionStep`, and again whenever a hull joins), and is
+  checked *after* the stage has had its chance to advance rather than before —
+  checking it first binned campaigns whose last transport arrived inside the
+  same six seconds the clock ran out in. **And the shipyard is staked
+  `urgent`**: a Dock has to go where the coast is, which on a real continent is
+  twenty-odd tiles from the capital, and builders take the nearest site with
+  work, so an invasion's dock sat at zero delivered indefinitely while the town
+  put up houses. `URGENT_SITE_BIAS` (`js/civilians.js`) makes a marked site
+  behave as though it were five times nearer — enough to move it up the queue,
+  not enough to stop everything else.
 
 Where does an AI think a rival *is*, if it has never scouted one? Scouted
 memory first. Failing that, **the drawn territory borders** — which

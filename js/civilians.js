@@ -23,6 +23,12 @@ const CIV_TRIP_BUDGET = 8;
 // Least fraction of the old flat cycle a worker must spend actually working, so
 // that even a perfect haul cannot make a building produce without limit.
 const CIV_WORK_FLOOR = 0.35;
+// How much nearer an urgent site pretends to be when builders are choosing.
+// A multiplier rather than a hard override: an urgent site three times as far
+// away wins, one twenty times as far still does not, so marking something
+// urgent moves it up the queue instead of stopping every other build.
+const URGENT_SITE_BIAS = 0.2;
+
 const MAX_BUILDERS_PER_SITE = 3;
 const CIV_FLEE_RADIUS = 5;    // hostile soldiers this close send civilians running
 const CIV_RECONCILE = 0.5;    // seconds between population/job reconciliation passes
@@ -472,7 +478,15 @@ function claimSite(u, f) {
     // ready sites need hands; unready ones need hands only if there is still
     // something to carry that nobody else has already picked up
     if (!siteReady(b) && !siteHasWork(b, u.faction)) continue;
-    const d = wdist(u.x, u.y, b.cx, b.cy);
+    // Nearest site wins — except that a site can declare itself urgent, and an
+    // urgent one is treated as if it were much closer than it is. Without this
+    // a site the nation genuinely needs but happens to have staked out on the
+    // far side of its territory never gets a single builder: there is always
+    // something nearer to work on, so it sits at zero delivered forever. The
+    // AI's invasion shipyard is the case that forced it — a Dock has to be on
+    // the coast, the coast is wherever it is, and a campaign that cannot get
+    // its yard built never sails.
+    const d = wdist(u.x, u.y, b.cx, b.cy) * (b.urgent ? URGENT_SITE_BIAS : 1);
     if (d < bd) { bd = d; best = b; }
   }
   return best;

@@ -23,13 +23,39 @@ ground layer only changes when a tile does.
 ### 39. AI nations are slow to find each other across an ocean
 `js/naval.js` `aiNavalExplore` — an AI charts the sea with a single galley
 picking unexplored water at random, and `knownTownhall` needs line of sight on
-a building that is usually well inland, so after 30 sim-minutes on a Standard
+a building that is usually well inland, so after 50 sim-minutes on a Standard
 World the perception maps are typically still empty of rival capitals. Wars
 across water do get declared (they fall back to the drawn territory borders,
 which are public knowledge — see `aiEnemyAnchor`), but they are declared on
 much thinner information than a land war, and the sea scout never does a
 systematic coastal survey. A proper coast-following patrol, and more than one
 hull, would fix both.
+**Plan:** TBD
+
+### 43. An AI invasion usually loses its war before the fleet is ready
+`js/naval.js` `aiRunInvasionStage` — the campaign is verified end to end (force
+a cross-ocean war open and it goes `building → fleet → loading → sailing` and
+puts a dozen troops on the enemy shore), but in an unforced 50-minute soak the
+AIs reached `fleet` and then aborted, because peace broke out while the
+shipyard was still turning out hulls. Getting from "no dock" to "two loaded
+transports" takes 20-25 sim-minutes on a Standard World, most of it waiting on
+free citizens to crew the ships, and that is longer than a typical war lasts.
+The gate has been loosened as far as is sensible (one transport is enough for a
+small army, and a campaign sails unescorted rather than not at all after
+`FLEET_PATIENCE`), so the rest of the fix is economic: the AI needs to keep a
+standing transport or two in peacetime the way it keeps a standing army, rather
+than starting a shipyard the day war is declared.
+**Plan:** TBD
+
+### 44. Population runs away on the big worlds
+Observed on a 50-minute unattended Standard World soak: nations finished at
+454-1072 population with 491-1109 units each, against 13-17 on the old 96×96
+map over a comparable run. Nothing is wrong with the growth rule — a nation
+grows by a fraction of its housing cap, and the big worlds simply give it four
+to six thousand tiles of land to fill instead of a shared few hundred — but
+nothing pushes back either, and a thousand-unit nation is both a balance
+problem and the reason a long soak crawls. Wants a real ceiling: land quality,
+food logistics, unrest, or an upkeep curve that bites.
 **Plan:** TBD
 
 ### 40. Ships have no formation, no group role, and no place in the panels

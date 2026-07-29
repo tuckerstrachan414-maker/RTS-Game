@@ -296,6 +296,12 @@ function shipSpawnNear(b) {
 // full rate tripled the cost of a sim tick for the whole opening, until the
 // first shipyard existed and the searches stopped.
 const AI_NAVAL_PERIOD = 6;
+// How long a campaign waits for a warship to escort it before sailing without
+// one. Shorter than a typical war, which is the whole point.
+const FLEET_PATIENCE = 90;
+// How long any one stage of a campaign may sit without progressing before it is
+// written off. Refreshed on every state change (see aiInvasionStep).
+const INVASION_STAGE_TIME = 600;
 
 function aiNavalTick(f, dt) {
   const ai = f.ai;
@@ -318,7 +324,7 @@ function aiNavalTick(f, dt) {
     const there = game.map.continentAt(where[0], where[1]);
     if (there < 0 || there === home) continue;      // we can march: not our problem
     ai.invasion = { state: 'building', targetFid: o.id, at: where,
-      units: [], ships: [], deadline: game.time + 1200 };
+      units: [], ships: [], deadline: game.time + INVASION_STAGE_TIME };
     return;
   }
 }
@@ -448,18 +454,36 @@ function aiSeaScoutTarget(f, scout) {
 function aiTickInvasion(f) {
   const ai = f.ai, inv = ai.invasion;
   const target = game.factions[inv.targetFid];
-  if (!target || target.eliminated || game.time > inv.deadline
+  // A war that has ended, or an enemy that no longer exists, ends the campaign
+  // outright. Running out of time does not — that is checked at the END of the
+  // tick, after this stage has had its chance to advance. Checking it first
+  // threw away campaigns whose last transport arrived inside the same six
+  // seconds the clock ran out in, which is a maddening way to lose a fleet.
+  if (!target || target.eliminated
       || game.diplomacy.status(f.id, inv.targetFid) !== 'war') {
     return aiAbortInvasion(f);
   }
+  const before = inv.state;
+  aiRunInvasionStage(f, inv);
+  // Still in the same stage with the clock run out: this campaign is stuck.
+  if (ai.invasion && ai.invasion.state === before && game.time > inv.deadline) {
+    aiAbortInvasion(f);
+  }
+}
+
+function aiRunInvasionStage(f, inv) {
+  const ai = f.ai;
   const docks = f.buildings.filter(b => b.type.key === 'dock' && b.done && b.hp > 0);
   if (inv.state === 'building') {
-    if (docks.length) { inv.state = 'fleet'; return; }
+    if (docks.length) { aiInvasionStep(inv, 'fleet'); return; }
     // Already building one? Leave it alone. Otherwise stake a shipyard out.
     if (f.buildings.some(b => b.type.key === 'dock')) return;
     const spot = aiFindDockSpot(f);
     if (spot && f.nation.canStart(BUILDING_TYPES.dock.cost)) {
-      startConstruction(game, 'dock', spot[0], spot[1], f.id);
+      // Urgent: the coast is where it is, and a shipyard 20 tiles from the
+      // capital loses every builder to whatever is being put up in town. The
+      // campaign cannot start without it (js/civilians.js claimSite).
+      startConstruction(game, 'dock', spot[0], spot[1], f.id).urgent = true;
     }
     return;
   }
@@ -467,15 +491,35 @@ function aiTickInvasion(f) {
   const transports = ships.filter(s => s.type.key === 'transport');
   const army = f.armyUnits().filter(u => u.alive && !u.aboard && !isNaval(u));
   if (inv.state === 'fleet') {
-    const want = Math.max(1, Math.min(3, Math.ceil(Math.min(army.length, 12) / TRANSPORT_CAPACITY)));
-    if (transports.length >= want && ships.some(s => s.type.key === 'galley')) {
-      inv.state = 'loading';
-      inv.units = army.slice(0, want * TRANSPORT_CAPACITY);
-      inv.ships = transports.slice(0, want);
+    // How many hulls to wait for. Deliberately modest: a wave of six is a real
+    // landing, and holding out for a bigger one loses the campaign to the peace
+    // that arrives while the yard is still working. Waiting for a perfect fleet
+    // was the reason invasions in a long soak got as far as this state and no
+    // further — every one of them was still counting transports when its war
+    // ended.
+    const want = army.length >= TRANSPORT_CAPACITY * 2 ? 2 : 1;
+    inv.readyAt = inv.readyAt || game.time + FLEET_PATIENCE;
+    const escorted = ships.some(s => s.type.key === 'galley');
+    // Sail once the transports are there and an escort has turned up — or once
+    // patience runs out and there is at least one loaded hull's worth of army.
+    // An unescorted landing is a risk; not landing at all is a certainty.
+    if (transports.length >= want && (escorted || game.time > inv.readyAt)) {
+      aiInvasionStep(inv, 'loading');
+      inv.units = army.slice(0, transports.length * TRANSPORT_CAPACITY);
+      inv.ships = transports.slice(0, Math.max(want, Math.min(transports.length, 3)));
       for (let i = 0; i < inv.units.length; i++) {
         orderBoard(inv.units[i], inv.ships[i % inv.ships.length]);
       }
       return;
+    }
+    // A hull joining the fleet is progress, so the stage clock restarts. The
+    // yard is slow for reasons that have nothing to do with this campaign — a
+    // nation with no spare citizens cannot crew a ship however badly it wants
+    // one — and binning an invasion that is visibly still building ships just
+    // makes it start the whole thing again from the shipyard.
+    if (ships.length !== inv.fleetMark) {
+      inv.fleetMark = ships.length;
+      inv.deadline = game.time + INVASION_STAGE_TIME;
     }
     if (docks[0].trainQueue.length >= 2) return;
     trainShip(f, transports.length < want ? 'transport' : 'galley');
@@ -489,7 +533,7 @@ function aiTickInvasion(f) {
       && u.mission && u.mission.kind === 'board').length;
     // Sail when the fleet is full, or when nobody else is coming.
     if (aboard > 0 && stillComing === 0) {
-      inv.state = 'sailing';
+      aiInvasionStep(inv, 'sailing');
       for (const s of inv.ships) if (shipLoad(s)) orderUnload(s, inv.at[0], inv.at[1]);
       // The escort goes with them.
       for (const g of factionShips(f)) {
@@ -509,6 +553,16 @@ function aiTickInvasion(f) {
       ai.invasion = null;
     }
   }
+}
+
+// Advance the campaign, and give it a fresh deadline for doing so. The clock is
+// there to bin campaigns that are stuck, not campaigns that are slow: a first
+// invasion has to build a shipyard from nothing and then a fleet, which on a
+// big world took longer than the flat 20 minutes and got a working landing
+// binned one stage from sailing.
+function aiInvasionStep(inv, state) {
+  inv.state = state;
+  inv.deadline = game.time + INVASION_STAGE_TIME;
 }
 
 function aiAbortInvasion(f) {

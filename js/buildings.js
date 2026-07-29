@@ -153,6 +153,9 @@ class Building {
     this.lastDeliver = -1e9;
     this.yieldTotal = 0;           // lifetime banked by this building's workers
     this.yieldT0 = null; this.yieldBase = 0;   // open sampling window
+    // Set on a construction site the nation cannot afford to have ignored;
+    // builders weight it as much nearer than it is (js/civilians.js claimSite).
+    this.urgent = false;
     this.rally = null;
     this.trainQueue = [];                    // {unitKey, t}
     this.grand = false;                      // grand castle upgrade
