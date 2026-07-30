@@ -1747,6 +1747,7 @@ class UI {
     // canvas: putImageData ignores what is underneath it, so painting the disc
     // directly would punch a black square out of the sky around the planet.
     const buf = this.globeBuffer(w, h);
+    buf.ctx.clearRect(0, 0, w, h);
     this.globeR.draw(buf.ctx, w, h, r, this.globe.spin, this.globe.tilt, 1 - game.lightLevel());
     ctx.drawImage(buf.canvas, 0, 0);
     // atmosphere halo
