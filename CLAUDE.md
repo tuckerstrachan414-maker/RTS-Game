@@ -209,6 +209,16 @@ the code; stale docs are treated as bugs.
   climate shade); `tile()`/`spriteAt()` default to it, so anything drawn from
   the plain atlas outside the terrain, rock and tree passes must leave
   `ui.sheet` null — the passes reset it themselves.
+- **Plan unit routes with `Unit.replan(tx, ty)`, not `if (path.length === 0 ||
+  repathT <= 0) path = pathTo(...)`.** An empty path is also what a failed
+  search returns, so that pattern re-runs a 6,000-node A* every tick for any
+  goal the unit cannot reach — it made hour-long wars twenty times slower
+  (BUGS #58). `replan` rate-limits failed plans and counts them in
+  `u.planFails` so the caller can give up. Civilians use `walkTo`, which has
+  its own backoff.
+- The Town Hall and Castle are `keep: true` (siege-resistant like walls, and
+  they shoot through `tickTowers`), but they are not `fortification` — the
+  wall techs and the Great Wall must not scale a capital.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
   Player move orders go through `UI.commandMove`, which sets `u.order` after
   the formation; AI units have `order === null` and behave as before.

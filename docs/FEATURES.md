@@ -1670,7 +1670,9 @@ first building levels, autumn's harvest, a rival halfway to a victory, damage
 waiting for repair, no Market, and the first fog, storm and snow. Each is said
 once a match, a few (hunger, crowding, idle hands, war, rivals, autumn) again
 after a long quiet, and never more than one every 40 s of game time
-(`ADVISOR_GAP`). It reads the game and changes nothing. **Advisor: ON/OFF** in
+(`ADVISOR_GAP`). On a touch screen it names the menu rather than a key
+("Tap the knowledge readout", "Open Menu → The Courts"). It reads the game and
+changes nothing. **Advisor: ON/OFF** in
 the pause menu turns it off, remembered in the browser's local storage.
 
 **A medieval theme.** Every panel, bar, button and screen wears walnut, bronze

@@ -12,9 +12,13 @@
 
 const ADVISOR_GAP = 40;       // seconds of game time between two pieces of counsel
 
+// How to reach a screen, in the player's own terms: a key on a keyboard, the
+// menu on a touch screen.
+const how = (key, touch) => (typeof ui !== 'undefined' && ui && ui.isTouch ? touch : key);
+
 const ADVICE = [
   { key: 'research', repeat: 420, when: f => game.time > 20 && !f.research
-    && 'Your scholars sit idle. Press T to choose what they study — knowledge is what carries your people through the Ages.' },
+    && `Your scholars sit idle. ${how('Press T', 'Tap the knowledge readout on the top bar')} to choose what they study — knowledge is what carries your people through the Ages.` },
   { key: 'hunger', repeat: 240, when: (f, n) => game.time > 60 && estimateFoodRate(f) < -0.05 && n.total('food') < n.pop * 25
     && 'The granaries are emptying faster than they fill. Build Farms — beside water or a Well they yield more — and put farmhands in them.' },
   { key: 'crowded', repeat: 300, when: (f, n) => game.time > 45 && n.pop >= n.housingCap() - 1
@@ -22,7 +26,7 @@ const ADVICE = [
     && 'Every house is full. Build Houses: with no room, no children are born at dawn.' },
   { key: 'war', repeat: 600, when: f => {
     const foe = game.factions.find(o => o.id !== f.id && !o.eliminated && game.diplomacy.status(f.id, o.id) === 'war');
-    return foe && `${foe.name} is at war with you. Your Town Hall and Castle shoot back and shrug off swords — but only an army lifts a siege. Space jumps to the latest attack.`;
+    return foe && `${foe.name} is at war with you. Your Town Hall and Castle shoot back and shrug off swords — but only an army lifts a siege.${how(' Space jumps to the latest attack.', ' The minimap pings where you are hit.')}`;
   } },
   { key: 'castle', when: f => game.time > 420 && !f.buildings.some(b => b.type.key === 'castle')
     && 'You have no Castle, and without one you cannot raise a single soldier. Build one before a neighbour notices.' },
@@ -31,9 +35,9 @@ const ADVICE = [
   { key: 'idle', repeat: 360, when: (f, n) => game.time > 90 && n.idleWorkers() >= 4
     && `${n.idleWorkers()} of your people stand idle. Select a building and press + to put them to work.` },
   { key: 'contact', when: f => game.factions.some(o => o.id !== f.id && !o.eliminated && leaderKnown(o))
-    && 'A foreign ruler knows your name now. Press L to see the Courts — every gift, promise and slight is remembered.' },
+    && `A foreign ruler knows your name now. ${how('Press L', 'Open Menu → The Courts')} to see the Courts — every gift, promise and slight is remembered.` },
   { key: 'feudal', when: f => f.era >= 1
-    && 'The Feudal Age. Iron Working and Crossbows, the first castle upgrade and the first Wonders are open to you — press T.' },
+    && `The Feudal Age. Iron Working and Crossbows, the first castle upgrade and the first Wonders are open to you — ${how('press T', 'see Research')}.` },
   { key: 'levels', when: f => f.mods && f.mods.level >= 2
     && 'Heavy Plough: your buildings can be raised a level now. Select a Farm, Library or House and press Upgrade — each level is 40% more.' },
   { key: 'autumn', repeat: 2000, when: () => seasonIndex() === 2
@@ -42,7 +46,7 @@ const ADVICE = [
     for (const o of game.factions) {
       if (o.id === f.id || o.eliminated) continue;
       for (const k of Object.keys(VICTORY_TYPES)) {
-        if (publicVictoryProgress(f, o, k) >= 0.5) return `${o.name} is halfway to ${aVictory(VICTORY_TYPES[k].name)}. Press V to see the races — and think on how to stop them.`;
+        if (publicVictoryProgress(f, o, k) >= 0.5) return `${o.name} is halfway to ${aVictory(VICTORY_TYPES[k].name)}. ${how('Press V', 'Open Menu → Victory & Legacy')} to see the races — and think on how to stop them.`;
       }
     }
     return false;
