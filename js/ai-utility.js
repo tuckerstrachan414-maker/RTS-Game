@@ -361,8 +361,13 @@ class AIUtilityEngine {
     const f = this.faction, n = f.nation;
     const foodRate = estimateFoodRate(f);
     const shortfall = Math.max(0, this.armyTarget() - f.armyUnits().length);
+    // ships need crews too (js/naval.js), and training always keeps one
+    // citizen back — so a reserve of exactly the shortfall left one short and a
+    // single missing recruit (or hull) could never be raised
+    const crew = aiNavalCrewWanted(f);
+    const need = shortfall + crew;
     // guns versus butter: never idle more than a third of the population
-    const reserve = foodRate < 0 ? 0 : Math.min(shortfall, Math.floor(n.pop * 0.35));
+    const reserve = foodRate < 0 ? 0 : Math.min(need ? need + 1 : 0, Math.floor(n.pop * 0.35));
     // Scholars are staffed to a quota ahead of the gathering trades — a Library
     // built last in the list would otherwise only ever get whoever is left over,
     // which in a busy town is nobody, and the nation would never leave the
@@ -389,6 +394,18 @@ class AIUtilityEngine {
     }
     for (const b of f.buildings) if (ok(b) && b.type.produces !== 'knowledge') fill(b);
     for (const b of scholars) fill(b);
+    // The navy wants a crew and every hand is busy: waiting for the next dawn's
+    // births can mean waiting five minutes for one sailor, so release a worker
+    // from the best-staffed trade that isn't feeding anyone or short of goods.
+    if (crew > 0 && foodRate >= 0 && n.idleWorkers() <= 1) {
+      let donor = null;
+      for (const b of f.buildings) {
+        if (!b.done || !b.workers || b.type.builders || b.type.key === 'farm') continue;
+        if (b.type.produces && b.type.produces !== 'knowledge' && aiStarvedOf(f, b.type.produces)) continue;
+        if (!donor || b.workers > donor.workers) donor = b;
+      }
+      if (donor) donor.workers--;
+    }
     if (foodRate < 0 && n.idleWorkers() === 0) {
       const donor = f.buildings.find(b => b.workers > 0 && b.type.key !== 'farm' && !b.type.builders);
       const field = f.buildings.find(b => b.done && b.type.key === 'farm' && b.workers < b.type.slots);

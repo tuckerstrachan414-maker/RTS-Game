@@ -16,6 +16,7 @@
 // minutes does not conclude the neighbour is harmless — it goes and looks.
 
 const SIGHT_UNIT = 7;          // tiles a soldier can see
+const SIGHT_SHIP = 10;         // a lookout at the masthead sees further
 const SIGHT_BUILDING = 9;      // a settled building watches its surroundings
 const SIGHT_KEEP = 12;         // town halls and castles watch further
 const MEMORY_TAU = 120;        // seconds; confidence decay constant
@@ -103,7 +104,8 @@ class AIPerception {
     obs.length = 0;
     const f = this.faction;
     for (const u of f.units) {
-      if (u.alive) obs.push([u.x, u.y, SIGHT_UNIT]);
+      // a soldier in a ship's hold sees nothing; the hull's lookout sees further
+      if (u.alive && !u.aboard) obs.push([u.x, u.y, u.type.naval ? SIGHT_SHIP : SIGHT_UNIT]);
     }
     for (const b of f.buildings) {
       if (!b.done || b.hp <= 0 || b.type.key === 'bridge') continue;
@@ -115,7 +117,7 @@ class AIPerception {
 
   visible(x, y) {
     for (const [ox, oy, r] of this.observers) {
-      const dx = x - ox, dy = y - oy;
+      const dx = wdx(ox, x), dy = y - oy;      // the short way round the seam
       if (dx * dx + dy * dy <= r * r) return true;
     }
     return false;
@@ -136,7 +138,7 @@ class AIPerception {
 
       for (const u of o.units) {
         // seeing a rival's farmhands tells you nothing about their army
-        if (!u.alive || u.type.envoy || u.type.civilian) continue;
+        if (!u.alive || u.aboard || u.type.envoy || u.type.civilian) continue;
         if (!this.visible(u.x, u.y)) continue;
         seenValue += u.type.dmg * 2 + u.hp * 0.1;
         sawAnything = true;

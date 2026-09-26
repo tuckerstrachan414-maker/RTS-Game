@@ -613,15 +613,33 @@ unreachable. A direct order still lands whatever it was aimed at.
 brain, because getting an army across an ocean is a campaign rather than a
 marginal-utility choice). Two jobs:
 
-- **Exploration.** A nation on its own continent cannot scout its way to
-  knowing anybody, and an AI that knows nobody never does anything. So the
-  navy's first job is discovery: once the nation is on its feet, build a dock,
-  build a galley, and keep it working outward through water it has never seen
-  (`aiSeaScoutTarget`, biased to a middle distance so it works away from home
-  rather than circling its own harbour). Everything it learns it learns by
-  looking — a ship is in `f.units` and so observes exactly like any other unit
-  (`AIPerception.gatherObservers`), so no rule about reading rival state is
-  bent to make this work.
+- **Exploration and watch** (`aiNavalExplore`). A nation on its own continent
+  cannot scout its way to knowing anybody, and an AI that knows nobody never
+  does anything. So the navy's first job is discovery, and then keeping watch:
+  once the nation is on its feet it builds a dock and up to two galleys
+  (`SEA_SCOUTS_MAX`) that **survey** every overseas rival whose picture has gone
+  stale (confidence under `SEA_SURVEY_CONF` 0.5 — nothing seen for about a
+  minute and a half) or whose capital is unfound. A survey sails for the water
+  nearest a tile of the rival's **drawn claim** (public knowledge, the same hint
+  `aiEnemyAnchor` falls back to) and, once on station, patrols along water that
+  touches their claimed shore (`aiSurveyPoint`); the claim is re-sampled every
+  20 s, so successive voyages work their way round the coast. With nobody to
+  survey but capitals still unfound, a scout charts water it has never seen
+  (`aiSeaScoutTarget`, biased to a middle distance). Crossings path with the
+  landing budget (`SEA_VOYAGE_ITER`), not a soldier's. Everything it learns it
+  learns by looking — a ship is in `f.units` and so observes like any other
+  unit (`AIPerception.gatherObservers`; a hull's masthead sees 10 tiles, a
+  soldier 7), so no rule about reading rival state is bent to make this work.
+  Before the survey, a scout charted open water, never saw a town (capitals sit
+  inland), and every AI's confidence in every overseas rival stayed at zero —
+  which `considerWar` reads as "we know nothing about them" (BUGS #39).
+- **Crews.** A hull takes a citizen to crew her, and `trainShip` refuses when
+  nobody is free. `aiNavalCrewWanted` counts the crews the navy needs right now
+  (missing sea scouts, an invasion's missing transports and escort, net of
+  hulls already on the slipway) and `staffWorkers` holds that many citizens
+  back from the trades — releasing a worker from the best-staffed trade that
+  isn't feeding anyone when every hand is already busy. Without it no AI ever
+  launched a hull (BUGS #53).
 - **Invasion.** A small state machine on `f.ai.invasion`: `building` (waiting
   on a Dock) → `fleet` (waiting on hulls) → `loading` (army walking aboard) →
   `sailing`, and it dissolves the moment the war does. On landing it hands the
@@ -1248,8 +1266,9 @@ seeing a rival's farmhands says nothing about their army, so `observe` and
 observers (a lumberjack at the treeline is a real pair of eyes). Each nation
 keeps a `ScoutMemoryMap`:
 rival positions, rough army sizes and storehouse contents, written only by real
-line of sight (7 tiles per soldier, 9 per building, 12 for a town hall or
-castle), combat contact, or diplomacy. Memories decay, and — the important part
+line of sight (7 tiles per soldier, 10 per ship, 9 per building, 12 for a town
+hall or castle — measured the short way round the east-west seam; a soldier in
+a ship's hold sees nothing, and is not seen), combat contact, or diplomacy. Memories decay, and — the important part
 — **low confidence inflates a threat rather than shrinking it**, so a nation
 that has lost track of a neighbour treats it as dangerous and sends a rider
 instead of guessing. Scouts are real units carrying a `scout` mission: they ride
@@ -1293,13 +1312,23 @@ advantage measured against remembered intel with unknowns treated as dangerous,
 a motive (grudge, bad blood, a resource the market cannot supply, or a runaway
 power), a route the army can actually walk, and odds that have **held for 30
 seconds** rather than flickered once. Nothing opens hostilities inside the first
-~150 seconds (scaled by difficulty). Defence is reactive: a wave is recalled
-when enemy soldiers are visible near the capital.
+~150 seconds (scaled by difficulty). Defence is reactive, at two scales: a
+wave is recalled when enemy soldiers are visible near the capital, and **any
+incursion onto the nation's land gets a response force**
+(`AICombatManager.respondToIncursions`): the biggest knot of hostile soldiers
+it can *see* on its own claim is answered by the nearest soldiers not already
+committed to a wave or a landing (never the King), about 1.5× as strong as what
+is coming (`RESPONSE_MARGIN`), attack-moving on it for up to 75 s and then
+walking home. Before it, a landing party could burn sixty outlying buildings
+one at a time while the army stood in the capital — a 90-minute, three-war soak
+cost seventeen soldiers' lives in all; with it, the same seed fights real
+battles (100+ dead) and loses a third as many buildings.
 
 **Economy.** Deficit-scored build planning; farms staffed first when food is
 negative; a lumber camp on a worked-out forest is unstaffed so the shortage
 surfaces; recruits are held back from the workforce when the army is under
-strength (capped at a third of the population). Staffing now moves real people
+strength, and crews when the navy wants a hull (capped at a third of the
+population; see Naval). Staffing now moves real people
 without knowing it — `staffWorkers` sets `b.workers` exactly as before and
 `reconcileJobs` (js/civilians.js) walks citizens to match, including the Town
 Hall's and Builder Houses' builder slots, which come first in the building list

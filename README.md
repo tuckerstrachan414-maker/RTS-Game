@@ -422,10 +422,12 @@ be shot by them. **If the hull goes down, everyone aboard goes with it.** A
 Galley can shell troops on a beach and archers on a beach can shoot back at a
 hull, but neither will go chasing the other across the waterline.
 
-The AI nations do all of this too. They build shipyards, send a galley off to
-chart the oceans and find out who else is out there, and when they decide on a
-war across water they assemble a fleet, load an army onto it, and land it on
-your coast.
+The AI nations do all of this too. They build shipyards and keep galleys at
+sea to chart the oceans — and to **watch their rivals' coasts**: a foreign war
+galley working along your shoreline is somebody finding out how strong you are.
+When they decide on a war across water they assemble a fleet, load an army onto
+it, and land it on your coast. And they defend: an enemy landing on their land
+is met by the nearest of their soldiers, in greater numbers.
 
 ## Your army
 

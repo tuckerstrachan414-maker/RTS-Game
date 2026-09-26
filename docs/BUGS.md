@@ -20,18 +20,6 @@ player will spend real time. The fix is a chunked offscreen terrain cache: the
 ground layer only changes when a tile does.
 **Plan:** TBD
 
-### 39. AI nations are slow to find each other across an ocean
-`js/naval.js` `aiNavalExplore` — an AI charts the sea with a single galley
-picking unexplored water at random, and `knownTownhall` needs line of sight on
-a building that is usually well inland, so after 50 sim-minutes on a Standard
-World the perception maps are typically still empty of rival capitals. Wars
-across water do get declared (they fall back to the drawn territory borders,
-which are public knowledge — see `aiEnemyAnchor`), but they are declared on
-much thinner information than a land war, and the sea scout never does a
-systematic coastal survey. A proper coast-following patrol, and more than one
-hull, would fix both.
-**Plan:** TBD
-
 ### 40. Ships have no formation, no group role, and no place in the panels
 `js/naval.js`, `js/ui.js` — `formationMove` and the Formations panel only know
 the thirteen land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
@@ -277,6 +265,47 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#53 No AI ever launched a ship, so nobody went to war across water** —
+  `js/naval.js` `trainShip`, `js/ai-utility.js` `staffWorkers`. A hull takes a
+  citizen to crew her and `trainShip` refuses with "No free citizens to crew
+  her" unless two are idle; the AI's staffing held back recruits for the army's
+  shortfall and nothing for the navy, so a nation at its army target put every
+  hand to work and its dock never launched anything. With no sea scout, no
+  rival across the sea was ever seen, confidence stayed at zero, and
+  `considerWar` never passed: a 60-minute Standard World soak on Iron Age, with
+  two aggressor nations, had no war at all. `aiNavalCrewWanted` now counts the
+  crews the navy needs and `staffWorkers` holds them back (freeing one from the
+  trades if everyone is busy). The same reserve was also one short for the army:
+  training keeps one citizen back, so a reserve of exactly the shortfall left a
+  shortfall of one unrecruitable; it now holds one more.
+
+- **#39 AI nations never found each other across an ocean** — `js/naval.js`
+  `aiNavalExplore`. The sea scout charted open water at random until every
+  capital was known, but capitals sit inland, so it never saw a town, and it
+  never went back to look again. It is now a standing coastal survey: up to two
+  galleys visit every overseas rival whose picture has gone stale, sailing for
+  the coast nearest their drawn claim (public knowledge) and patrolling along
+  it, and a ship's lookout sees 10 tiles. Together with #53, wars across water
+  now start around the 30-40 minute mark and invasions land.
+
+- **#54 AI line of sight broke at the east-west seam** — `js/ai-perception.js`
+  `visible` measured `x - ox` rather than the short way round, so an observer
+  two tiles east of the seam could not see a soldier two tiles west of it; and
+  soldiers in a ship's hold kept "observing" from wherever they had boarded
+  (and were "seen" there by rivals). Now `wdx`, and anyone `aboard` is skipped
+  on both sides. Same class of bug in `aiWarTick` (`js/ai.js`): a war wave's
+  staging point was computed with a raw `x` difference and a `clamp`, so a war
+  across the seam staged on the far side of the target; it now uses `wdx` and
+  `wrapX`.
+
+- **#55 The AI's army ignored landings and raids on its own land** —
+  `js/ai-combat.js`. The only defensive reflex was to recall an outgoing wave
+  when enemies were near the capital; nothing sent troops to meet an enemy
+  anywhere else, so a landing party razed 59 outlying buildings in one soak
+  while its victim lost five soldiers. `respondToIncursions` now answers the
+  biggest visible knot of hostile soldiers on the nation's claim with the
+  nearest uncommitted soldiers, about 1.5x as strong, attack-moving.
 
 - **#52 An announcement banner could show long after its news** —
   `js/ui-research.js` `announce`/`nextAnnounce`. The Age, season, Wonder and

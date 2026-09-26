@@ -533,9 +533,11 @@ function aiWarTick(f, enemies) {
     return;
   }
   const waveUnits = army.slice(0, Math.max(4, Math.floor(army.length * prof.waveFraction)));
-  const dx = myTh.cx - th.x, dy = myTh.cy - th.y;
+  // stage ten tiles short of their capital on the side facing home — measured
+  // the short way round, or a war across the seam stages on the far side
+  const dx = wdx(th.x, myTh.cx), dy = myTh.cy - th.y;
   const d = Math.hypot(dx, dy) || 1;
-  const sx = clamp(Math.round(th.x + dx / d * 10), 1, MAP_W - 2);
+  const sx = WORLD_WRAP ? wrapX(Math.round(th.x + dx / d * 10)) : clamp(Math.round(th.x + dx / d * 10), 1, MAP_W - 2);
   const sy = clamp(Math.round(th.y + dy / d * 10), 1, MAP_H - 2);
   ai.wave = { units: waveUnits, size: waveUnits.length, state: 'staging',
     stagePos: [sx, sy], stageUntil: game.time + 20, targetFid: target.id,

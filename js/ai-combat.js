@@ -14,6 +14,8 @@ const WAR_RESOLVE_TIME = 30;   // an advantage must hold this long before war
 const SCOUT_LEGS = 4;          // waypoints a scout visits before riding home
 const SCOUT_RANGE = 34;        // furthest a rider is sent in one leg (paths must exist)
 const HOME_DEFENSE_RADIUS = 18;
+const RESPONSE_MARGIN = 1.5;   // send this much more than we can see coming
+const RESPONSE_TIME = 75;      // seconds a response force stays on the hunt
 
 class AICombatManager {
   constructor(faction) {
@@ -21,6 +23,7 @@ class AICombatManager {
     this.scouts = [];             // units currently on a scout mission
     this.scoutAt = -999;
     this.advantageSince = {};     // fid -> game.time the odds first looked good
+    this.responders = [];         // soldiers sent to meet an incursion
   }
 
   // ---------- scouting ----------
@@ -173,6 +176,7 @@ class AICombatManager {
       !o.eliminated && game.diplomacy.status(f.id, o.id) === STATUS.WAR);
     this.trackAdvantage();
     this.tickRaiders(enemies);
+    this.respondToIncursions();
     if (enemies.length) {
       // Home first. A wave that marches on while the capital burns is the
       // "no reactive defense" gap the old brain had.
@@ -205,6 +209,68 @@ class AICombatManager {
       }
     }
     return v;
+  }
+
+  // Enemy soldiers we can SEE standing on our own land get a response: the
+  // nearest soldiers not already committed to a wave or a landing, about half
+  // as strong again as what is coming, attack-moving on it. Before this the
+  // only reaction was to call off a wave when the capital itself was
+  // threatened — an army stood in the capital while a landing party burned
+  // sixty outlying buildings one at a time, and a whole 90-minute war cost
+  // seventeen soldiers' lives.
+  respondToIncursions() {
+    const f = this.faction, p = f.brain.perception, t = game.territory;
+    const th = f.townhall();
+    if (!t || !th) return;
+    const worth = u => u.type.dmg * 2 + u.hp * 0.1;
+    // a finished hunt walks home rather than standing about in a field
+    for (const u of this.responders) {
+      if (u.alive && game.time > u.respondUntil && !u.target) {
+        u.respondUntil = 0;
+        u.orderMove(Math.floor(th.cx) + (game.rng() * 6 - 3 | 0), Math.floor(th.cy) + (game.rng() * 6 - 3 | 0));
+      }
+    }
+    this.responders = this.responders.filter(u => u.alive && u.respondUntil > game.time);
+    const seen = [];
+    for (const o of game.factions) {
+      if (o.id === f.id || o.eliminated || !game.diplomacy.hostile(f.id, o.id)) continue;
+      for (const u of o.units) {
+        if (!u.alive || u.aboard || u.type.civilian || u.type.envoy || u.type.naval) continue;
+        if (t.ownerAt(u.tileX, u.tileY) !== f.id) continue;
+        if (!p.visible(u.x, u.y)) continue;
+        seen.push(u);
+        if (seen.length >= 40) break;
+      }
+    }
+    if (!seen.length) return;
+    // answer the biggest knot of them
+    let focus = null, fv = 0;
+    for (const a of seen) {
+      let v = 0;
+      for (const b of seen) if (wdist(a.x, a.y, b.x, b.y) < 8) v += worth(b);
+      if (v > fv) { fv = v; focus = a; }
+    }
+    const fx = focus.tileX, fy = focus.tileY;
+    const where = game.map.continentAt(fx, fy);
+    let sent = 0;
+    for (const r of this.responders) {
+      if (wdist(r.respond[0], r.respond[1], fx, fy) < 12) sent += worth(r);
+    }
+    if (sent >= fv * RESPONSE_MARGIN) return;
+    const busy = new Set([...(f.ai.wave ? f.ai.wave.units : []), ...(f.ai.invasion ? f.ai.invasion.units : [])]);
+    const pool = f.armyUnits().filter(u => u.alive && !u.aboard && !u.type.naval && !u.routing
+      && !u.mission && !u.type.robber && !u.type.unique && !busy.has(u) && !this.responders.includes(u)
+      && game.map.continentAt(u.tileX, u.tileY) === where)
+      .sort((a, b) => wdist2(a.x, a.y, fx, fy) - wdist2(b.x, b.y, fx, fy));
+    for (const u of pool) {
+      if (sent >= fv * RESPONSE_MARGIN) break;
+      u.orderMove(fx, fy);
+      u.order = { kind: 'attackmove', x: fx, y: fy };
+      u.respond = [fx, fy];
+      u.respondUntil = game.time + RESPONSE_TIME;
+      this.responders.push(u);
+      sent += worth(u);
+    }
   }
 
   rallyHome() {
