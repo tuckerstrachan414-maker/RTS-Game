@@ -205,6 +205,8 @@ function findBuildSpot(f, typeKey, site = null) {
   const anchors = site
     ? (EXPANSION_BUILDS.includes(typeKey) ? [[site.x, site.y], home] : [home, [site.x, site.y]])
     : [home];
+  const near = neighbourlySpot(f, typeKey, anchors[0]);
+  if (near) return near;
   for (const [cx, cy] of anchors) {
     for (let r = 2; r <= 14; r++) {
       for (let attempt = 0; attempt < 14; attempt++) {
@@ -213,6 +215,48 @@ function findBuildSpot(f, typeKey, site = null) {
         if (canPlace(game.map, typeKey, x, y, f.id) && solidPlacementSafe(game.map, typeKey, x, y, f.id)) return [x, y];
       }
     }
+  }
+  return null;
+}
+
+// A building that earns an adjacency bonus (js/upgrades.js) looks first beside
+// the neighbours that pay it — a farm against the last farm, a market among
+// houses, a library by the church — and takes the best-paying legal spot within
+// reach of its anchor. Null when nothing there would earn anything, so the
+// ordinary spiral search runs.
+const NEIGHBOUR_PARTNERS = {
+  farm: { keys: ['farm'], reach: 1 },
+  market: { keys: ['house'], reach: 2 },
+  library: { keys: ['church', 'library', 'university', 'cathedral', 'greatlibrary'], reach: 2 },
+  university: { keys: ['church', 'library', 'university', 'cathedral', 'greatlibrary'], reach: 2 },
+};
+function neighbourlySpot(f, typeKey, [ax, ay]) {
+  const want = NEIGHBOUR_PARTNERS[typeKey];
+  if (!want || typeof computeAdjacency !== 'function') return null;
+  const size = BUILDING_TYPES[typeKey].size;
+  const partners = f.buildings
+    .filter(b => b.done && want.keys.includes(b.type.key) && wdist(b.cx, b.cy, ax, ay) <= 14)
+    .slice(0, 12);
+  const cands = [];
+  const tried = new Set();
+  for (const p of partners) {
+    const ps = p.type.size;
+    for (let dy = -size - want.reach + 1; dy < ps + want.reach; dy++) {
+      for (let dx = -size - want.reach + 1; dx < ps + want.reach; dx++) {
+        const x = wrapX(p.x + dx), y = p.y + dy;
+        const k = x + ',' + y;
+        if (tried.has(k)) continue;
+        tried.add(k);
+        if (!canPlace(game.map, typeKey, x, y, f.id)) continue;
+        const v = computeAdjacency(game.map, typeKey, x, y, f.id).v;
+        if (v <= 0) continue;
+        cands.push({ x, y, s: v - wdist(x, y, ax, ay) * 0.004 });
+      }
+    }
+  }
+  cands.sort((a, b) => b.s - a.s || a.y - b.y || a.x - b.x);
+  for (const c of cands.slice(0, 6)) {
+    if (solidPlacementSafe(game.map, typeKey, c.x, c.y, f.id)) return [c.x, c.y];
   }
   return null;
 }

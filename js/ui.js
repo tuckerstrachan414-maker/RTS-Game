@@ -808,7 +808,9 @@ class UI {
     if (u.threat) doing = 'Fleeing for cover!';
     else if (!u.job) doing = 'No work — idling in town. Assign them to a building.';
     else if (u.job.kind === 'build') {
-      doing = !u.site ? 'Waiting for something to build'
+      doing = u.repair ? `Repairing the ${u.repair.type.name}`
+        : u.site && u.site.site && u.site.site.upgrade ? (siteReady(u.site) ? `Upgrading the ${u.site.type.name} (${Math.round(u.site.site.progress * 100)}%)` : `Hauling materials to upgrade the ${u.site.type.name}`)
+        : !u.site ? 'Waiting for something to build'
         : u.carryTotal() > 0.5 ? `Hauling materials to the ${u.site.type.name} site`
         : siteReady(u.site) ? `Raising the ${u.site.type.name} (${Math.round(u.site.progress * 100)}%)`
         : `Fetching materials for the ${u.site.type.name} site`;
@@ -1230,6 +1232,26 @@ class UI {
             : `${crew} builder${crew === 1 ? '' : 's'} hauling materials (15 per trip)`}</div>`;
         }
       }
+      if (b.done && UPGRADEABLE.includes(b.type.key)) {
+        html += `<div class="lvl">Level <b>${b.level || 1}</b>/${MAX_LEVEL}`
+          + ((b.level || 1) > 1 ? ` <span class="dim">(+${Math.round(((b.level || 1) - 1) * 40)}% output, housing & storage)</span>` : '') + `</div>`;
+        if (b.site && b.site.upgrade) {
+          const rows = Object.entries(b.site.needs).filter(([, v]) => v > 0).map(([r, v]) =>
+            `${icon(r)}${Math.floor(b.site.delivered[r])}/${v}`).join(' ');
+          html += `<div class="${siteReady(b) ? 'good' : 'dim'}">Upgrading to level ${b.site.to}: ${siteReady(b) ? Math.round(b.site.progress * 100) + '%' : 'materials ' + rows}</div>`;
+        } else if (own && (b.level || 1) < MAX_LEVEL) {
+          const why = upgradeBlocker(b);
+          html += `<button id="bupgrade" ${why ? 'class="locked"' : ''} title="${why || 'Builders will carry the materials and raise the new storey; the building keeps working meanwhile.'}">${icon('upgrade')} Upgrade to level ${(b.level || 1) + 1} (${costText(upgradeCost(b))})</button>`;
+          if (why) html += `<div class="dim">${why}</div>`;
+        }
+      }
+      if (b.done && b.type.produces) {
+        const adj = adjacencyBonus(b);
+        if (adj.why) html += `<div class="dim">Neighbours: ${adj.v > 0 ? `<span class="good">+${Math.round(adj.v * 100)}%</span> — ` : ''}${adj.why}</div>`;
+      }
+      if (b.done && b.hp < b.maxHp - 0.5 && own) {
+        html += `<div class="dim">${game.time - (b.lastHurtT || -99) < REPAIR_QUIET ? 'Damaged — builders will repair it once the fighting stops.' : 'Damaged — an idle builder will come to repair it.'}</div>`;
+      }
       if (b.type.storage && b.done) {
         const s = b.store;
         html += `<div class="dim">Stored here: ${icon('food')}${Math.floor(s.food)} ${icon('wood')}${Math.floor(s.wood)} ${icon('stone')}${Math.floor(s.stone)} ${icon('gold')}${Math.floor(s.gold)}</div>`;
@@ -1312,6 +1334,13 @@ class UI {
       if (cp) cp.onclick = () => this.copySelected();
       const dem = document.getElementById('demolish');
       if (dem) dem.onclick = () => this.demolishSelected();
+      const bup = document.getElementById('bupgrade');
+      if (bup) bup.onclick = () => {
+        const err = startUpgrade(b);
+        if (err) game.log(err, 'bad');
+        else { game.log(`Upgrade staked out — your builders will carry the materials to the ${b.type.name}.`, 'good'); this.warnNoBuilders(); }
+        this.refreshPanel();
+      };
       if (own && b.type.slots) {
         const n = game.factions[0].nation;
         const minus = document.getElementById('wminus'), plus = document.getElementById('wplus');
@@ -2436,8 +2465,26 @@ class UI {
         this.bar(px, py - 10, s * b.type.size, need > 0 ? got / need : 1, '#d9a441');
       }
       this.bar(px, py - 5, s * b.type.size, b.progress, '#7ac');
+    } else if (b.site && b.site.upgrade) {
+      // an upgrade under way: amber for materials, gold for the work
+      if (!siteReady(b)) {
+        let need = 0, got = 0;
+        for (const r of RES_KEYS) { need += b.site.needs[r] || 0; got += Math.min(b.site.delivered[r], b.site.needs[r] || 0); }
+        this.bar(px, py - 10, s * b.type.size, need > 0 ? got / need : 1, '#d9a441');
+      }
+      this.bar(px, py - 5, s * b.type.size, b.site.progress, '#e8c96a');
     } else if (b.hp < b.maxHp - 0.5) {
       this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.maxHp), '#5c5');
+    }
+    // level pips: small gold studs in the top-right corner
+    if ((b.level || 1) > 1 && b.done) {
+      const pip = Math.max(2, Math.round(s * 0.12));
+      for (let i = 0; i < b.level - 1; i++) {
+        ctx.fillStyle = '#5c4312';
+        ctx.fillRect(Math.floor(px + s * b.type.size - (i + 1) * (pip + 2) - 1), Math.floor(py + 1), pip + 2, pip + 2);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillRect(Math.floor(px + s * b.type.size - (i + 1) * (pip + 2)), Math.floor(py + 2), pip, pip);
+      }
     }
     // selection outline + faction tint corner
     if (this.selection.building === b || this.selection.buildings.includes(b)) {
@@ -2835,6 +2882,22 @@ class UI {
     const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
     const ok = canPlace(game.map, key, tx, ty, 0, orient) && nation.canStart(type.cost);
     this.drawGhostTile(key, tx, ty, ok, this.placeVertical);
+    // What the neighbours would add here — a farm by farms, a market among houses
+    const adj = computeAdjacency(game.map, key, tx, ty, 0, null);
+    if (adj.v > 0) {
+      const s = TILE * this.cam.zoom;
+      const [sx, sy] = this.worldToScreen(tx, ty);
+      const label = `+${Math.round(adj.v * 100)}% neighbours`;
+      const ctx = this.ctx;
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      const w = ctx.measureText(label).width + 8;
+      const lx = Math.round(sx + s * type.size / 2 - w / 2), ly = Math.round(sy - 16);
+      ctx.fillStyle = 'rgba(20,16,10,0.82)';
+      ctx.fillRect(lx, ly, w, 14);
+      ctx.fillStyle = '#9be27a';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx + 4, ly + 7.5);
+    }
   }
 
   // Copy/paste preview: locked to the centre of the current view (not the cursor) —

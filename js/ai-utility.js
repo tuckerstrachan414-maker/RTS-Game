@@ -418,6 +418,7 @@ class AIUtilityEngine {
       this.scoreGrandCastle(),
       aiScoreEraAdvance(this.faction),
       aiScoreWonder(this.faction),
+      aiScoreBuildingUpgrade(this.faction),
     ].filter(c => c && c.score > 0);
     if (!cands.length) return;
     // small bonus for continuing what we were already doing, so the nation

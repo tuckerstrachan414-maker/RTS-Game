@@ -394,6 +394,15 @@ function captureBuilding(game, b, newFid) {
     const at = from.buildings.indexOf(b);
     if (at >= 0) from.buildings.splice(at, 1);
   }
+  // An upgrade under way dies with the old owner: its ledger counts loads on
+  // the backs of builders who will never arrive, so it could never finish.
+  // What was already carried there spills for whoever wants it; the levels the
+  // building already has are the conqueror's to keep.
+  if (b.done && b.site) {
+    const mats = siteMaterials(b);
+    if (mats) game.loot.push({ x: b.cx, y: b.cy, res: mats, t: 0 });
+    b.site = null;
+  }
   b.faction = newFid;
   b.workers = 0;
   b.trainQueue = [];
@@ -435,6 +444,9 @@ function demolishBuilding(game, b) {
     return refund;
   }
   for (const [r, v] of Object.entries(b.type.cost || {})) refund[r] = Math.ceil(v * 0.75);
+  // an upgrade under way hands back whatever was carried to it
+  const upg = b.site ? siteMaterials(b) : null;
+  if (upg) for (const r of RES_KEYS) if (upg[r] > 0.5) refund[r] = (refund[r] || 0) + Math.floor(upg[r]);
   removeBuilding(game, b);
   if (b.type.wonder) onWonderLost(b, null);   // a demolished Wonder is as gone as a burned one
   if (b.faction >= 0) {
@@ -467,10 +479,11 @@ function workerYieldRate(map, b, atTile = null) {
     if (typeof seasonFarmMul === 'function') rate *= seasonFarmMul();   // js/seasons.js
   }
   if (type.key === 'lumber' && !atTile && !findWorkTile(map, b)) return 0;
-  // the nation's technology, and the building's own level
+  // the nation's technology, the building's own level, and its neighbours
   const m = factionMods(b.faction);
   if (m) rate *= 1 + (m.yield[type.produces] || 0);
   rate *= levelYieldMul(b);
+  if (typeof adjacencyBonus === 'function' && game) rate *= 1 + adjacencyBonus(b).v;
   return rate;
 }
 

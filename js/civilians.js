@@ -439,14 +439,24 @@ function sampleYields(f) {
 function tickBuilder(u, dt) {
   const f = game.factions[u.faction];
   if (u.site && !siteWorkable(f, u.site)) { u.site = null; u.fetch = null; }
+  // Between jobs, and empty-handed: a builder already mending keeps at it, and
+  // one more takes up a repair while the repair crew is short-handed — a burned
+  // granary shouldn't wait on the tenth length of wall (js/upgrades.js).
+  if (!u.site && u.carryTotal() <= 0.5) {
+    if (u.repair && builderRepair(u, dt, u.repair)) return;
+    u.repair = null;
+    if (repairHandsOpen(f) && builderTryRepair(u, dt, f)) return;
+  }
   if (!u.site) u.site = claimSite(u, f);
   if (!u.site) {
-    // no work: bank anything still on our back, then loiter like anyone else
+    // no work: bank anything still on our back, then mend what the fighting
+    // broke, and only then loiter like anyone else
     if (u.carryTotal() > 0.5) return builderReturnLoad(u, dt);
+    if (builderTryRepair(u, dt, f)) return;
     return tickIdler(u, dt);
   }
-  if (u.carryTotal() > 0.5) return builderDeliver(u, dt, u.site);
-  if (siteReady(u.site)) return builderRaise(u, dt, u.site);
+  if (u.carryTotal() > 0.5) { u.repair = null; return builderDeliver(u, dt, u.site); }
+  if (siteReady(u.site)) { u.repair = null; return builderRaise(u, dt, u.site); }
   // Everything this site still needs is already on somebody else's back: there
   // is nothing for a third pair of hands to do but wait, so go and be useful
   // somewhere else instead. (Three builders idling at one gate while a dozen
@@ -455,10 +465,45 @@ function tickBuilder(u, dt) {
     const held = u.site;
     u.site = null; u.fetch = null;
     const next = claimSite(u, f);
-    if (!next || next === held) { u.site = held; u.setAnim('idle'); return; }
+    if (!next || next === held) {
+      u.site = held;
+      if (builderTryRepair(u, dt, f)) return;    // mend something while we wait
+      u.setAnim('idle');
+      return;
+    }
     u.site = next;
   }
+  u.repair = null;
   return builderFetch(u, dt, u.site);
+}
+
+// Keep at (or look for, at most every 4 s) a repair; false when there is none.
+function builderTryRepair(u, dt, f) {
+  if (!u.repair && (u.repairT || 0) <= game.time) {
+    u.repair = findRepair(u, f);
+    u.repairT = game.time + 4;
+    if (u.repair) f.repairHands = (f.repairHands || 0) + 1;
+  }
+  if (u.repair && builderRepair(u, dt, u.repair)) return true;
+  u.repair = null;
+  return false;
+}
+
+// Up to a third of a nation's builders (at least one) may leave construction
+// to mend damage. Counted once per tick, bumped as builders sign on.
+function repairHandsOpen(f) {
+  if (f.repairHandsAt !== game.time) {
+    let hands = 0, builders = 0;
+    for (const u of f.units) {
+      if (!u.job || u.job.kind !== 'build') continue;
+      builders++;
+      if (u.repair) hands++;
+    }
+    f.repairHandsAt = game.time;
+    f.repairHands = hands;
+    f.repairQuota = Math.max(1, Math.floor(builders / 3));
+  }
+  return f.repairHands < f.repairQuota;
 }
 
 // Is there anything a free builder could actually pick up for this site? A site
@@ -471,7 +516,7 @@ function siteHasWork(sb, fid) {
 }
 
 function siteWorkable(f, b) {
-  return b && !b.done && b.hp > 0 && b.faction === f.id && f.buildings.includes(b);
+  return b && (!b.done || (b.site && b.site.upgrade)) && b.hp > 0 && b.faction === f.id && f.buildings.includes(b);
 }
 
 // A site nobody can stand next to cannot be built. Bridges are the case that
@@ -492,7 +537,7 @@ function claimSite(u, f) {
   }
   let best = null, bd = Infinity;
   for (const b of f.buildings) {
-    if (!b.site || b.done || b.hp <= 0) continue;
+    if (!b.site || (b.done && !b.site.upgrade) || b.hp <= 0) continue;
     if (b.site.wait > game.time) continue;              // recently unreachable
     if ((counts.get(b) || 0) >= (b.type.maxBuilders || MAX_BUILDERS_PER_SITE)) continue;
     if (!siteReachable(b)) continue;
@@ -578,7 +623,9 @@ function builderRaise(u, dt, sb) {
     // wall faster but never instantly.
     // Engineering and Architecture speed every builder up
     const m = game.factions[u.faction].mods;
-    advanceConstruction(sb, dt / sb.type.buildTime * (1 + (m ? m.buildSpeed : 0)));
+    const pace = 1 + (m ? m.buildSpeed : 0);
+    if (sb.site && sb.site.upgrade) advanceUpgrade(sb, dt / upgradeTime(sb) * pace);
+    else advanceConstruction(sb, dt / sb.type.buildTime * pace);
     return;
   }
   walkTo(u, dt, Math.floor(sb.cx), Math.floor(sb.cy), () => blockSite(sb));

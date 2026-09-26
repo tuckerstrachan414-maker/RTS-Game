@@ -278,6 +278,15 @@ heuristic.
 
 ## Fixed
 
+- **#52 An announcement banner could show long after its news** —
+  `js/ui-research.js` `announce`/`nextAnnounce`. The Age, season, Wonder and
+  victory banners queue and play one at a time on wall-clock timers (~5 s each),
+  while the sim they describe can run at 3x. A burst of news backed the queue
+  up, so a "Winter falls" banner could still be fading in during the spring
+  that followed (caught in a screenshot). Each banner is now stamped with the
+  game time it was raised, and one that has waited more than 40 game-seconds
+  behind newer ones (90 s if it is the last) is dropped unshown.
+
 - **#51 Trade caravans never paid anybody** — `js/diplomacy.js` `tickRoutes` /
   `tickMission`. Both set the caravan's `mission` and then called `orderMove`,
   which clears `mission` — so every caravan lost its mission the instant it was

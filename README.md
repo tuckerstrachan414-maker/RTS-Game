@@ -145,6 +145,26 @@ calling one off returns everything already carried there.
 > Town Hall's builder slots are empty and you have no Builder House, the game
 > tells you so the first time you place something.
 
+**Buildings grow.** Research **Heavy Plough** and your Farms, Lumber Camps,
+Quarries, Gold Mines, Markets, Libraries, Universities, Houses, Storehouses,
+Churches, Watchtowers and Builder Houses can be raised to **level 2**; **Guilds**
+opens **level 3**. Each level is +40% output (or housing, or storage) and +35%
+hit points. Press **Upgrade** on the building's panel: builders haul the
+materials there and raise the new storey while the building keeps working. A
+gold stud in the corner of a building marks each level above the first.
+
+**Builders mend what the fighting breaks.** Ten seconds after a building last
+took a hit, builders come to repair it — up to a third of your crew breaks off
+construction for it, and every idle builder helps. A repair costs a share of
+the building's price in timber and stone as it goes.
+
+**Where you build matters.** Farms beside farms make a field system (+5% each,
+up to +15%). A Market among houses has customers (+8% for each House within
+three tiles, up to +40%). A Library or University near a Church, another
+Library or a University reads better (+15% each, up to +30%). While you place a
+building, the ghost shows what its neighbours would add on that spot, and its
+panel shows what they add once it's built.
+
 **Everything on the map looks like what it is.** A Farm is a field — ploughed
 soil while it is being cleared, standing crop once it is finished — a
 Storehouse is a barn with sacks stacked outside, a Quarry is a worked rock face,
@@ -700,6 +720,7 @@ Plain `<script>` modules, no build step:
   select, game loop
 - `js/ui-research.js` — the Research screen, the Age banner, the knowledge readout
 - `js/wonders.js` — the seven Wonders: the race, their effects, their art, the AI
+- `js/upgrades.js` — building levels, builder repair, neighbour (adjacency) bonuses
 - `js/victory.js` — the five victories, the AI's race, legacy, milestones, the chronicle
 - `js/ui-victory.js` — the Ledger, the legacy chart, the end screen
 

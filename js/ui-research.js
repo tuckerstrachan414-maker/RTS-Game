@@ -161,11 +161,15 @@ Object.assign(UI.prototype, {
   // Age, a Wonder, a victory race tightening. Queued, so two never overlap.
   announce(title, sub = '', cls = '') {
     this.announceQ = this.announceQ || [];
-    this.announceQ.push({ title, sub, cls });
+    this.announceQ.push({ title, sub, cls, t: game ? game.time : 0 });
     if (!this.announcing) this.nextAnnounce();
   },
   nextAnnounce() {
     const el = document.getElementById('announce');
+    // A banner that has waited too long behind others is news no longer — at 3x
+    // speed a queued "Winter" could otherwise still be showing in the spring.
+    const now = game ? game.time : 0;
+    while (this.announceQ.length && now - this.announceQ[0].t > (this.announceQ.length > 1 ? 40 : 90)) this.announceQ.shift();
     const a = this.announceQ.shift();
     if (!a) { this.announcing = false; el.classList.remove('show'); return; }
     this.announcing = true;

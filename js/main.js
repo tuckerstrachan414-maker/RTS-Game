@@ -383,7 +383,7 @@ function onBuildingDestroyed(b, attacker) {
   if (b.type.storage) dropLoot(b);
   // so does knocking over a half-built site: the materials the builders carried
   // there are lying on the ground, and anyone with a sack can take them
-  if (!b.done && b.site) {
+  if (b.site) {
     const mats = siteMaterials(b);
     if (mats) game.loot.push({ x: b.cx, y: b.cy, res: mats, t: 0 });
   }

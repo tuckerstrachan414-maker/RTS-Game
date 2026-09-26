@@ -69,6 +69,9 @@ the code; stale docs are treated as bugs.
 - `js/ui-leaders.js` — the Courts list and the Audience screen
 - `js/wonders.js` — the seven world Wonders (building types, race, effects via
   `applyWonderMods`, capture/loss, AI, `bakeWonders` art)
+- `js/upgrades.js` — building levels (`startUpgrade`/`upgradeBlocker`/
+  `advanceUpgrade`), builder repair (`findRepair`/`builderRepair`), adjacency
+  bonuses (`computeAdjacency`/`adjacencyBonus`), the AI's upgrade choice
 - `js/victory.js` — victory races (`victoryProgress`/`victoryMet`/`tickVictory`),
   the AI's race (`aiVictoryFocus`/`aiVictoryPush`/`aiVictoryThreat`), legacy,
   milestones, stats sampling, `chronicle()`
@@ -132,6 +135,11 @@ the code; stale docs are treated as bugs.
   `syncCivilians` keeps that true both ways. Anything that changes `pop` (dawn
   growth, starvation, `trainUnit`) is fine; anything that kills a civilian must
   go through `onUnitDeath` so the population actually drops.
+- **An upgrade reuses `b.site`** on a finished building, with
+  `b.site.upgrade === true`. So `b.site` no longer implies `!b.done`: anything
+  that treats "has a site" as "under construction" has to check `b.done` (or
+  `b.site.upgrade`) too. Builders, the site spill on destruction, demolish
+  refunds and the panel all already do.
 - `building.workers` is still the only thing that decides who works where —
   set it and `reconcileJobs` moves the bodies. Don't assign civilians directly.
 - `trainUnit` / `startCastleUpgrade` return error *strings*, not exceptions.

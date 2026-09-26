@@ -318,6 +318,15 @@ the queue rather than stopping everything else. The AI's invasion shipyard is
 the case that forced it (a Dock must be on the coast; see Naval), and it is the
 only thing that sets the flag today.
 
+**Builders also upgrade and repair** (`js/upgrades.js`, see Buildings). An
+upgrade is a second site on a *finished* building (`b.site.upgrade`), supplied
+and raised exactly like a new one while the building keeps working, so `b.site`
+alone no longer means "under construction". Repair is the builders' third job:
+a builder with nothing to build, one waiting on materials at its own site, and
+— up to a third of the crew — one between jobs, mends the nearest damaged
+building that has been quiet for 10 s, paying for it pro rata as it goes. The
+builder's panel line reads "Repairing the …" / "Upgrading the …".
+
 ## Economy & population — Deep
 
 `js/economy.js`. Citizens eat continuously; population grows once per dawn
@@ -409,7 +418,7 @@ raid targets), withdrawals drain the Town Hall first. Storage is finite, an
 overflow warning fires for the player, and everything in a store is robbable
 or spillable as loot. This underpins the entire raiding design.
 
-## Buildings — Moderate
+## Buildings — Deep
 
 `js/buildings.js` (+ the Dock, added by `js/naval.js`). 18 types — the
 research buildings **Library**, **University** and **Watchtower** (see
@@ -474,10 +483,69 @@ come down. AI nations now build walls/gates
 (turtle doctrine rings) and bridges — always a straight single-axis span now,
 never the old L-shaped dogleg, since a bend would touch two orientations at
 the corner and `canPlace` would refuse it (`aiFindCrossing`/
-`straightCrossingSearch`, `js/ai.js`) — for war-route engineering too. Gaps: no
-building upgrades outside the Castle, no repair, and pasted layouts don't
-rotate/mirror (a copied bridge always pastes horizontal, regardless of the
-orientation it was copied from — see BUGS).
+`straightCrossingSearch`, `js/ai.js`) — for war-route engineering too. Gaps:
+pasted layouts don't rotate/mirror (a copied bridge always pastes horizontal,
+regardless of the orientation it was copied from — see BUGS).
+
+### Upgrades, repair and neighbours (`js/upgrades.js`)
+
+**Levels.** Twelve buildings — Farm, Lumber Camp, Quarry, Gold Mine, Market,
+Library, University, House, Storehouse, Church, Watchtower and Builder House
+(`UPGRADEABLE`) — rise to **level 2** once **Heavy Plough** is researched and to
+**level 3** with **Guilds** (`f.mods.level`, set by the tech's
+`unlocks.level`). Each level is **+40% output, housing and storage**
+(`levelYieldMul` in `workerYieldRate`, `housingCap`, `storageCap`) and **+35%
+hit points** (`buildingMaxHp`). An upgrade is real construction, not a button
+that spends money: `startUpgrade` stakes an **upgrade site on the standing
+building** — `b.site` with `upgrade: true`, the same needs/delivered/inbound
+ledger a new site has — costing 1.5× (level 2) or 2.5× (level 3) the base cost
+(plus stone for a second storey even on an all-wood building), and builders
+haul it there 15 at a time and then raise it (`claimSite`/`siteWorkable`/
+`builderRaise` in `js/civilians.js` all accept upgrade sites; `advanceUpgrade`
+finishes it). The building **keeps working throughout**. Demolishing one
+mid-upgrade refunds the delivered materials in full; destroying it spills them
+as loot like any site. The panel shows `Level n/3`, the button (with the
+reason it's locked, from `upgradeBlocker`), and the upgrade's materials and
+progress; the map shows an amber materials bar and a gold progress bar over the
+building while it works, and gold studs in its top-right corner for each level
+above 1.
+
+**Repair.** A damaged building is mended by builders once it has been out of
+the fighting for 10 s (`REPAIR_QUIET`; `b.lastHurtT` is stamped by every blow).
+A builder takes up a repair (`findRepair`, the nearest damaged building within
+40 tiles) when it has nothing to build, **or** between jobs while the repair crew
+is short-handed — up to a third of a nation's builders, at least one
+(`repairHandsOpen`) — so a burned granary doesn't wait behind the tenth length
+of wall; a builder waiting on materials at its own site mends something
+meanwhile too. Each repairer restores 2% of max HP per second and pays 30% of
+the building's cost for a full repair, pro rata, from the stores; it stops when
+the stores run dry. Bridges and buildings with an open site are skipped. The
+panel says whether the building is still too hot to mend.
+
+**Adjacency.** Some buildings earn more from their neighbours
+(`computeAdjacency`, cached 8 s per building by `adjacencyBonus`, applied in
+`workerYieldRate`, so the AI's `estimateIncome` sees it too):
+
+| Building | Neighbour | Bonus |
+|---|---|---|
+| Farm | each finished Farm touching it (a field system) | +5%, max +15% |
+| Market | each House within 3 tiles (customers) | +8%, max +40% |
+| Library / University | each Church, Library, University, Great Cathedral or Great Library within 3 tiles | +15%, max +30% |
+| Lumber Camp / Quarry / Gold Mine | a Storehouse within 3 tiles | no flat bonus — it's the short haul, already paid in walking time; the panel just names it |
+
+The building panel shows the bonus and why; the **placement ghost** shows the
+bonus a building would earn on the tile under the cursor ("+15% neighbours").
+The AI plans for it too: `findBuildSpot` (`js/factions.js`) first tries
+`neighbourlySpot`, which scans the tiles around the partner buildings near its
+anchor and takes the best-paying legal spot, before falling back to the old
+spiral search.
+
+**The AI upgrades.** `aiScoreBuildingUpgrade` is one of the utility engine's
+investment candidates once level 2 is unlocked: one upgrade at a time, scored by
+the marginal utility of what the building makes (scaled by how fully it is
+staffed), by housing pressure for Houses, by storage pressure for Storehouses,
+and by war for Watchtowers. In a 50-minute soak every nation upgrades 10–25
+buildings.
 
 ## Naval — docks, ships, invasions, sea trade — Moderate
 
