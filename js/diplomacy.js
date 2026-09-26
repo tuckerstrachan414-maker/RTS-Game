@@ -27,7 +27,9 @@ class Diplomacy {
   }
 
   status(a, b) { return a === b ? STATUS.ALLIANCE : this.stat[a][b]; }
-  relation(a, b) { return this.rel[a][b]; }
+  // a's view of b: the shared mood between the two courts plus everything a's
+  // leader remembers about b and holds against (or for) it (js/leaders.js).
+  relation(a, b) { return Math.max(-100, Math.min(100, this.rel[a][b] + opinionMods(a, b))); }
   hostile(a, b) { return a !== b && this.stat[a][b] === STATUS.WAR; }
   allied(a, b) { return a === b || this.stat[a][b] === STATUS.ALLIANCE; }
   atWarAny(a) { return this.stat[a].some((s, b) => b !== a && s === STATUS.WAR); }
@@ -39,6 +41,7 @@ class Diplomacy {
     this.embargo[a][b] = true;
     this.cancelRoute(a, b);
     this.addRel(a, b, -15);
+    remember(b, a, 'embargoed', 'Embargoed us', -10, 1500);
     game.log(`${game.factions[a].name} placed a trade EMBARGO on ${game.factions[b].name}.`, b === 0 ? 'bad' : '');
     // allies of the embargoing nation join the blockade
     for (let c = 0; c < this.n; c++) {
@@ -73,7 +76,8 @@ class Diplomacy {
     na.res.gold -= gold;
     game.factions[b].nation.res.gold += gold;
     this.addRel(a, b, 10 + gold * 0.1);
-    if (b === 0) game.log(`${game.factions[a].name} sent you a gift of ${gold} gold!`, 'good');
+    leaderOnGift(a, b, gold);
+    if (b === 0) game.log(`${leaderShort(game.factions[a])} of ${game.factions[a].name} sent you a gift of ${gold} gold!`, 'good');
     return null;
   }
 
@@ -89,9 +93,11 @@ class Diplomacy {
     if (!envoy) return 'Train a Prince at the Castle to carry the proposal';
     const th = game.factions[b].townhall();
     if (!th) return 'They have no Town Hall';
-    envoy.mission = { kind: 'envoy', proposal: kind, to: b };
+    // orderMove clears any mission, so the route is set first and the mission
+    // after it — the other way round, the mission was wiped the moment it was
+    // given and the next line threw (BUGS #49).
     envoy.orderMove(Math.floor(th.cx), Math.floor(th.cy));
-    envoy.mission.dest = th;
+    envoy.mission = { kind: 'envoy', proposal: kind, to: b, dest: th };
     if (a === 0) game.log(`Your envoy rides to ${game.factions[b].name} to propose ${kind === 'trade' ? 'a trade pact' : 'an alliance'}.`);
     return null;
   }
@@ -120,6 +126,7 @@ class Diplomacy {
         aiPoke(c);
       }
     }
+    leaderOnWar(a, b);
   }
 
   suePeace(a, b) {
@@ -145,6 +152,7 @@ class Diplomacy {
   // Seal an accepted pact (shared by AI acceptance and the player's event card).
   acceptProposal(a, b, kind) {
     if (this.stat[a][b] === STATUS.WAR) return;   // the moment has passed
+    noteDealing(a); noteDealing(b);
     if (kind === 'trade') {
       this.setStatus(a, b, STATUS.TRADE);
       this.addRel(a, b, 10);
@@ -162,14 +170,16 @@ class Diplomacy {
     envoy.mission = null;
     const a = envoy.faction, b = m.to;
     const them = game.factions[b];
-    const rel = this.rel[b][a];
+    const rel = this.relation(b, a);
     if (them.isPlayer) {
       // AI→player offers are the player's call: a choice card, not an auto-accept
       const fromF = game.factions[a];
       const kindName = m.proposal === 'trade' ? 'a trade pact' : 'an alliance';
+      noteDealing(a);
       const pushed = pushPlayerEvent({
-        kind: 'proposal', from: a,
-        title: `Envoy from ${fromF.name}`,
+        kind: 'proposal', from: a, portrait: true,
+        title: `Envoy from ${leaderShort(fromF)} of ${fromF.name}`,
+        quote: leaderLine(fromF, m.proposal === 'trade' ? 'proposal_trade' : 'proposal_alliance', { them: 0 }),
         body: `${fromF.name} proposes ${kindName}. ${m.proposal === 'trade'
           ? 'Caravans would earn both nations gold with every run.'
           : 'Allies defend each other when war comes.'}`,
@@ -181,6 +191,7 @@ class Diplomacy {
             } },
           { label: 'Rebuff', cls: 'bad', apply: () => {
               this.addRel(a, 0, -10);
+              remember(a, 0, 'rebuff_envoy', 'Rebuffed our envoy', -10, 1200);
               game.log(`Your court rebuffed ${fromF.name}'s envoy. They will remember it.`, 'bad');
             } },
         ],
@@ -196,9 +207,10 @@ class Diplomacy {
       else accepted = rel > 45 - them.personality.mercantile * 15;
       if (accepted) {
         this.acceptProposal(a, b, m.proposal);
+        if (a === 0) game.log(`${leaderShort(them)}: "${leaderLine(them, 'accept', {})}"`, 'good');
       } else {
         this.addRel(a, b, -3);
-        if (a === 0) game.log(`${them.name} rejected your ${m.proposal === 'trade' ? 'trade pact' : 'alliance'} proposal. Improve relations first.`, 'bad');
+        if (a === 0) game.log(`${leaderShort(them)} of ${them.name} rejected your ${m.proposal === 'trade' ? 'trade pact' : 'alliance'}: "${leaderLine(them, 'refuse', {})}" Improve relations first.`, 'bad');
       }
     }
     // envoy walks home
@@ -269,9 +281,15 @@ class Diplomacy {
     if (m.kind === 'caravan') {
       if (u.path.length === 0 && !u.dest) {
         // arrived: pay both sides, turn around
-        game.factions[m.route.a].nation.res.gold += 8;
-        game.factions[m.route.b].nation.res.gold += 8;
-        if (m.route.a === 0 || m.route.b === 0) game.tradeGold += 16;
+        const payA = 8 * (1 + game.factions[m.route.a].mods.trade), payB = 8 * (1 + game.factions[m.route.b].mods.trade);
+        game.factions[m.route.a].nation.res.gold += payA;
+        game.factions[m.route.b].nation.res.gold += payB;
+        if (m.route.a === 0) game.tradeGold += payA;
+        if (m.route.b === 0) game.tradeGold += payB;
+        for (const side of [m.route.a, m.route.b]) {
+          const fs = game.factions[side];
+          fs.tradeEarned = (fs.tradeEarned || 0) + (side === m.route.a ? payA : payB);
+        }
         const next = m.dest === m.route.ma ? m.route.mb : m.route.ma;
         m.home = m.dest; m.dest = next;
         u.orderMove(Math.floor(next.cx), Math.floor(next.cy));

@@ -521,6 +521,10 @@ function aiRunInvasionStage(f, inv) {
       inv.fleetMark = ships.length;
       inv.deadline = game.time + INVASION_STAGE_TIME;
     }
+    // The shipyard can be razed mid-campaign; the campaign goes back to
+    // building one rather than reading the queue of a dock that is not there
+    // (BUGS #48).
+    if (!docks.length) { aiInvasionStep(inv, 'building'); return; }
     if (docks[0].trainQueue.length >= 2) return;
     trainShip(f, transports.length < want ? 'transport' : 'galley');
     return;

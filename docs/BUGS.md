@@ -32,18 +32,6 @@ systematic coastal survey. A proper coast-following patrol, and more than one
 hull, would fix both.
 **Plan:** TBD
 
-### 44. Population runs high on the big worlds
-On a 75-minute unattended Standard World soak nations finish around 100-180
-population with 143-219 units each, against 13-17 on the old 96×96 map over a
-comparable run. Nothing is wrong with the growth rule — a nation grows by a
-fraction of its housing cap, and the big worlds give it four to six thousand
-tiles to fill instead of a shared few hundred — but nothing pushes back on it
-either. (It was far worse, 454-1072 population, before overseas wars could
-actually be fought: the armies that die in them are most of what checks growth
-now. That is a fragile equilibrium to rely on.) Wants a real ceiling: land
-quality, food logistics, unrest, or an upkeep curve that bites.
-**Plan:** TBD
-
 ### 40. Ships have no formation, no group role, and no place in the panels
 `js/naval.js`, `js/ui.js` — `formationMove` and the Formations panel only know
 the thirteen land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
@@ -289,6 +277,59 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#44 Population ran away on the big worlds** — `js/economy.js`
+  `growForNewDay`, `crowding`. Growth was 30% of the housing cap per dawn and the
+  AI raises its cap as fast as it grows, so nothing pushed back: 100-180 a
+  nation on a Standard World soak, and 800 once research made nations richer.
+  Two brakes now: a day's births are capped at a quarter of the current
+  population (min 5), and **crowding** costs 0.3 happiness per citizen past 30,
+  so growth past the growth gate needs churches, wells, markets and the civic
+  techs. The same 60-minute Small World soak now ends at 14-113 per nation.
+
+- **#50 A walled-in worker re-ran A* every tick, and AI towers walled workers
+  in** — `js/civilians.js` `walkTo`, `js/factions.js` `findBuildSpot`. Two
+  halves. `walkTo` treated an empty path as "search now", so a civilian whose
+  destination was unreachable searched on every tick until `stuck` hit 3, then
+  gave up, picked the same destination, and started again: in a 25-minute
+  ruthless soak, civilian pathfinding was 65 of the 74 seconds of sim time. It
+  now waits 1.5s after a failed search. The reason destinations were
+  unreachable was the other half: solid buildings (the new Watchtower among
+  them) dropped at random around a Town Hall could close the gaps between the
+  keep, the castle and the walls. AI placement now runs `solidPlacementSafe`,
+  a bounded flood fill that refuses a solid footprint which would disconnect
+  the walkable tiles around it.
+
+- **#49 Every envoy proposal threw, the player's included** —
+  `js/diplomacy.js` `Diplomacy.propose` set the envoy's mission and then called
+  `orderMove`, which clears `mission`, so `envoy.mission.dest = th` dereferenced
+  null. A player clicking Trade Pact with a Prince at hand got a console error
+  and an envoy wandering to a Town Hall with no proposal to deliver; an AI
+  merchant's trade tick crashed the whole sim tick. It stayed hidden because
+  an AI only reaches it once it has a Market, an idle Prince and a rival Market
+  it has actually seen — rare before AIs lived long enough to meet each other.
+  The route is now set first and the mission after it.
+
+- **#48 An AI invasion crashed if its shipyard was razed mid-campaign** —
+  `js/naval.js` `aiRunInvasionStage` read `docks[0].trainQueue` in the fleet
+  stage without checking a dock still stood. It now drops back to the building
+  stage and raises a new one.
+
+- **#46 A merchant nation stopped investing for good once its Grand Castle
+  stood** — `js/ai-utility.js` `scoreGrandCastle`. The candidate scored 100
+  whenever the nation cleared the population/happiness/cost gate, with no check
+  that it already had a Grand Castle, and its `run` returned `true` whether or
+  not `aiPursueGrand` did anything. So after the monument was finished (or
+  started) it won the investment arbitration every tick, reported success, and
+  crowded out every building, upgrade and Age from then on. Found when every
+  nation in a soak sat in the Feudal Age with all sixteen techs and the bill
+  for the next Age in its vaults. Now it returns null once a castle is grand or
+  rising, and `run` returns whether it actually started one.
+
+- **#47 Merchants never turned a settled border into a trade pact** —
+  `js/territory.js` `resolveAIDispute` looked for a `'prosperity'` doctrine,
+  which does not exist (the archetype is `'merchant'`), so only hegemons ever
+  did it. Now checks `'merchant'`.
 
 - **#45 The page asked for a favicon that did not exist** — `index.html`. Every
   load logged a 404 for `/favicon.ico`, which made a headless run's console

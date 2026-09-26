@@ -263,6 +263,73 @@ enemy in range on their own. Walls, gates and towers are **fortifications**:
 ordinary troops do only a third of their damage to them, so breaking a
 fortified town takes siege engines.
 
+## The rulers of the world
+
+**Every rival nation is ruled by someone.** Each match rolls a new cast: a
+Norse chieftain in Crimson, a Byzantine lord in Violeta, an Iberian king in
+Aurelia — each with a **pixel portrait**, a name, an age, **two traits**
+(Warmonger, Merchant Prince, Covetous, Paranoid, Honorable, Schemer, Zealot,
+Scholar), a **hidden agenda** (Warlord, Trade Baron, Seeker of Wisdom,
+Territorial, Peacemaker, Builder, Tribute Seeker) and a voice of their own.
+Their titles rise with their Age — Chieftain, Lord, King, Emperor — and they
+earn epithets from what they do: *the Bold*, *the Builder*, *the Faithless*…
+
+**You have to meet them first.** A court introduces itself the first time its
+scouts or ships find your people — greet them as friends, send a welcome gift,
+or tell them to stay out of your way. First impressions last. Until then, a
+nation across the sea is an unknown court.
+
+**They remember.** A leader's opinion of you is not one number, it is a
+ledger: *"+14 Kept their word"*, *"−30 Declared war on us"*, *"+8 Trading
+partners"*, *"−10 Despises your weak army"*, each with its own weight and its
+own memory — a gift fades in minutes, a betrayal lasts an hour. Their traits
+decide how hard things land (an Honorable ruler never forgets a broken
+promise; a Zealot takes every rebuff as an insult) and their agenda decides
+what they care about. Hold an **Audience** to see every line of it.
+
+**They ask you things.** Leaders come to you with questions, requests,
+demands and offers, in their own words:
+- *"Why do your soldiers gather at our border?"* — withdraw (a promise), pay an
+  apology, or tell them your soldiers go where they please.
+- *"You build too close to our lands."* — promise to build no closer, or not.
+- *"Our children go hungry."* — send food, or don't.
+- *"Which of our neighbours do you trust least?"* — your answer poisons their
+  view of whoever you name.
+- *"If Violeta attacks us, will you stand with us?"* — give your word, and be
+  held to it.
+- Friendship, research pacts, resource trades, joint wars, pleas for aid,
+  ultimatums, peace offers, surrender…
+
+**Your word is tracked.** Promise to withdraw and have soldiers at their border
+45 seconds later, promise to build no closer and finish a farm by their fields,
+promise to defend them and sit out the war — they will know, and word gets
+around the other honorable courts.
+
+**The Audience screen** (Diplomacy → Audience, or the button on any card)
+shows the leader, their traits and agenda, how they stand with every other
+nation, why they feel as they do about you, and what you have promised them —
+and lets you act: gifts, **declare friendship** (public — war on a friend is a
+betrayal the whole world remembers), a **research pact** (+15% knowledge for
+both, 10 minutes), trade pacts and alliances by envoy, **denounce** them,
+**demand tribute** (only if they fear you), embargo, war, peace, **demand
+surrender** — plus a **deal builder** to trade any goods for any goods (they
+price it by what they actually need, and drive a harder bargain if they
+dislike you) and questions: *"What do you think of Crimson?"*, *"What do you
+want from us?"*
+
+**Wars can end in vassalage.** A nation that has truly lost a war — its
+capital battered or its towns burning, facing an army it knows it cannot beat
+— will offer you its fealty: a vassal pays you a fifth of its treasury every
+minute and marches in your wars. It works the other way too: an enemy
+crushing you may demand your submission, which ends the war at the price of
+your gold and your freedom to fight them — until you declare independence.
+Vassals rebel when they think they can win.
+
+**Size has a price.** Every citizen past thirty makes your people a little
+harder to keep content (**crowding**, shown in the happiness breakdown). A
+nation grows large by building churches, wells and markets and studying the
+civic arts — or it stops growing.
+
 ## Trade & the market
 
 Select your **Market** to open the commodity exchange:
@@ -401,7 +468,8 @@ new selection, ready for their own role and targeting priority — so you can
 leave half your army home on **Defensive** and march the other half out on
 **Offensive** in a few taps.
 
-**Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
+**Diplomacy (Menu → The Courts, or press L):** each ruler's opinion of you runs
+−100…+100, with every reason listed on their Audience screen.
 - 🎁 **Gifts** buy goodwill.
 - 🐎 **Trade pacts** need a Market on both sides and a **Prince** envoy (trained at
   the Castle) who physically rides to their Town Hall with the offer. Accepted pacts
@@ -481,7 +549,7 @@ to lay a wall/gate/bridge run, shown as a preview until you release · Shift+cli
 places multiple buildings · R rotates a bridge while placing · Ctrl+C copies
 selected building(s) (then click Paste, or press it again, to stamp another) ·
 Delete/Backspace removes selected building(s) for a 75% refund · **T** opens
-Research · Esc cancels
+Research · **L** opens the Courts (diplomacy) · Esc cancels
 placement or a pending paste / clears selection / closes menus.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
@@ -537,6 +605,9 @@ Plain `<script>` modules, no build step:
 - `js/ai-combat.js` — AI scouting, army sizing, defence, war declarations
 - `js/events.js` — the event-card queue (AI-initiated choices for the player)
 - `js/territory.js` — per-tile influence/ownership, borders, border disputes
+- `js/leaders.js` — the rulers: portraits, traits, agendas, the opinion ledger,
+  promises, their questions and requests, friendships, deals and vassals
+- `js/ui-leaders.js` — the Courts list and the Audience screen
 - `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, difficulty
   select, game loop
 - `js/ui-research.js` — the Research screen, the Age banner, the knowledge readout

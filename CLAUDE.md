@@ -55,7 +55,13 @@ the code; stale docs are treated as bugs.
 - `js/factions.js` — Faction state, training, the AI executor (`aiTick`)
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
 - `js/events.js` — event-card queue (AI-initiated player choices, expiry)
-- `js/territory.js` — per-tile influence/ownership, contested borders, disputes
+- `js/territory.js` — per-tile influence/ownership, contested borders, disputes,
+  concessions (a settled dispute hands the contested tiles to one side)
+- `js/leaders.js` — leaders (names, traits, agendas, pixel portraits, voice),
+  the directional opinion ledger (`remember`/`opinionMods`), promises, leader
+  initiative (questions/requests/offers to the player), friendship,
+  denouncement, research pacts, deals, vassals, nation moods
+- `js/ui-leaders.js` — the Courts list and the Audience screen
 - `js/ai.js` — ambitions (`f.ai`), re-evaluation, proactive diplomacy, war
   waves, expansion, bridge/wall engineering, coalitions
 - `js/ai-perception.js` — `AIPerception` + `ScoutMemoryMap`: everything an AI
@@ -169,6 +175,15 @@ the code; stale docs are treated as bugs.
   buildings (player UI, paste, AI wishes) must check `buildingBlocker(f, key)`.
 - Rivals' `era` is public; their `techs` are not — the AI must never read
   `o.techs`.
+- **`diplomacy.relation(a, b)` is directional**: the symmetric mood `rel[a][b]`
+  plus a's leader's ledger about b (`opinionMods`, cached every 2s by
+  `tickLeaders`). To make a leader feel something, `remember(a, b, key, label,
+  value, halfLife)` — don't nudge `rel` for anything a player should be able to
+  see the reason for on the Audience screen.
+- Dialogue (`leaderLine`) must never draw on `game.rng` — it runs from UI
+  refreshes. It hashes its choice instead.
+- A leader's live opinion reasons may read public facts and its own
+  perception only — the same information rule as the rest of the AI.
 - New HUD elements need the `.hud` class to be hidden by Hide UI, and an
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.
 - The Game is NOT constructed until a difficulty is chosen — headless scripts

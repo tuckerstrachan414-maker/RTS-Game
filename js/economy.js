@@ -13,6 +13,10 @@ const RES_KEYS = ['food', 'wood', 'stone', 'gold'];
 const TAX_MAX = 0.4;
 const TAX_HAPPINESS_COST = 55;
 const HAPPY_GROWTH_GATE = 50;   // growForNewDay needs happiness strictly above this
+// Crowding (Nation.crowding): happiness lost per citizen beyond the first
+// CROWDING_FREE. At 0.3, a nation of 100 has −21 and one of 200 has −51.
+const CROWDING_FREE = 30;
+const CROWDING_PER_CITIZEN = 0.3;
 
 class Nation {
   constructor(factionId) {
@@ -190,9 +194,21 @@ class Nation {
     if (this.starving || this.pop >= cap || this.happiness <= HAPPY_GROWTH_GATE) return 0;
     if (this.total('food') <= this.pop * 2) return 0;
     const before = this.pop;
-    this.pop = Math.min(cap, this.pop + Math.round(cap * DAY_GROWTH_FRACTION));
+    // A town grows by a share of its housing, but a people can only raise so
+    // many children in a day: at most a quarter of its number (never fewer than
+    // five, so a young nation is not starved of growth). Without the second
+    // term, growth was a fraction of a cap the AI raises as fast as it grows —
+    // an exponential that reached 800 citizens a nation by the hour (BUGS #44).
+    const births = Math.min(Math.round(cap * DAY_GROWTH_FRACTION), Math.max(5, Math.round(this.pop * 0.25)));
+    this.pop = Math.min(cap, this.pop + births);
     return this.pop - before;
   }
+
+  // Crowding: every citizen past the first few dozen makes the nation a little
+  // harder to keep content. It is the real ceiling on size — a nation grows
+  // past it only by building churches, wells and markets and by studying the
+  // civic arts, which is the Civilization answer to "tall or wide".
+  crowding() { return Math.max(0, (this.pop - CROWDING_FREE) * CROWDING_PER_CITIZEN); }
 
   // Happiness this nation would drift toward at zero tax. Solving
   // (this - Hmin) / TAX_HAPPINESS_COST gives the highest tax rate that still
@@ -203,6 +219,7 @@ class Nation {
     target += this.pop <= this.housingCap() ? 8 : -18;
     target += Math.min(20, this.auraScore());
     target -= this.warWeariness;
+    target -= this.crowding();
     if (this.faction.kingAlive === false) target -= 12;
     const mods = this.faction.mods;
     if (mods) target += mods.happiness;

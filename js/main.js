@@ -74,6 +74,9 @@ class Game {
     }
     this.diplomacy = new Diplomacy(4);
     this.territory = new Territory(4);
+    // the people behind the nations: names, faces, memories (js/leaders.js)
+    this.court = new LeaderCourt(4);
+    rollLeaders(this);
     // Marching doctrine: shape of the ranks and which unit types take the front.
     // Player-set (Menu → Formations) and remembered across games.
     this.formations = loadFormations(this.factions[0].name);
@@ -152,6 +155,7 @@ class Game {
     this.tickLoot(dt);
     this.diplomacy.tick(dt);
     this.territory.tick(dt);
+    tickLeaders(dt);
     tickEvents();
     this.checkDefeat();
   }
@@ -210,6 +214,8 @@ class Game {
         // and full storehouses pass to whoever felled its Town Hall
         const victorFid = f.conqueredBy;
         const taken = annexBuildings(this, f, victorFid);
+        if (victorFid != null && this.factions[victorFid] && !this.factions[victorFid].eliminated) leaderOnConquest(victorFid, f.id);
+        else leaderOnConquest(-1, f.id);
         this.log(`The nation of ${f.name} has fallen!`, f.isPlayer ? 'bad' : '');
         if (taken > 0) {
           const victor = this.factions[victorFid];
@@ -363,6 +369,7 @@ function onBuildingDestroyed(b, attacker) {
     if (b.faction === 0) game.log(`Your ${b.type.name} was destroyed!`, 'bad');
   }
   if (attacker) {
+    if (attacker.faction !== b.faction) leaderOnRaze(b.faction, attacker.faction);
     game.diplomacy.addRel(b.faction, attacker.faction, -8);
     game.diplomacy.lastBlood[b.faction][attacker.faction] = game.time;
     game.diplomacy.lastBlood[attacker.faction][b.faction] = game.time;
@@ -482,7 +489,7 @@ function startGame(seed, diffKey) {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); ui.refreshResearch(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); ui.refreshResearch(); ui.refreshLeader(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

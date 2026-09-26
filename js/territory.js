@@ -12,7 +12,15 @@ class Territory {
     this.claimCount = new Array(nFactions).fill(0);
     this.contestPairs = new Map();       // pairKey -> contested tile count
     this.disputeCooldown = [];           // per-pair: no new dispute before game.time
-    for (let a = 0; a < nFactions; a++) this.disputeCooldown[a] = new Array(nFactions).fill(0);
+    // concession[a][b] = game.time until which `a` has ceded contested ground to
+    // `b`: wherever the two overlap, `b` owns it and it is not contested. This is
+    // what a conceded dispute actually concedes, and a negotiated one draws the
+    // same line for both (see triggerDispute).
+    this.concession = [];
+    for (let a = 0; a < nFactions; a++) {
+      this.disputeCooldown[a] = new Array(nFactions).fill(0);
+      this.concession[a] = new Array(nFactions).fill(0);
+    }
     this.recomputeT = 0;
   }
 
@@ -65,9 +73,15 @@ class Territory {
         else if (v > sv) { second = fid; sv = v; }
       }
       if (bv < 0.5) { best = -1; second = -1; }
+      // ground one side has ceded to the other goes to the other, uncontested
+      let settled = false;
+      if (best >= 0 && second >= 0 && sv >= bv * 0.6) {
+        if (this.concession[best][second] > game.time) { best = second; settled = true; }
+        else if (this.concession[second][best] > game.time) settled = true;
+      }
       this.owner[i] = best;
       let cont = 0;
-      if (best >= 0 && second >= 0 && sv >= bv * 0.6
+      if (!settled && best >= 0 && second >= 0 && sv >= bv * 0.6
           && game.diplomacy.status(best, second) !== STATUS.ALLIANCE) {
         cont = 1;
         const k = this.pairKey(best, second);
@@ -88,7 +102,9 @@ class Territory {
       const a = Math.floor(k / this.n), b = k % this.n;
       if (game.factions[a].eliminated || game.factions[b].eliminated) continue;
       if (game.diplomacy.status(a, b) === STATUS.WAR) continue;   // already fighting over it
-      if (count > 25) game.diplomacy.addRel(a, b, -1);
+      // a festering frontier sours both courts, slowly (it used to be −1 every
+      // five seconds, which drove a neighbour to −100 on its own inside an hour)
+      if (count > 25) game.diplomacy.addRel(a, b, -0.4);
       if (count > 40 && game.time > this.disputeCooldown[a][b]) {
         this.disputeCooldown[a][b] = this.disputeCooldown[b][a] = game.time + 90;
         triggerDispute(a, b);
@@ -117,6 +133,8 @@ function patrolTileNear(fid, cx, cy, radius) {
 // A finished building standing on another nation's claim starts a dispute
 // (called from Nation.tick via onBuildingCompleted).
 function onBuildingCompleted(b) {
+  if (typeof leaderOnBuilding === 'function') leaderOnBuilding(b);
+  if (typeof onWonderCompleted === 'function' && b.type.wonder) onWonderCompleted(b);
   const t = game.territory;
   if (!t || ['bridge', 'wall', 'gate'].includes(b.type.key)) return;
   const owner = t.ownerAt(Math.floor(b.cx), Math.floor(b.cy));
@@ -136,15 +154,21 @@ function triggerDispute(a, b) {
   const f = game.factions[aiFid];
   const playerIntruded = a === 0;
   const dip = game.diplomacy;
+  noteDealing(aiFid);
   const pushed = pushPlayerEvent({
-    kind: 'dispute', from: aiFid,
+    kind: 'dispute', from: aiFid, portrait: true,
+    quote: playerIntruded ? leaderLine(f, 'dispute', { them: 0 }) : '',
     title: `Border dispute with ${f.name}`,
     body: playerIntruded
       ? `${f.name} protests: your new works stand on land they claim, and their court demands an answer.`
       : `${f.name}'s settlers are pushing into lands you claim. Your border guards await orders.`,
     options: [
-      { label: playerIntruded ? 'Concede the ground' : 'Let them settle', cls: '', apply: () => {
+      { label: playerIntruded ? 'Concede the ground' : 'Let them settle', cls: '', hint: 'For 10 minutes the contested frontier is theirs', apply: () => {
           dip.addRel(0, aiFid, 8);
+          remember(aiFid, 0, 'conceded', 'Yielded the frontier to us', 6, 900);
+          game.territory.concession[0][aiFid] = game.time + 600;
+          game.territory.disputeCooldown[0][aiFid] = game.territory.disputeCooldown[aiFid][0] = game.time + 600;
+          game.territory.recomputeT = 0;
           game.log(playerIntruded
             ? `You yield the disputed ground to ${f.name}.`
             : `You cede the frontier to ${f.name}'s settlers.`);
@@ -155,11 +179,16 @@ function triggerDispute(a, b) {
           n.res.gold -= 40;
           f.nation.res.gold += 40;
           dip.addRel(0, aiFid, 3);
-          game.territory.disputeCooldown[0][aiFid] = game.territory.disputeCooldown[aiFid][0] = game.time + 240;
+          // surveyors draw a line: the overlap stops being contested for both
+          game.territory.disputeCooldown[0][aiFid] = game.territory.disputeCooldown[aiFid][0] = game.time + 900;
+          game.territory.concession[aiFid][0] = game.time + 900;
+          game.territory.recomputeT = 0;
           game.log(`Gold changes hands and surveyors mark a boundary with ${f.name}.`, 'good');
         } },
       { label: 'Stand firm', cls: 'bad', apply: () => {
           dip.addRel(0, aiFid, -20);
+          remember(aiFid, 0, 'rebuff_land', 'Defied our border claim', -10, 1200);
+          game.territory.disputeCooldown[0][aiFid] = game.territory.disputeCooldown[aiFid][0] = game.time + 300;
           aiAddGrudge(aiFid, 0, 15);
           if (f.ai) f.ai.provocation += 1;
           game.log(`You defy ${f.name}'s claim. Their court seethes.`, 'bad');
@@ -168,6 +197,7 @@ function triggerDispute(a, b) {
     onExpire: () => {
       dip.addRel(0, aiFid, -10);
       aiAddGrudge(aiFid, 0, 8);
+      game.territory.disputeCooldown[0][aiFid] = game.territory.disputeCooldown[aiFid][0] = game.time + 240;
       game.log(`Ignored, ${f.name}'s border grievance festers.`, 'bad');
     },
   });
@@ -190,18 +220,21 @@ function resolveAIDispute(a, b) {
   } else if (fa.strength() < seesB * 0.7) {
     dip.addRel(a, b, -5);
     aiAddGrudge(a, b, 10);
+    game.territory.concession[a][b] = game.time + 600;
     if (fa.ai) fa.ai.expansionSite = null;   // the weaker side backs down
     game.log(`${fa.name}'s settlers withdraw from the disputed valley.`);
   } else if (fb.strength() < seesA * 0.7) {
     dip.addRel(a, b, -5);
     aiAddGrudge(b, a, 10);
+    game.territory.concession[b][a] = game.time + 600;
     if (fb.ai) fb.ai.expansionSite = null;
     game.log(`${fb.name}'s settlers withdraw from the disputed valley.`);
   } else {
     dip.addRel(a, b, 3);
+    game.territory.concession[a][b] = game.time + 900;
     game.log(`Envoys from ${fa.name} and ${fb.name} settle the boundary.`);
     // merchants may turn a settled border into a trade pact
-    const merchant = [fa, fb].find(x => x.ai && (x.ai.doctrine === 'prosperity' || x.ai.doctrine === 'hegemon'));
+    const merchant = [fa, fb].find(x => x.ai && (x.ai.doctrine === 'merchant' || x.ai.doctrine === 'hegemon'));
     if (merchant && game.rng() < 0.3) {
       const other = merchant === fa ? b : a;
       dip.propose(merchant.id, other, 'trade');

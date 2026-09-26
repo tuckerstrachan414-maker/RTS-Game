@@ -623,9 +623,15 @@ function blockSite(sb) {
 // that could actually cost something.
 function walkTo(u, dt, tx, ty, onFail) {
   if (u.path.length === 0 || u.repathT <= 0) {
+    // After a failed search, wait before searching again. An empty path used to
+    // mean "search now", so a worker whose destination was sealed off ran a
+    // full A* every tick — one walled-in town cost 90% of the sim's time in a
+    // soak (BUGS #50).
+    if (u.path.length === 0 && u.pathFailT > game.time) { u.setAnim('idle'); return; }
     u.path = findPath(game.map, u.tileX, u.tileY, tx, ty, u.faction);
     u.repathT = 3 + game.rng() * 2;
     if (u.path.length === 0) {
+      u.pathFailT = game.time + 1.5;
       u.stuck = (u.stuck || 0) + 1;
       u.setAnim('idle');
       if (u.stuck >= 3 && onFail) { u.stuck = 0; onFail(); }

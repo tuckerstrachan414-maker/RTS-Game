@@ -284,9 +284,20 @@ class AICombatManager {
     const relGate = arch.plunderGoal ? 25 : ai.doctrine === 'aggressor' ? 10 : -10;
     const verdict = f.brain.trade.verdict;
     let best = null, bestScore = 0;
+    const court = game.court;
     for (const o of rivals) {
       const st = dip.status(f.id, o.id);
       if (st === STATUS.WAR || st === STATUS.ALLIANCE) continue;
+      // a vassal does not war on its lord (rebellion is its own decision —
+      // js/leaders.js considerRebellion), nor a lord on its vassal
+      if (court && (court.overlord[f.id] === o.id || court.overlord[o.id] === f.id)) continue;
+      // a declared friendship holds unless the relationship has truly soured;
+      // an honorable leader will not break it at all short of hatred
+      if (court && court.friend[f.id][o.id] > game.time) {
+        const L = f.leader;
+        const floor = L && L.traits.includes('honorable') ? -60 : L && L.traits.includes('schemer') ? -10 : -30;
+        if (dip.relation(f.id, o.id) > floor) continue;
+      }
       if (o.isPlayer) {
         if (game.time < game.diff.playerGrace) continue;
         if (game.diff.provokedOnly && ai.provocation < 3) continue;

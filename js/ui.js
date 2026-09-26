@@ -159,6 +159,7 @@ class UI {
       if (e.key === 'Escape') {
         // innermost overlay first: Formations sits on top of the pause menu
         if (document.getElementById('formation-panel').classList.contains('open')) { this.closeFormations(); return; }
+        if (this.leaderOpen()) { this.closeLeader(); return; }
         if (this.researchOpen()) { this.closeResearch(); return; }
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
@@ -170,6 +171,7 @@ class UI {
       if (e.key.toLowerCase() === 'r' && this.placing) this.rotatePlacing();
       if (e.key.toLowerCase() === 'h' && !typing) document.body.classList.toggle('ui-hidden');
       if (e.key.toLowerCase() === 't' && !typing && !this.paused) this.toggleResearch();
+      if (e.key.toLowerCase() === 'l' && !typing && !this.paused) this.toggleDiplomacy();
       if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'
           && (this.selection.buildings.length || (this.selection.building && this.selection.building.faction === 0))) {
         e.preventDefault();
@@ -954,6 +956,7 @@ class UI {
     document.getElementById('pm-army').onclick = () => { this.closePause(); this.selectArmy(); };
     document.getElementById('pm-research').onclick = () => { this.closePause(); this.toggleResearch(); };
     document.getElementById('research').onclick = e => { if (e.target.id === 'research') this.closeResearch(); };
+    document.getElementById('leader').onclick = e => { if (e.target.id === 'leader') this.closeLeader(); };
     document.getElementById('pm-formations').onclick = () => this.openFormations();
     document.getElementById('formation-panel').onclick = e => { if (e.target.id === 'formation-panel') this.closeFormations(); };
     document.getElementById('form-close').onclick = () => this.closeFormations();
@@ -1518,9 +1521,12 @@ class UI {
         [housed ? 'Housed' : 'Overcrowded', housed ? 8 : -18],
         ['Comforts (church/well/market)', Math.round(Math.min(20, n.auraScore()))],
         ['War weariness', -Math.round(n.warWeariness)],
+        [`Crowding (${n.pop} citizens)`, -Math.round(n.crowding())],
+        ['Technology', Math.round(f.mods.happiness)],
         [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * TAX_HAPPINESS_COST)],
       ];
       if (f.kingAlive === false) rows.push(['The King is dead', -12]);
+      for (const m of (f.moods || [])) if (m.until > game.time) rows.push([m.label, Math.round(m.value)]);
       return head(icon('heart'), 'Happiness')
         + `<div class="desc">How content your people are. Above 50% the nation can grow; low happiness stalls it.</div>`
         + `<div class="row"><span>Current</span><b>${Math.round(n.happiness)}%</b></div>`
@@ -1575,60 +1581,12 @@ class UI {
     const d = document.getElementById('diplomacy');
     if (d.style.display === 'block') { d.style.display = 'none'; return; }
     d.style.display = 'block';
+    this.dipKey = null;
     this.refreshDiplomacy();
   }
   closeDiplomacy() { document.getElementById('diplomacy').style.display = 'none'; }
 
-  refreshDiplomacy() {
-    const d = document.getElementById('diplomacy');
-    if (d.style.display !== 'block') return;
-    const dip = game.diplomacy;
-    let html = `<h2>Diplomacy <button id="dip-close">✕</button></h2>`;
-    for (let i = 1; i < game.factions.length; i++) {
-      const f = game.factions[i];
-      const rel = Math.round(dip.relation(0, i));
-      const st = dip.status(0, i);
-      const stLabel = { war: icon('sword') + ' AT WAR', neutral: '· Neutral', trade: icon('horse') + ' Trade Pact', alliance: icon('handshake') + ' Alliance' }[st];
-      html += `<div class="nation ${f.eliminated ? 'dead' : ''}">
-        <div class="nhead"><span class="dot" style="background:${f.color.css}"></span> <b>${f.name}</b>
-        <span class="dim">(${f.personality.label})</span> — ${f.eliminated ? icon('skull') + ' fallen' : stLabel}</div>`;
-      if (!f.eliminated) {
-        const pct = (rel + 100) / 2;
-        html += `<div class="relbar"><div class="relfill" style="width:${pct}%;background:${rel >= 0 ? '#6a5' : '#a55'}"></div></div>
-          <div class="dim">Relations: ${rel}</div>
-          <div class="dipbtns">
-            <button data-act="gift" data-f="${i}" title="Send 50 gold. Improves relations.">${icon('gift')} Gift 50g</button>
-            <button data-act="trade" data-f="${i}" title="A Prince envoy carries the offer. Both markets earn gold from caravans.">${icon('horse')} Trade Pact</button>
-            <button data-act="ally" data-f="${i}" title="Requires strong relations. Allies defend each other.">${icon('handshake')} Alliance</button>
-            ${st === 'war'
-              ? `<button data-act="peace" data-f="${i}" title="Pay 100 gold in reparations.">${icon('dove')} Sue for Peace</button>`
-              : `<button data-act="war" data-f="${i}" title="No going back cheaply.">${icon('sword')} Declare War</button>`}
-            ${dip.embargoed(0, i)
-              ? `<button data-act="lift" data-f="${i}" title="Reopen trade with them.">${icon('noentry')} Lift Embargo</button>`
-              : `<button data-act="embargo" data-f="${i}" title="Cut them off from trade. Allies join; worsens their market prices.">${icon('noentry')} Embargo</button>`}
-          </div>`;
-      }
-      html += `</div>`;
-    }
-    html += `<div class="dim" style="margin-top:8px">Trade pacts need a Market on both sides and a Prince envoy to deliver the offer.<br>Allies join wars in each other's defense. Peace is always a path: gift, trade, ally.</div>`;
-    d.innerHTML = html;
-    document.getElementById('dip-close').onclick = () => this.closeDiplomacy();
-    d.querySelectorAll('button[data-act]').forEach(btn => {
-      btn.onclick = () => {
-        const fid = +btn.dataset.f, act = btn.dataset.act;
-        let err = null;
-        if (act === 'gift') err = game.diplomacy.sendGift(0, fid, 50);
-        else if (act === 'trade') err = game.diplomacy.propose(0, fid, 'trade');
-        else if (act === 'ally') err = game.diplomacy.propose(0, fid, 'alliance');
-        else if (act === 'war') game.diplomacy.declareWar(0, fid);
-        else if (act === 'peace') err = game.diplomacy.suePeace(0, fid);
-        else if (act === 'embargo') err = game.diplomacy.declareEmbargo(0, fid);
-        else if (act === 'lift') err = game.diplomacy.liftEmbargo(0, fid);
-        if (err) game.log(err, 'bad');
-        this.refreshDiplomacy();
-      };
-    });
-  }
+  // refreshDiplomacy lives in js/ui-leaders.js with the Audience screen.
 
   // ---------- event cards ----------
   // Shows the head of game.events with its response buttons and a draining
@@ -1641,15 +1599,21 @@ class UI {
     if (this.eventShownKey !== key) {
       this.eventShownKey = key;
       const f = game.factions[ev.from];
-      let html = `<div class="ehead"><span class="dot" style="background:${f.color.css}"></span> <b>${ev.title}</b>` +
-        (game.events.length > 1 ? ` <span class="dim">+${game.events.length - 1} more</span>` : '') + `</div>` +
-        `<div class="ebody">${ev.body}</div><div class="ebtns">`;
-      ev.options.forEach((o, i) => { html += `<button data-opt="${i}" class="${o.cls || ''}">${o.label}</button>`; });
+      const port = ev.portrait && f.leader && !f.leader.player ? portraitFor(f) : null;
+      let html = `<div class="ehead">${port ? `<img class="eport" src="${port}" alt="">` : `<span class="dot" style="background:${f.color.css}"></span>`}`
+        + `<div><b>${ev.title}</b>` + (game.events.length > 1 ? ` <span class="dim">+${game.events.length - 1} more</span>` : '')
+        + (port ? `<div class="dim">${leaderFullName(f)} · ${f.name}</div>` : '') + `</div></div>`
+        + (ev.quote ? `<div class="equote">“${ev.quote}”</div>` : '')
+        + `<div class="ebody">${ev.body}</div><div class="ebtns">`;
+      ev.options.forEach((o, i) => { html += `<button data-opt="${i}" class="${o.cls || ''}"${o.hint ? ` title="${o.hint}"` : ''}>${o.label}</button>`; });
+      if (port) html += `<button data-audience="${f.id}" class="aud" title="Open an audience with this leader">Audience…</button>`;
       html += `</div><div class="etimer"><div class="etfill"></div></div>`;
       el.innerHTML = html;
       el.querySelectorAll('button[data-opt]').forEach(btn => {
-        btn.onclick = () => { resolveEvent(ev, +btn.dataset.opt); this.refreshEventCard(); };
+        btn.onclick = () => { resolveEvent(ev, +btn.dataset.opt); this.refreshEventCard(); this.dipKey = null; this.leaderKey = null; };
       });
+      const aud = el.querySelector('button[data-audience]');
+      if (aud) aud.onclick = () => this.openLeader(+aud.dataset.audience);
     }
     el.style.display = 'block';
     const fill = el.querySelector('.etfill');

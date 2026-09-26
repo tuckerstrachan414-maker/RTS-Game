@@ -321,8 +321,15 @@ only thing that sets the flag today.
 ## Economy & population — Deep
 
 `js/economy.js`. Citizens eat continuously; population grows once per dawn
-(see Day/night cycle below) by 30% of the housing cap (rounded, capped at the
-cap), gated on surplus food (> 2× pop), free housing, and happiness > 50;
+(see Day/night cycle below) by 30% of the housing cap — but never by more than
+a quarter of the current population (min 5), and capped at the cap — gated on
+surplus food (> 2× pop), free housing, and happiness > 50; **crowding**
+(`Nation.crowding`: −0.3 happiness per citizen past 30) is the real ceiling on
+size — a big nation keeps growing only by building churches, wells and markets
+and studying the civic techs (the AI's church/well targets scale with
+population to match). Without the two, growth was a fraction of a cap the AI
+raised as fast as it grew — 800 citizens a nation by the hour (BUGS #44,
+fixed);
 starvation kills a citizen every 12s (floor of 2) and weakens the army (−30%
 damage). Happiness is a drift toward a computed target: base 50, fed/starving,
 housed/overcrowded, building auras (church/well/market, diminishing with pop),
@@ -899,11 +906,148 @@ condition — prosperity-doctrine AI nations race for one same as before, but
 completing it (yours or a rival's) has no effect on whether the game continues.
 See "Defeat" below.
 
+## Leaders & the courts — Deep
+
+`js/leaders.js` (identity, portraits, voice, the opinion ledger, promises,
+initiative, vassals, deals), `js/ui-leaders.js` (the Courts list and the
+Audience screen), hooks in `js/diplomacy.js`, `js/territory.js`, `js/ai.js`,
+`js/main.js`.
+
+**Every rival is a person.** `rollLeaders` (seeded, in the Game constructor)
+gives each AI nation a ruler: a name from a per-nation pool (Norse for
+Crimson, Byzantine for Violeta, Iberian for Aurelia), a sex (for titles
+only), an age, a face, **two traits** drawn from the strongest pulls of the
+rolled personality (`LEADER_TRAITS`: Warmonger, Merchant Prince, Covetous,
+Paranoid, Honorable, Schemer, Zealot, Scholar — never both Honorable and
+Schemer), and a **hidden agenda** (`LEADER_AGENDAS`: Warlord, Trade Baron,
+Seeker of Wisdom, Territorial, Peacemaker, Builder, Tribute Seeker) that
+leans on the personality without copying it. The title follows the Age
+(Chieftain → Lord/Lady → King/Queen → Emperor/Empress), and a leader earns an
+epithet from their deeds (`leaderEpithet`: the Faithless, the Conqueror, the
+Builder, the Bold, the Wise, the Generous, the Just). The agenda is revealed
+to the player after three dealings (`noteDealing` — cards, audiences, gifts,
+pacts).
+
+**Portraits** are 32×32 pixel busts drawn in code (`drawPortrait`): skin,
+hair colour and style (greying past 55), beard, eyes, an occasional scar, the
+nation's colour as banner and cloak, a collar that grows richer with the Age,
+and headwear by Age (a feathered band, a circlet, a crown, an imperial crown).
+Cached per leader and Age as a data URL.
+
+**Opinion is a ledger, not a number.** `Diplomacy.relation(a, b)` — which
+every AI decision already reads — is now *directional*: the shared mood between
+the two courts (`rel`, symmetric, as before) plus `opinionMods(a, b)`, the sum
+of everything a's leader remembers about b and every live reason it has.
+*Memories* (`remember(a, b, key, label, value, halfLife)`) decay on their own
+half-life — a gift fades in ten minutes, a betrayal lasts an hour — and a
+repeated key refreshes or stacks rather than piling up duplicates; traits and
+agendas scale how hard something lands (an Honorable leader weighs promises
+×1.5, a Zealot takes rebuffs ×2, a Builder takes razings ×2, a Collector values
+gifts ×1.5). *Live reasons* (`liveReasons`) are recomputed every 2s and read
+only public facts or the leader's own perception: trading partners, allies,
+declared friends, research pacts, vassalage, embargoes, common enemies, being
+at war with a friend, and the agenda (a Warlord respects an army it has seen
+and despises a weak one; a Scholar admires a later Age; a Territorial ruler
+resents contested frontier tiles; a Peacemaker counts the wars you declared in
+the last 20 minutes; a Builder admires your Wonders). The Audience screen
+shows the whole breakdown, line by line.
+
+**What gets remembered** (among others): declaring war on them (−30, 30 min),
+betraying a friendship (−40 to them and −15 to everyone else), breaking your
+word (−32, 40 min; Honorable courts elsewhere −8 on hearsay), keeping it
+(+14), gifts, aid in famine or war, joining their wars, rebuffed envoys,
+refused ultimatums, spurned peace or friendship, apologies, extortion,
+razing their buildings (stacking), conquering a nation (everyone), denouncing
+them — or denouncing their enemies.
+
+**Promises.** Several of a leader's questions are answered with your word,
+tracked in `game.court.promises` and checked by `tickPromises`:
+*withdraw* (no soldiers at their border in 45s — checked against what their
+own eyes can see), *nosettle* (no building finished near their claim for 6
+minutes — `leaderOnBuilding` catches it the moment one completes), *defend*
+(if the named rival declares war on them within 10 minutes, you must join the
+war within 60s — `leaderOnWar` calls it in). Kept and broken promises show on
+the Audience screen and in the chronicle.
+
+**Leaders ask, request, demand and offer** (`leaderInitiative`, called from
+`aiDiplomacy` after the AI's own diplomacy). Every card is spoken in the
+leader's voice (`LEADER_LINES`, five registers — proud, warm, cunning,
+measured, merchant — picked by the leading trait) with their portrait
+(`pushPlayerEvent({portrait, quote})`). **First contact** comes first: the
+moment a court first lays eyes on Azuria it introduces itself (greet as
+friends / send a welcome gift / "stay out of our way"), and no court
+petitions you before it has met you — on a world of continents, the courts
+across the sea stay "unknown" in the Courts panel until someone crosses it.
+Then, in order of urgency: *surrender offers* (their war with you is lost —
+accept their fealty, demand 150 gold for peace, or no mercy), *demands for
+your submission* (they are crushing you — submit as their vassal, or never),
+*soldiers at the border*, *building too close*, *famine* (send food or gold),
+*war aid* against a stronger enemy; and, at a human pace, *friendship*
+offers, *research pacts*, *resource trades* (their plentiful good for their
+scarcest, priced at market — `tradeOfferFor`), *gossip* ("which neighbour do
+you trust least?" — naming one sours them on that nation), *"will you stand
+with us?"* (a defend promise) and *joint wars*. Per-kind cooldowns
+(`leaderCool`) and the 45s politeness cooldown keep it to a card every few
+minutes per court. Existing cards — envoy proposals, disputes, ultimatums,
+peace offers, coalitions — are spoken by the leader now too, and every card
+from a leader carries an **Audience…** button.
+
+**The Audience screen** (`UI.openLeader`; from the Courts list, a card, or L
+then Audience): the portrait, full name and epithet, Age and age, traits and
+agenda (or "hidden — n/3 dealings"), their standing with every other court,
+a greeting that depends on their opinion, the opinion breakdown, your
+promises to them, and actions — gifts (50/150), declare friendship (accepted
+at 20-35 opinion by trait), research pact, trade pact and alliance (by envoy),
+demand tribute (paid only if they fear your army, and resented), denounce,
+embargo, declare war (a betrayal, with a confirmation, if you are friends),
+sue for peace, demand surrender, declare independence / release vassal — plus
+a **deal builder** (give/receive any of the four goods; `considerDeal` prices
+it by their marginal utility, `dealValue`, and wants a sweetener from a
+nation it dislikes and gives a friend a discount), and questions ("what do you
+think of X?", "what do you want from us?" — which names what would actually
+raise their opinion).
+
+**Friendship, denouncement, research pacts.** A declared friendship is public
+and lasts 15 minutes; an AI will not declare war on a friend unless its
+opinion has fallen below −30 (−60 if Honorable, −10 if a Schemer), and doing
+it is a *betrayal* the whole continent remembers. Denouncing is public too and
+moves third parties' opinions both ways. A research pact costs each side 60
+gold and gives both +15% knowledge for 10 minutes (`researchPactBonus`, applied
+in `tickResearch`). AI courts befriend and denounce each other on their own
+(`aiCourtBusiness`).
+
+**Vassals** (`makeVassal`, `game.court.overlord`). A nation that has lost a
+real war — at least 4 minutes long, with its Town Hall battered or 3+ buildings
+burned by that enemy, against a force it believes is 2.2× its own (3.5× for a
+Zealot, 1.8× for the Paranoid) — offers fealty (`wouldSubmit`); the player can
+also demand it. A vassal is allied with its lord, takes up the lord's wars
+(and its lord's future wars, `leaderOnWar`), pays a fifth of its treasury
+(max 150) every minute, will not be attacked by its lord, and may **rebel**
+(`considerRebellion`) when it believes itself stronger and resents the rule
+(Honorable vassals rarely). A fallen lord frees its vassals. **The player can
+become a vassal too** — a crushing enemy can demand Azuria's submission, which
+ends the war at the price of tribute and your freedom to make war on them, and
+the Audience screen then offers *Declare independence* (which is war).
+AI-AI wars end in vassalage too (`aiCourtBusiness`).
+
+**Moods** (`addMood`/`nationMoodBonus`) are temporary nation-wide happiness
+effects for events that should be felt at home (celebrations, mourning);
+`happinessTargetWithoutTax` reads them and the happiness tooltip lists them.
+
+**Dialogue never touches the sim RNG.** `leaderLine` picks its line from a
+hash of speaker, topic and a 45-second time bucket — a panel that re-renders
+a greeting twice a second would otherwise pull numbers from `game.rng` and
+make simply looking at a leader change what the world does.
+
 ## Diplomacy — Deep
 
-`js/diplomacy.js` (mechanisms) + `js/ai.js` (`aiDiplomacy`, AI initiative).
-Symmetric relations (−100…+100) and a status matrix (war/neutral/trade/
-alliance) per pair, plus `warSince`/`lastBlood` matrices for peace-seeking.
+`js/diplomacy.js` (mechanisms) + `js/ai.js` (`aiDiplomacy`, AI initiative) +
+`js/leaders.js` (opinion, promises, friendship, vassals — see Leaders above).
+A symmetric *mood* between each pair (`rel`, −100…+100) and a status matrix
+(war/neutral/trade/alliance) per pair, plus `warSince`/`lastBlood` matrices for
+peace-seeking. `relation(a, b)` is **directional**: the mood plus a's leader's
+ledger about b. Caravan pay is scaled by each side's trade technology, and
+each nation's lifetime trade earnings are tracked (`f.tradeEarned`).
 Gifts buy relations. Trade pacts and alliances require a Prince envoy who
 physically rides to the target's Town Hall — for the player AND for every AI
 nation (the old instant AI pact flips are gone). AI→player proposals arrive as
@@ -968,7 +1112,13 @@ with triple-gated hysteresis.
 `rollPersonalities` in `js/factions.js`): five traits — aggression, mercantile,
 greed, caution, loyalty — drawn without replacement from six temperaments and
 jittered. The warlord next door in one game is a walled-up trader in the next.
-`?seed=N` still reproduces the whole setup.
+`?seed=N` still reproduces the whole setup. **Leaders' traits anchor the
+ambition** (js/leaders.js): `seedDoctrine` and `reevaluateDoctrine` add a
+bonus for the doctrine a trait implies (Warmonger/Zealot → aggressor, Merchant
+Prince → merchant, Paranoid → turtle, Covetous/Schemer → raider,
+Honorable/Scholar → hegemon). Without it, a soak with the leaders layer had
+every nation drift to *merchant* the moment its coffers filled — full treasuries
+score the merchant ambition highly — and nobody declared a war for an hour.
 
 **Investment is arbitrated, not scripted.** Each tick the engine scores
 building, castle upgrade, expansion and Grand Castle against each other and runs
@@ -1016,8 +1166,14 @@ buildings (townhall 20/r12, castle 14/r10, walls 6/r4, others 8/r6),
 recomputed every 5s; the strongest nation owns each tile, a runner-up within
 60% marks it contested. Rendered as dashed frontier lines on the main map and
 an ownership tint on the minimap. Sustained contested frontiers sour relations
-and spark **border disputes**; so does completing a building on another
-nation's claim. Player disputes arrive as event cards (Concede / Negotiate
+(−0.4 per 5s past 25 contested tiles — it was −1, which on its own drove a
+neighbour to −100 inside an hour) and spark **border disputes**; so does
+completing a building on another nation's claim. **A settled dispute now
+settles something**: `concession[a][b]` hands every tile the two contest to
+`b` (uncontested) until it expires — conceding gives the ground away for 10
+minutes, negotiating draws a line for 15, and AI-AI disputes concede from the
+weaker side. Before this, conceding did nothing but raise relations, and the
+same dispute re-fired every 90 seconds for the rest of the match. Player disputes arrive as event cards (Concede / Negotiate
 40g / Stand firm — ignoring one is worse); AI–AI disputes resolve from
 strength, ambition and relations, and can harden into wars or soften into
 trade pacts. Two helpers hang off the same field for defensive garrisons
@@ -1031,13 +1187,19 @@ posted on foreign ground then simply holds position rather than wandering off
 looking for friendly soil. Gaps: territory has no direct economic effect (no
 tile tribute), walls don't project claims far.
 
-## Event cards — Moderate
+## Event cards — Deep
 
 `js/events.js` (queue + resolution) + `ui.refreshEventCard` (`js/ui.js`,
 `#eventcard` HUD element). AI-initiated interactions reach the player as
 non-pausing choice cards: envoy proposals, border disputes, ultimatums
 (tribute / counter-offer / refuse, with war 60s after refusal), peace offers
-with reparations, and coalition invites against runaway powers. One card
+with reparations, coalition invites against runaway powers — and now the
+leaders' own questions, requests and offers (first contact, soldiers at the
+border, building too close, famine, war aid, friendship, research pacts,
+resource trades, gossip, "stand with us", joint wars, surrender and demands
+for submission — see Leaders). A card from a leader shows their portrait,
+title and epithet, their words in quotes, what the answer means, per-option
+hints (e.g. what a promise commits you to) and an Audience… button. One card
 shown at a time (queue capped at 3, "+N more" badge), a draining timer bar,
 per-faction politeness cooldowns (45s), and expiry consequences — silence is
 an answer. Hidden by Hide UI like every HUD element.

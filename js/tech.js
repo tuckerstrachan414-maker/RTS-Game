@@ -403,7 +403,8 @@ function creditKnowledge(fid, amount) {
 
 function tickResearch(f, dt) {
   if (!f.techs) return;
-  const gained = passiveKnowledge(f) * dt + f.knowledgeIn;
+  const pact = typeof researchPactBonus === 'function' ? researchPactBonus(f) : 0;
+  const gained = (passiveKnowledge(f) * dt + f.knowledgeIn) * (1 + pact);
   f.knowledgeIn = 0;
   f.knowledgeTotal += gained;
   // an exponential average makes a readable rate out of scholars' lumpy deliveries

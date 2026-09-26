@@ -493,6 +493,11 @@ class AIUtilityEngine {
     const f = this.faction, arch = this.archetype(), n = f.nation;
     if (!arch.pursuesGrand) return null;
     if (n.pop < 50 || n.happiness < 70 || !n.canAfford(GRAND_CASTLE_COST)) return null;
-    return { id: 'grand', score: 100, run: () => { aiPursueGrand(f); return true; } };
+    // One monument per nation. Without this the candidate kept scoring 100 after
+    // the Grand Castle was finished, and `run` reported success while doing
+    // nothing — so it won the arbitration every tick and the nation never
+    // invested in anything again (BUGS #46).
+    if (f.buildings.some(b => b.type.key === 'castle' && (b.grand || b.grandProgress > 0))) return null;
+    return { id: 'grand', score: 100, run: () => aiPursueGrand(f) };
   }
 }

@@ -210,7 +210,7 @@ function findBuildSpot(f, typeKey, site = null) {
       for (let attempt = 0; attempt < 14; attempt++) {
         const a = game.rng() * Math.PI * 2;
         const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
-        if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
+        if (canPlace(game.map, typeKey, x, y, f.id) && solidPlacementSafe(game.map, typeKey, x, y, f.id)) return [x, y];
       }
     }
   }

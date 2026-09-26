@@ -536,3 +536,44 @@ function towerTarget(b, range) {
   }
   return best;
 }
+
+// Would a SOLID building here cut the ground around it in two? A keep, a castle
+// or a watchtower dropped into the gap between two other solid buildings can
+// seal a town's lanes, and then every worker on the wrong side re-paths forever
+// (it did: an AI turtle ringed its Town Hall with towers and walled its own
+// lumberjacks out). The check is local and cheap: every walkable tile touching
+// the footprint must still reach every other through a small box around it,
+// with the footprint treated as already built.
+function solidPlacementSafe(map, key, x, y, fid) {
+  const type = BUILDING_TYPES[key];
+  if (!type || !type.solid || type.line) return true;
+  const n = type.size;
+  const inFoot = (tx, ty) => tx >= x && tx < x + n && ty >= y && ty < y + n;
+  const R = 6;
+  const x0 = x - R, y0 = y - R, W = n + 2 * R;
+  const open = (tx, ty) => !inFoot(tx, ty) && map.passable(tx, ty, fid);
+  const ring = [];
+  for (let ty = y - 1; ty <= y + n; ty++) {
+    for (let tx = x - 1; tx <= x + n; tx++) {
+      if (inFoot(tx, ty) || !map.inBounds(tx, ty)) continue;
+      if (open(tx, ty)) ring.push([tx, ty]);
+    }
+  }
+  if (ring.length <= 1) return ring.length === 1;   // an enclosed pocket is not worth walling further
+  const seen = new Uint8Array(W * W);
+  const idx = (tx, ty) => (ty - y0) * W + (tx - x0);
+  const q = [ring[0]];
+  seen[idx(ring[0][0], ring[0][1])] = 1;
+  while (q.length) {
+    const [cx, cy] = q.pop();
+    for (const [dx, dy] of ORTH) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < x0 || ny < y0 || nx >= x0 + W || ny >= y0 + W || !map.inBounds(nx, ny)) continue;
+      const k = idx(nx, ny);
+      if (seen[k] || !open(nx, ny)) continue;
+      seen[k] = 1;
+      q.push([nx, ny]);
+    }
+  }
+  return ring.every(([tx, ty]) => seen[idx(tx, ty)]);
+}
