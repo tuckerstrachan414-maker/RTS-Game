@@ -62,6 +62,12 @@ the code; stale docs are treated as bugs.
   initiative (questions/requests/offers to the player), friendship,
   denouncement, research pacts, deals, vassals, nation moods
 - `js/ui-leaders.js` — the Courts list and the Audience screen
+- `js/wonders.js` — the seven world Wonders (building types, race, effects via
+  `applyWonderMods`, capture/loss, AI, `bakeWonders` art)
+- `js/victory.js` — victory races (`victoryProgress`/`victoryMet`/`tickVictory`),
+  the AI's race (`aiVictoryFocus`/`aiVictoryPush`/`aiVictoryThreat`), legacy,
+  milestones, stats sampling, `chronicle()`
+- `js/ui-victory.js` — the Ledger (V/J), the legacy chart, the end screen
 - `js/ai.js` — ambitions (`f.ai`), re-evaluation, proactive diplomacy, war
   waves, expansion, bridge/wall engineering, coalitions
 - `js/ai-perception.js` — `AIPerception` + `ScoutMemoryMap`: everything an AI
@@ -124,6 +130,14 @@ the code; stale docs are treated as bugs.
 - `building.workers` is still the only thing that decides who works where —
   set it and `reconcileJobs` moves the bodies. Don't assign civilians directly.
 - `trainUnit` / `startCastleUpgrade` return error *strings*, not exceptions.
+- **`Unit.orderMove` clears `mission`.** Give the order FIRST and set the
+  mission after it. Doing it the other way round silently broke envoys (BUGS
+  #49) and every trade caravan the game ever spawned (BUGS #51).
+- The match ends through `game.endGame(kind, title, text)` (victory, a rival's
+  victory, or the Town Hall) — never set `game.over` directly. `chronicle()`
+  anything a player would want in the history of the match.
+- Anything that can end a war goes through `Diplomacy.setStatus`, which sets
+  the truce; the AI must check `inTruce` before declaring war.
 - Bridges live in `map.bridge`, not `map.buildingAt` — they're terrain, not
   targetable buildings.
 - Plateau tops are ordinary terrain with `map.high[i] === 1`; the wall around
@@ -188,7 +202,10 @@ the code; stale docs are treated as bugs.
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.
 - The Game is NOT constructed until a difficulty is chosen — headless scripts
   must pass `?difficulty=ramped|slanted|ruthless` in the URL or `game` stays
-  null behind the `#difficulty` overlay.
+  null behind the `#difficulty` overlay. `&victory=0` and `&pace=quick|epic`
+  set the match options the same way. A headless soak that leaves the player
+  idle loses quickly on most settings; the harnesses in
+  docs/formations-tiers-ui.md run the player's nation on the AI brain.
 - All AI *initiative* (wars, pacts, gifts, embargoes, peace) lives in
   `js/ai.js` and the `js/ai-*.js` managers; `Diplomacy.tick` is ambient
   relations drift only. Don't add AI decision-making back into diplomacy.js.

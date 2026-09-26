@@ -808,7 +808,7 @@ function tickLeaders(dt) {
       if (lord < 0 || f.eliminated) continue;
       const over = game.factions[lord];
       if (over.eliminated) { freeVassal(f.id, 'their overlord has fallen'); continue; }
-      const pay = Math.min(150, Math.floor(f.nation.res.gold * 0.2));
+      const pay = Math.floor(Math.min(150, f.nation.res.gold * 0.2) * (1 + (over.mods ? over.mods.tribute : 0)));
       if (pay > 0) {
         f.nation.res.gold -= pay;
         over.nation.res.gold += pay;
@@ -907,6 +907,19 @@ function leaderOnWar(a, b) {
       game.log(`${v.name}, vassal of ${fa.name}, marches to war against ${game.factions[b].name}.`);
     }
   }
+}
+
+// Breaking a truce is treachery the whole continent hears of.
+function leaderOnTruceBroken(a, b) {
+  const fa = game.factions[a];
+  if (fa.leader) fa.leader.deeds.betrayals++;
+  remember(b, a, 'truce_broken', 'Broke the truce', -30, 2400);
+  for (const c of game.factions) {
+    if (c.eliminated || c.id === a || c.id === b) continue;
+    remember(c.id, a, 'truce_breaker', 'Broke a truce', -10, 1800);
+  }
+  game.log(`${fa.name} broke its truce with ${game.factions[b].name}!`, b === 0 ? 'bad' : a === 0 ? 'bad' : '');
+  if (typeof chronicle === 'function') chronicle(`${fa.name} broke its truce with ${game.factions[b].name}.`, a, 'major');
 }
 
 function leaderOnGift(a, b, gold) {

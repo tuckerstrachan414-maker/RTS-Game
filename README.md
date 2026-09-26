@@ -364,6 +364,14 @@ At war, you don't just burn buildings — you rob them.
 
 ## The sea
 
+**Trade and diplomacy cross the ocean.** A trade pact with a nation on another
+continent sails: once both of you have a **Dock**, **merchant ships** in your
+colours ply the lane between the two harbours, paying both nations each voyage
+— more for a longer crossing. A burned Dock closes the lane until you raise
+another, and a war galley at war will sink them. Envoys to a court across the
+sea take ship from your Dock and come home the same way.
+
+
 **Your neighbours are across the water.** On every world but Duel Island each
 nation starts on its own continent, so an army that cannot embark is an army
 that can never meet another nation.
@@ -510,12 +518,53 @@ sparks disputes that can be talked out or fought over. Watch for rumors in the
 event log ("soldiers drilling…", "masons quarrying…") and for armies massing
 at your border: ambitions are never announced outright, but they always show.
 
-**There is no way to win.** No score to chase, no crown that ends the match —
-you play to keep your nation standing for as long as you want to. Build a
-Grand Castle (👑 300🪙 200🪵 200🪨 at your Castle, once you have 50 population
-and 70% happiness) if you want the prestige of it; conquer every rival if you
-want the whole continent; ally with everyone if you'd rather keep the peace.
-None of it ends the game — it's just what kind of nation you choose to build.
+**How a match ends is your choice.** On the setup screen, beside the world
+and the difficulty, pick **Victory conditions** or **Endless**, and a **Pace**
+(Quick ≈ an hour, Standard ≈ two, Epic an evening).
+
+With victory conditions on, five races run for **every** nation at once, and
+the first to finish one wins the match — if that isn't you, you lose:
+
+| Victory | How |
+|---|---|
+| ⚔ **Domination** | Every rival conquered or sworn to you as a vassal |
+| 📖 **Science** | Complete *The Enlightenment*, the last study of the Imperial Age |
+| 🏛 **Culture** | Bank culture — mostly from standing Wonders — with three of them standing |
+| 🪙 **Economic** | Earn a fortune from caravans and merchant ships *and* hold a great treasury, for three minutes |
+| 🤝 **Diplomatic** | Every surviving nation your ally or vassal, in the Age of Kingdoms, for three minutes |
+
+Rivals pick their own race by temperament and change course as the world
+does. Everyone is warned as a nation closes in (75%, 90%, and a countdown
+when a held condition starts), and past 75% the leader becomes **everyone's
+target** — even peaceful courts go to war to stop it, and traders embargo a
+would-be trading empire. Press **V** for the Ledger: every race, every
+nation's progress, the legacy chart and the milestones.
+
+**Endless** plays as the game always has: no victory, and only your Town Hall
+falling ends it. Either way every nation earns **legacy** — its Age and
+learning, Wonders, culture, people, land, trade, conquests and vassals, the
+**milestones** it reached first (first into each Age, first Wonder, first
+conquest…), and whether its word could be trusted.
+
+**The Chronicle (J)** writes the history of the match as it happens — every
+war and peace, Age, Wonder, conquest, betrayal and broken promise, by day.
+When the match ends (in victory, defeat, or a rival's victory), the end screen
+shows how history will remember you — *the Conqueror*, *the Builder*, *the
+Enlightened*, *the Merchant*, *the Faithless*… — a chart of every nation's
+legacy over the match, the final standings and the chronicle's great moments.
+After a victory you can **rule on** in endless mode.
+
+**Wonders of the world.** Seven Wonders — the Great Library, Grand Bazaar,
+Royal Gardens, Great Cathedral, Great Wall, Imperial Palace and Grand
+Observatory — each worth a lasting bonus (see the Wonders tab of the build
+bar). There is only one of each in the whole world: several nations can race
+for the same one, and whoever finishes first wins it; everyone else's site is
+abandoned. A Wonder can be captured with its nation — or burned, and then it
+is lost to history for everyone. They take six builders at once and a great
+deal of stone and gold, and they are what Culture is made of.
+
+**Peace comes with a truce.** Every war that ends leaves a five-minute truce:
+the AI never breaks one, and if you do, every court remembers it.
 
 **Conquest means annexation.** Destroy a nation's Town Hall and its surviving
 farms, mines, markets and storehouses — goods and all — become **yours**, at
@@ -523,14 +572,12 @@ reduced health and unstaffed until you assign workers. Walls and the ruined Town
 Hall come down. This cuts both ways: a rival that overruns you inherits your
 whole economy, and the continent consolidates into real empires.
 
-**Losing:** your Town Hall falls. That's the only way the game ends — a
-rival's Grand Castle, a rival's conquest of the rest of the map, none of it
-touches you. Prosperous AI nations still race to raise their own Grand Castle
+**Losing:** your Town Hall falls — on any setting — or, with victory
+conditions on, a rival wins one of the five races first. Prosperous AI nations still race to raise their own Grand Castle
 (you'll be warned when construction starts, purely as news), and conquerors
 can still swallow the rest of the map if nobody stops them — AI nations fight,
 bridge rivers to reach each other, and eliminate one another, so the continent
-you face in the late game may not be the one you started on. But it's only
-*your* Town Hall that can end your run.
+you face in the late game may not be the one you started on.
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
 while it's up. From there: Diplomacy, Research, Select Army (grabs your whole standing
@@ -549,7 +596,8 @@ to lay a wall/gate/bridge run, shown as a preview until you release · Shift+cli
 places multiple buildings · R rotates a bridge while placing · Ctrl+C copies
 selected building(s) (then click Paste, or press it again, to stamp another) ·
 Delete/Backspace removes selected building(s) for a 75% refund · **T** opens
-Research · **L** opens the Courts (diplomacy) · Esc cancels
+Research · **L** opens the Courts (diplomacy) · **V** the Ledger (victory &
+legacy) · **J** the Chronicle · **B** cycles the build tabs · Esc cancels
 placement or a pending paste / clears selection / closes menus.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
@@ -611,6 +659,9 @@ Plain `<script>` modules, no build step:
 - `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, difficulty
   select, game loop
 - `js/ui-research.js` — the Research screen, the Age banner, the knowledge readout
+- `js/wonders.js` — the seven Wonders: the race, their effects, their art, the AI
+- `js/victory.js` — the five victories, the AI's race, legacy, milestones, the chronicle
+- `js/ui-victory.js` — the Ledger, the legacy chart, the end screen
 
 ## More documentation
 

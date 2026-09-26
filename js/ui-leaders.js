@@ -162,6 +162,7 @@ Object.assign(UI.prototype, {
       if (court.overlord[o.id] === f.id) bits.push('their vassal');
       if (court.overlord[f.id] === o.id) bits.push('their overlord');
       if (game.time - court.denounced[f.id][o.id] < 1200) bits.push('denounced');
+      if (dip.inTruce(f.id, o.id)) bits.push('truce');
       return `<div class="row"><span><span class="dot" style="background:${o.color.css}"></span> ${o.isPlayer ? 'Azuria (you)' : o.name}</span><span class="dim">${bits.join(', ')}</span></div>`;
     });
     return `<div class="lsech">Their standing</div>${rows.join('')}`;
@@ -199,7 +200,9 @@ Object.assign(UI.prototype, {
       b.push(`<button data-la="peace" class="good" title="Pay 100 gold in reparations">${icon('dove')} Sue for peace</button>`);
       b.push(`<button data-la="surrender" title="If they believe the war is lost, they will become your vassal">${icon('crown')} Demand surrender</button>`);
     } else if (st !== 'alliance') {
-      b.push(`<button data-la="war" class="bad" title="${friends ? 'You are friends — this is a BETRAYAL the whole continent will remember' : 'No going back cheaply'}">${icon('sword')} Declare war${friends ? ' (betrayal!)' : ''}</button>`);
+      const truce = dip.inTruce(0, f.id);
+      b.push(`<button data-la="war" class="bad" title="${friends ? 'You are friends — this is a BETRAYAL the whole continent will remember'
+        : truce ? `You are under a truce for ${fmtDuration(dip.truce[0][f.id] - game.time)} more — breaking it is treachery` : 'No going back cheaply'}">${icon('sword')} Declare war${friends ? ' (betrayal!)' : truce ? ' (breaks truce!)' : ''}</button>`);
     }
     return b.join('');
   },
@@ -275,6 +278,7 @@ Object.assign(UI.prototype, {
           case 'war': {
             const friends = court.friend[f.id][0] > game.time;
             if (friends && !confirm(`You are declared friends with ${f.name}. Declaring war is a betrayal every court will remember. Continue?`)) return;
+            if (!friends && dip.inTruce(0, f.id) && !confirm(`You are under a truce with ${f.name}. Breaking it is treachery every court will remember. Continue?`)) return;
             dip.declareWar(0, f.id);
             this.reply(f, 'So be it. Steel will answer.', 'bad');
             break;

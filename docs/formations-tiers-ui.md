@@ -680,7 +680,23 @@ invisible and non-deterministic: two runs of one seed came out different, with
 `game.time` 0.1s apart, purely from this. Set `ui.paused = true` right after
 boot — the frame loop then renders but never ticks, and only your
 `game.tick(0.1)` calls move the world. With that, two 15-minute runs of a seed
-hash identically on every difficulty (checked after the research batch). A verification suite for the AI rework lives in that same pattern — it boots
+hash identically on every difficulty (checked after the research batch).
+
+**Put the player's nation on autopilot for long soaks.** An idle player is
+conquered inside 15 minutes on most settings, which ends the match and makes a
+two-hour soak of the AI (victory races, Ages, Wonders) impossible. Wrap the
+tick so the player's faction runs on the same AI brain:
+
+```js
+const f0 = game.factions[0], orig = game.tick.bind(game);
+game.tick = dt => { orig(dt); if (!game.over && !f0.eliminated) aiTick(f0, dt); };
+```
+
+It is a harness trick, not a mode: `leaderInitiative` returns early for the
+player (so no court petitions itself), cards to the player simply expire
+unless the harness answers them (`resolveEvent(game.events[0], 0)` answers
+with the first option), and the autopilot keeps none of its promises — which
+is useful, since it exercises the broken-promise path. A verification suite for the AI rework lives in that same pattern — it boots
 `?seed=N&difficulty=…`, drives `game.tick(0.1)` loops, and asserts: no war
 inside the opening ~150s across four seeds; the archetype line-up differs by
 seed; war does not fire on the first tick of an advantage but does once fresh

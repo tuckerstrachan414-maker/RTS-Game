@@ -549,6 +549,14 @@ function unitSpeed(u) {
     if (u.type.naval) v *= 1 + m.shipSpeed;
   }
   if (typeof seasonSpeedMul === 'function') v *= seasonSpeedMul(u);
+  // the Great Wall: an invader marching inside its owner's borders is slowed
+  if (game.territory && !u.type.naval && !u.type.civilian) {
+    const own = game.territory.ownerAt(u.tileX, u.tileY);
+    if (own >= 0 && own !== u.faction && game.diplomacy.hostile(own, u.faction)) {
+      const om = factionMods(own);
+      if (om && om.slowInvaders) v *= 1 - om.slowInvaders;
+    }
+  }
   return v;
 }
 

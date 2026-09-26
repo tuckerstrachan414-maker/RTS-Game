@@ -147,6 +147,8 @@ class Nation {
     const mods = this.faction.mods;
     // taxes
     this.deposit('gold', this.taxIncome() * dt);
+    // the Grand Bazaar's standing income
+    if (mods && mods.goldFlat) this.deposit('gold', mods.goldFlat * dt);
     // banking: the treasury earns interest, capped so a hoard cannot run away
     if (mods && mods.interest > 0) {
       this.deposit('gold', Math.min(3, this.total('gold') * mods.interest / 60) * dt);

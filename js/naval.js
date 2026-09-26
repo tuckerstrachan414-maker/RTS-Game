@@ -37,6 +37,15 @@ const SHIP_TYPES = {
     desc: 'Fighting ship. Escorts transports and rakes anything that comes near the shore.',
   },
 };
+// Merchant ships are not built: a sea trade route puts them in the water and
+// they sail its lane back and forth (js/diplomacy.js). Unarmed; a war galley
+// can sink them, which is how a war strangles overseas trade.
+SHIP_TYPES.merchant = {
+  key: 'merchant', name: 'Merchant Ship', naval: true, capacity: 0, noTrain: true,
+  cost: {}, hp: 90, dmg: 0, dmgType: 'melee', range: 0.9,
+  speed: 2.6, cooldown: 1, trainTime: 0, scale: 1.1,
+  desc: 'Carries goods between two nations with a trade pact across the sea.',
+};
 for (const k in SHIP_TYPES) {
   const t = SHIP_TYPES[k];
   t.carry = 0; t.tier = 1;

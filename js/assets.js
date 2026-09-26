@@ -204,6 +204,7 @@ const Assets = {
       this.ships[f] = bakeShips(FACTION_COLORS[f].css);
       this.siege[f] = bakeSiege(FACTION_COLORS[f].css);
       Object.assign(this.buildingArt[f], bakeScholarAndTower(punySheet, roofHue, this.rampart[f], FACTION_COLORS[f].css));
+      Object.assign(this.buildingArt[f], bakeWonders(FACTION_COLORS[f].css));
     }
     this.tileset = tileset;
     // Bridges are terrain, not a faction's building — baked off the plain sheet.
@@ -395,6 +396,16 @@ function bakeShips(css) {
       px(sail, 8, 3, 5, 5); px('#ffffff', 8, 3, 5, 1);  // sail
       px('#000000aa', 8, 7, 5, 1);
       px('#6b4a2a', 4, 11, 3, 2); px('#8a6238', 4, 11, 3, 1);   // deck cargo
+      px('#e6dcc0', 2, 13, 12, 1);                      // wake
+    }),
+    merchant: bakeArt(null, px => {
+      px(HULL.dark, 2, 9, 12, 4);                       // a round-bellied cog
+      px(HULL.mid, 3, 8, 10, 1); px(HULL.mid, 2, 10, 12, 2);
+      px(HULL.lit, 3, 9, 10, 1);
+      px('#3c2a18', 8, 1, 1, 8);                        // mast
+      px('#efe4c4', 5, 2, 7, 5); px('#ffffff', 5, 2, 7, 1);   // cream sail
+      px(sail, 5, 4, 7, 1);                              // a band in the nation's colour
+      px('#c9962e', 3, 7, 2, 2); px('#8a5a2a', 11, 7, 2, 2); px('#6b4a2a', 6, 7, 3, 2);  // crates and bales
       px('#e6dcc0', 2, 13, 12, 1);                      // wake
     }),
     galley: bakeArt(null, px => {

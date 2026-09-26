@@ -457,7 +457,23 @@ building upgrades outside the Castle, no repair, and pasted layouts don't
 rotate/mirror (a copied bridge always pastes horizontal, regardless of the
 orientation it was copied from — see BUGS).
 
-## Naval — docks, ships, invasions — Moderate
+## Naval — docks, ships, invasions, sea trade — Moderate
+
+**Sea trade and sailing envoys.** A trade pact between nations whose Markets
+stand on different continents runs by sea (`Diplomacy.createRoute` →
+`openSeaLane`): once both nations have a Dock, the lane between them is charted
+once (a 60,000-node sea A*), and two **Merchant Ships** (`SHIP_TYPES.merchant`,
+baked in `bakeShips` — a cog with a cream sail banded in the owner's colour and
+crates on deck) sail it back and forth, following the stored lane rather than
+searching the ocean again. A voyage pays more the longer it is. Until both
+Docks exist the route waits (and says so); a burned Dock closes the lane until a
+new one stands; galleys at war sink merchantmen. **Envoys** to a court across
+the sea take ship from their nation's Dock (`sendEnvoyBySea`): the Prince leaves
+the map for the voyage, the proposal is delivered on arrival
+(`deliverProposal`, the same decision a walking envoy's arrival makes), and he
+comes home the same way. Before this, no proposal or trade could ever cross
+water on a world of continents.
+
 
 `js/naval.js`. A world of continents is unplayable without a way across the
 water, so this is the minimum viable navy: a place to build hulls, a hull that
@@ -1043,7 +1059,10 @@ make simply looking at a leader change what the world does.
 
 `js/diplomacy.js` (mechanisms) + `js/ai.js` (`aiDiplomacy`, AI initiative) +
 `js/leaders.js` (opinion, promises, friendship, vassals — see Leaders above).
-A symmetric *mood* between each pair (`rel`, −100…+100) and a status matrix
+**Truces**: every road out of a war sets a five-minute truce (`TRUCE_TIME`,
+`Diplomacy.setStatus`); the AI never breaks one, and a player who does is a
+truce-breaker to every court (`leaderOnTruceBroken`). Without it an AI could
+declare, sue and declare again once a minute. A symmetric *mood* between each pair (`rel`, −100…+100) and a status matrix
 (war/neutral/trade/alliance) per pair, plus `warSince`/`lastBlood` matrices for
 peace-seeking. `relation(a, b)` is **directional**: the mood plus a's leader's
 ledger about b. Caravan pay is scaled by each side's trade technology, and
@@ -1208,7 +1227,8 @@ an answer. Hidden by Hide UI like every HUD element.
 
 `js/main.js` (`DIFFICULTIES`, `#difficulty` overlay in `index.html`). Chosen
 on a pre-game screen before the Game is constructed (or via `?difficulty=`,
-which round-trips in the URL with `?seed=`): **Measured March** (ramped — wars
+which round-trips in the URL with `?seed=`) — alongside the world, the
+**Victory** setting and the **Pace** (see Victory, legacy & the end of a match): **Measured March** (ramped — wars
 telegraphed by ultimatums, 5-minute player grace, victors consolidate 180s
 after conquests, coalitions form against snowballing powers), **Quiet
 Frontier** (AI wars each other freely but only marches on the player after
@@ -1218,28 +1238,140 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 `ultimatums`, `consolidation`, `coalitions`, `armyMul`, `playerGrace`,
 `provokedOnly`.
 
-## Defeat — Moderate
+## Victory, legacy & the end of a match — Deep
 
-`js/main.js` (`Game.checkDefeat`/`Game.end`). **There is no way to win.**
-Rival nations can be conquered, eliminate each other, race a Grand Castle, or
-end up allied with every survivor — none of it ends the game, for the player
-or for them. The only end state is the player's own Town Hall falling
-(`Your Town Hall lies in ruins. The nation is lost.`), which freezes the sim
-and shows the end screen (skull icon, "Defeat", *Play again*). There is no
-"keep playing" — defeat is the only way to arrive at the end screen, so there
-is nothing to play on past.
+`js/victory.js` (the races, milestones, legacy, stats, the chronicle),
+`js/ui-victory.js` (the Ledger, the history chart, the end screen),
+`js/main.js` (`Game.endGame`, `Game.continueAfterVictory`, the setup options).
 
-Elimination (any nation's, not just the player's) still kills the faction's
-units and cancels its trade routes, and its buildings are **annexed** by
-whoever felled its Town Hall (`conqueredBy` → `annexBuildings`) rather than
-erased — so taking a rival's mining town is worth more than burning it, and the
-map consolidates into real empires either way. Every survivor rethinks its
-ambition on any nation's fall; on paced difficulties the victor rests
-(consolidation) before its next war. The map keeps consolidating with or
-without the player watching — an unwatched corner of the continent can end up
-one giant empire, or the player can outlast every rival and simply keep ruling
-alone; neither stops the sim. No score screen or stats beyond lifetime trade
-gold.
+**Chosen before the match.** The setup screen now has, beside the world and the
+difficulty, a **Victory** choice (Victory conditions / Endless) and a **Pace**
+(Quick / Standard / Epic). Both round-trip in the URL (`&victory=0`,
+`&pace=quick|epic`), like the seed. Pace (`PACES`, `js/tech.js`) scales every
+research cost (0.8 / 1.35 / 2.0) and every victory threshold (0.6 / 1 / 1.5).
+
+**Five races, run by every nation at once** (`VICTORY_TYPES`), checked each
+second (`tickVictory`):
+- **Domination** — every rival eliminated or your vassal, at least one of them
+  by your hand.
+- **Science** — complete **The Enlightenment** (the tech tree's final project).
+  Beginning it is announced to the world.
+- **Culture** — bank `CULTURE_TARGET` (12,000 × pace) culture with at least three
+  Wonders standing. Culture accrues every second from standing Wonders (1/s
+  each), a Grand Castle (0.5/s) and Churches (0.04/s each) (`cultureRate`),
+  so a rival has real time to raze or seize the Wonders that feed it.
+- **Economic** — 8,000 gold earned from trade routes over the match (caravans and
+  merchant ships, `f.tradeEarned` — so it needs partners, and an embargo or a
+  sunk fleet hurts it) *and* 20,000 in the treasury, held for three minutes.
+- **Diplomatic** — every surviving nation your ally or vassal, in the Age of
+  Kingdoms or later, held for three minutes.
+
+The first nation to finish one wins (`declareVictory` → `Game.endGame`). If it
+is not you, you have lost — the end screen says who won and how. Progress is
+announced at 50% (your own races only), 75% and 90% (`warnProgress`), and a
+held condition starts a visible countdown. Without victory conditions the
+match is endless, exactly as before.
+
+**The AI races too.** Each nation picks a race to pursue by ambition and
+progress, re-chosen every two minutes (`aiVictoryFocus`, `AI_VICTORY_AFFINITY`);
+`aiVictoryPush` then leans its scholar share (Science), Wonder building
+(Culture), army size and war appetite (Domination). Every nation also watches
+the race from the outside (`aiVictoryThreat`, public facts only — Wonders,
+conquests, vassals, alliances, trade fleets, Ages and the announced
+Enlightenment) and past 75% of any victory the leader becomes everyone's target:
+even a peaceful court will go to war to stop it, merchants and hegemons
+embargo a trading empire, and doctrine re-evaluation tilts toward aggression.
+
+**Pacing, measured.** On Standard, headless soaks (four AI-run nations, three
+seeds across Small/Standard/Duel worlds) now end in their first victory at
+roughly 80-100 minutes, with the race varying by seed (Culture, Science;
+conquest on the island). It took four tuning passes to get there — the first
+had Culture won in 56 minutes and an Economic "hold 9,000 gold" won in 45 —
+and the levers were: culture as an accumulation rather than a Wonder count,
+Economic needing trade rather than a hoard, steeper later-Age research costs
+(`ERA_COST_MUL`), and wars on a would-be winner at 75% rather than 85%.
+
+**Legacy** (`legacyScore`) is every nation's standing in history: Age × 150,
+techs × 15, Wonders × 200, culture/20, population × 2, land/12, trade/25,
+vassals × 150, conquests × 250, a Grand Castle, milestones, plus 10 per promise
+kept and minus 25 per broken promise and 40 per betrayal. **Milestones**
+(`MILESTONES`) are first-to awards — first into each Age, first Wonder, first
+nation of a hundred, first conquest, first vassal, first 3,000-gold treasury,
+first to fifteen techs — each announced and chronicled. In an endless match,
+legacy is the score. Statistics are sampled every 30s (`sampleStats`: legacy,
+population, army, gold, land, Age) for the charts, thinned in long matches.
+
+**The chronicle** (`chronicle(text, fid, weight)`) is the dated history of the
+match: wars and peaces, alliances and pacts, Ages, Wonders begun/finished/
+seized/destroyed, conquests and falls, vassalage and rebellion, friendships,
+denouncements, betrayals and broken truces, broken promises, first contacts,
+kings fallen, milestones, victory warnings and the victory itself.
+
+**The Ledger** (V, or J for the chronicle; Menu → Victory & Legacy /
+Chronicle) is a non-pausing screen with three tabs: **Victory** (every race,
+with each nation's progress bar and any running hold countdown — rivals'
+treasuries show as "?" until you have met them), **Legacy** (a line chart of
+every nation's legacy over the match, the standings table and the milestones),
+and **Chronicle** (the full history, by day, majors in bold).
+
+**The history chart** follows the dataviz method: each nation keeps its own
+hue (colour follows the entity), with Aurelia's gold taken a step deeper
+(`#b98a26`) for the chart only, because the banner gold failed the lightness
+band on the dark surface — the four chart colours pass the palette validator
+(lightness, chroma, CVD and normal-vision separation, contrast) on `#14161c`.
+2px lines, end dots with a surface ring, hairline solid grid, a legend above,
+direct end labels only where they don't collide, a crosshair + tooltip listing
+every nation at the hovered time (values lead, names follow, line keys; built
+with `textContent`), and a Table toggle.
+
+**The end screen** (`UI.showEndScreen`), for a victory or a defeat of any kind:
+the title and what happened, **your epithet** as history will remember you
+(`playerEpithet` — the Conqueror, the Overlord, the Builder, the Enlightened,
+the Merchant, the Peaceful, the Just, the Bold, the Faithless, the Steadfast),
+time, day, Age and legacy rank, the legacy chart, the final standings, and the
+chronicle's major entries. After a victory you may **Rule on (endless)** —
+victory conditions switch off and the world carries on; a defeat offers the
+full chronicle and Play again.
+
+**Defeat by the Town Hall** is unchanged: it ends the match on any setting.
+Elimination (any nation's) still kills the faction's units and cancels its
+routes, and its buildings are **annexed** by whoever felled its Town Hall
+(`conqueredBy` → `annexBuildings`) — Wonders included, with their effects.
+
+## Wonders — Deep
+
+`js/wonders.js`. Seven Wonders of the world (`WONDERS`), each a 2×2 building
+with three tiles of art, a big cost and a long build (the table's figures ×1.6
+cost and ×2 time), up to six builders at once (`type.maxBuilders`), an Age
+requirement, and a lasting effect folded into `f.mods` by `applyWonderMods`
+(called from `recomputeMods`):
+
+| Wonder | Age | Effect |
+|---|---|---|
+| Great Library | Feudal | +2 knowledge/s, +10% knowledge |
+| Grand Bazaar | Feudal | trade income +50%, +1.5 gold/s |
+| Royal Gardens | Kingdom | +10 happiness, +2 citizens per House |
+| Great Cathedral | Kingdom | +8 happiness, Churches study twice as hard, troops heal +50% |
+| Great Wall | Kingdom | walls/gates/towers +100% HP, invaders march 15% slower in your land |
+| Imperial Palace | Imperial | all production +15%, taxes +10%, vassal tribute +50% |
+| Grand Observatory | Imperial | +25% knowledge, +3 knowledge/s |
+
+**One of each, in the whole world** (`WonderRegister`): several nations can race
+for the same one, and the first to finish it wins — every rival site for it is
+abandoned with half its delivered materials salvaged (`onWonderCompleted`). A
+Wonder can be seized in a conquest (it changes owners, effects and all —
+`onWonderCaptured`) and it can be burned or demolished, after which it is **lost
+to history** for everyone (`onWonderLost`). Completing one is announced with a
+title card and remembered by Builder-agenda leaders; losing one costs your
+people happiness. The AI raises them as an investment candidate
+(`aiScoreWonder`, tastes by ambition in `AI_WONDER_TASTE`, weighted up by a
+Culture push or a Builder agenda, one site at a time, marked urgent so builders
+come). The art (`bakeWonders`) is drawn in code at 32×48 — a columned library
+with a gold dome, striped bazaar awnings round a minaret, planted terraces with
+a fountain, a twin-spired cathedral with a rose window, a gatehouse between
+towers, a palace of three golden domes, a round observatory with its telescope —
+with the owner's colour in banners and glass; `buildingSprite` draws any
+taller-than-wide canvas rising above its footprint.
 
 ## Dev mode — Basic
 
@@ -1271,6 +1403,14 @@ testing, player-only:
   reload/new game, since it's a debug aid, not a game setting.
 
 ## Desktop UI/HUD — Deep
+
+**The build bar is tabbed** (`BUILD_TABS`, `UI.setBuildTab`): Economy, Society,
+Military and Wonders, as a 2×2 grid of small tabs beside the buttons (no taller
+than one row of buttons, so a phone keeps its play area); **B** cycles tabs.
+Twenty-four buildings no longer fit one row, and the number keys are kept free
+for army control groups. **Hotkeys** added with the new screens: **T** Research,
+**L** the Courts (diplomacy), **V** the Ledger (victory/legacy), **J** the
+Chronicle; Esc closes the innermost open screen first.
 
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,

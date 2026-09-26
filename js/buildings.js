@@ -137,6 +137,15 @@ const BUILDING_TYPES = {
 
 const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'builderhouse', 'market', 'library', 'church', 'well', 'castle', 'watchtower', 'university', 'wall', 'gate', 'bridge'];
 
+// The build bar's categories (js/ui.js buildHud). Wonders are appended by
+// js/wonders.js.
+const BUILD_TABS = [
+  { key: 'economy', label: 'Economy', icon: 'wood', keys: ['farm', 'lumber', 'quarry', 'mine', 'storehouse', 'builderhouse', 'market', 'dock'] },
+  { key: 'society', label: 'Society', icon: 'pop', keys: ['house', 'well', 'church', 'library', 'university'] },
+  { key: 'military', label: 'Military', icon: 'shield', keys: ['castle', 'watchtower', 'wall', 'gate', 'bridge'] },
+  { key: 'wonders', label: 'Wonders', icon: 'pillar', keys: [] },
+];
+
 // Whether a nation may build this at all yet. Technology and Age gates live on
 // the type (`requires: {tech, era}`); a Wonder adds its own world-wide rule
 // (js/wonders.js). Returns null when allowed, else the reason.
@@ -392,6 +401,7 @@ function captureBuilding(game, b, newFid) {
   b.rally = null;
   b.hp = Math.max(1, Math.min(b.hp, Math.round(b.maxHp * CAPTURE_HP_FRACTION)));
   game.factions[newFid].buildings.push(b);
+  if (b.type.wonder && b.done) onWonderCaptured(b, from ? from.id : -1);
   return b;
 }
 
@@ -426,6 +436,7 @@ function demolishBuilding(game, b) {
   }
   for (const [r, v] of Object.entries(b.type.cost || {})) refund[r] = Math.ceil(v * 0.75);
   removeBuilding(game, b);
+  if (b.type.wonder) onWonderLost(b, null);   // a demolished Wonder is as gone as a burned one
   if (b.faction >= 0) {
     const n = game.factions[b.faction].nation;
     for (const r in refund) n.res[r] += refund[r];

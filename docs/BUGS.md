@@ -278,6 +278,16 @@ heuristic.
 
 ## Fixed
 
+- **#51 Trade caravans never paid anybody** — `js/diplomacy.js` `tickRoutes` /
+  `tickMission`. Both set the caravan's `mission` and then called `orderMove`,
+  which clears `mission` — so every caravan lost its mission the instant it was
+  given, walked to the far Market once, and stood there for the rest of the
+  match. Trade pacts, the whole caravan economy the game describes, earned
+  exactly nothing; "lifetime trade earnings" only ever counted Market sales.
+  Found by forcing a pact in a harness and finding both caravans mission-less
+  three minutes later with zero paid. The order now goes first and the mission
+  after (`Diplomacy.sendCaravan`), and a turnaround goes through the same path.
+
 - **#44 Population ran away on the big worlds** — `js/economy.js`
   `growForNewDay`, `crowding`. Growth was 30% of the housing cap per dawn and the
   AI raises its cap as fast as it grows, so nothing pushed back: 100-180 a

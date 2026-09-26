@@ -160,6 +160,7 @@ class UI {
         // innermost overlay first: Formations sits on top of the pause menu
         if (document.getElementById('formation-panel').classList.contains('open')) { this.closeFormations(); return; }
         if (this.leaderOpen()) { this.closeLeader(); return; }
+        if (this.ledgerOpen()) { this.closeLedger(); return; }
         if (this.researchOpen()) { this.closeResearch(); return; }
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
@@ -172,6 +173,12 @@ class UI {
       if (e.key.toLowerCase() === 'h' && !typing) document.body.classList.toggle('ui-hidden');
       if (e.key.toLowerCase() === 't' && !typing && !this.paused) this.toggleResearch();
       if (e.key.toLowerCase() === 'l' && !typing && !this.paused) this.toggleDiplomacy();
+      if (e.key.toLowerCase() === 'v' && !typing && !this.paused) this.toggleLedger(game.victoryOn ? 'victory' : 'legacy');
+      if (e.key.toLowerCase() === 'j' && !typing && !this.paused) this.toggleLedger('chronicle');
+      if (e.key.toLowerCase() === 'b' && !typing && !this.paused && !e.ctrlKey && !e.metaKey) {
+        const i = BUILD_TABS.findIndex(t => t.key === this.buildTab);
+        this.setBuildTab(BUILD_TABS[(i + 1) % BUILD_TABS.length].key);
+      }
       if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'
           && (this.selection.buildings.length || (this.selection.building && this.selection.building.faction === 0))) {
         e.preventDefault();
@@ -923,11 +930,27 @@ class UI {
     buildToggle.title = 'Hide build menu';
     buildToggle.textContent = '▾';
     bar.appendChild(buildToggle);
+    // Twenty-four buildings do not fit one row on a phone, so the bar is split
+    // into categories: a tab strip, then the current category's buttons. B
+    // cycles the tabs on desktop (the number keys belong to control groups).
+    const tabs = document.createElement('div');
+    tabs.className = 'btabs';
+    BUILD_TABS.forEach((tab, i) => {
+      const b = document.createElement('button');
+      b.className = 'btab' + (i === 0 ? ' on' : '');
+      b.dataset.tab = tab.key;
+      b.innerHTML = `${icon(tab.icon)}<span>${tab.label}</span>`;
+      b.title = `${tab.label} (B cycles)`;
+      b.onclick = () => this.setBuildTab(tab.key);
+      tabs.appendChild(b);
+    });
+    bar.appendChild(tabs);
     for (const key of BUILD_MENU) {
       const t = BUILDING_TYPES[key];
       const btn = document.createElement('button');
       btn.className = 'bbtn';
       btn.dataset.key = key;
+      btn.dataset.tab = (BUILD_TABS.find(tb => tb.keys.includes(key)) || BUILD_TABS[0]).key;
       btn.innerHTML = `<b>${t.name}</b><span>${costText(t.cost)}</span>`;
       btn.title = t.desc + (t.reqText ? ` (${t.reqText})` : '');
       btn.onclick = () => {
@@ -937,6 +960,7 @@ class UI {
       };
       bar.appendChild(btn);
     }
+    this.setBuildTab(BUILD_TABS[0].key);
     document.getElementById('cancel-place').onclick = () => { this.placing = null; this.copyBuffer = null; };
     document.getElementById('rotate-place').onclick = () => this.rotatePlacing();
     document.getElementById('paste-place').onclick = () => this.pasteBuffer();
@@ -957,6 +981,9 @@ class UI {
     document.getElementById('pm-research').onclick = () => { this.closePause(); this.toggleResearch(); };
     document.getElementById('research').onclick = e => { if (e.target.id === 'research') this.closeResearch(); };
     document.getElementById('leader').onclick = e => { if (e.target.id === 'leader') this.closeLeader(); };
+    document.getElementById('ledger').onclick = e => { if (e.target.id === 'ledger') this.closeLedger(); };
+    document.getElementById('pm-ledger').onclick = () => { this.closePause(); this.toggleLedger(game.victoryOn ? 'victory' : 'legacy'); };
+    document.getElementById('pm-chronicle').onclick = () => { this.closePause(); this.toggleLedger('chronicle'); };
     document.getElementById('pm-formations').onclick = () => this.openFormations();
     document.getElementById('formation-panel').onclick = e => { if (e.target.id === 'formation-panel') this.closeFormations(); };
     document.getElementById('form-close').onclick = () => this.closeFormations();
@@ -987,6 +1014,12 @@ class UI {
       btn.onclick = () => btn.closest('.collapsible').classList.toggle('collapsed');
     });
     this.watchLayout();
+  }
+
+  setBuildTab(key) {
+    this.buildTab = key;
+    document.querySelectorAll('#buildbar .btab').forEach(b => b.classList.toggle('on', b.dataset.tab === key));
+    document.querySelectorAll('#buildbar .bbtn').forEach(b => { b.style.display = b.dataset.tab === key ? '' : 'none'; });
   }
 
   // Keeps --topbar-h / --sidebar-w / --buildbar-h in sync with actual rendered sizes so other
@@ -2141,7 +2174,13 @@ class UI {
   // 2x2 tiles of actual art rather than one cell blown up.
   buildingSprite(key, faction, dx, dy, size) {
     const baked = Assets.buildingArt[faction][key];
-    if (baked) { this.ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy, size, size); return; }
+    if (baked) {
+      // A taller-than-wide canvas (a Wonder, drawn 2 tiles wide and 3 tall)
+      // stands on its footprint and rises above it.
+      const h = Math.round(size * baked.height / baked.width);
+      this.ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy - (h - size), size, h);
+      return;
+    }
     const type = BUILDING_TYPES[key];
     let art = type.art;
     if (type.pair) art = faction === 0 ? art[1] : art[0];

@@ -143,7 +143,7 @@ const TECHS = {
     effects: { trade: 0.5, yield: { gold: 0.2 } }, desc: 'Trade income +50%; gold +20%.' },
   architecture: { name: 'Architecture', era: 3, branch: 'civic', cost: 520, req: ['guilds', 'fortification'],
     effects: { buildSpeed: 0.3, buildHp: 0.2 }, desc: 'Construction 30% faster; buildings +20% HP; Wonders rise faster.' },
-  enlightenment: { name: 'The Enlightenment', era: 3, branch: 'civic', cost: 2400,
+  enlightenment: { name: 'The Enlightenment', era: 3, branch: 'civic', cost: 4000,
     req: ['printing', 'arcana', 'mercantilism', 'architecture'], project: true,
     effects: { yield: { knowledge: 0.2 }, happiness: 10 },
     desc: 'The culmination of a civilization. With victory conditions on, completing it wins a Science Victory.' },
@@ -154,13 +154,19 @@ const TECH_KEYS = Object.keys(TECHS);
 // The game's pace scales every knowledge cost (and, in js/victory.js, every
 // victory threshold). Chosen on the setup screen; stored on the Game.
 const PACES = {
-  quick:    { label: 'Quick', research: 0.55, victory: 0.6, desc: 'A match in about an hour. Ages come fast.' },
-  standard: { label: 'Standard', research: 1, victory: 1, desc: 'The intended pace: a long match of rising Ages.' },
-  epic:     { label: 'Epic', research: 1.6, victory: 1.5, desc: 'An evening-long saga. Every Age is hard-won.' },
+  quick:    { label: 'Quick', research: 0.8, victory: 0.6, desc: 'About an hour. The Ages come quickly and the races are short.' },
+  standard: { label: 'Standard', research: 1.35, victory: 1, desc: 'The intended pace: roughly two hours of rising Ages before anyone can claim the world.' },
+  epic:     { label: 'Epic', research: 2.0, victory: 1.5, desc: 'An evening-long saga. Every Age is hard-won and every race is long.' },
 };
 function paceMul() { return (game && game.pace ? game.pace.research : 1); }
-function techCost(key) { return Math.round(TECHS[key].cost * paceMul()); }
-function eraKnowledgeCost(era) { return Math.round((ERAS[era].knowledge || 0) * paceMul()); }
+// Later Ages cost disproportionately more. A late nation's knowledge stacks
+// many bonuses (Writing, Education, Printing, the Great Library and the
+// Observatory, research pacts, a University's worth of scholars) and without a
+// steeper curve the whole Imperial Age and the Enlightenment fell in about ten
+// minutes once a nation got there.
+const ERA_COST_MUL = [1, 1.3, 1.8, 2.6];
+function techCost(key) { return Math.round(TECHS[key].cost * ERA_COST_MUL[TECHS[key].era] * paceMul()); }
+function eraKnowledgeCost(era) { return Math.round((ERAS[era].knowledge || 0) * ERA_COST_MUL[era - 1] * paceMul()); }
 
 // ---------- per-nation state ----------
 
@@ -185,6 +191,8 @@ function emptyMods() {
     trainTime: 0, buildHp: 0, wallHp: 0, storage: 0, happiness: 0, weariness: 0,
     tax: 0, trade: 0, buildSpeed: 0, interest: 0, upkeep: 0, shipSpeed: 0, shipHp: 0,
     housing: 0, churchKnowledge: 0, heal: 0,
+    // from Wonders (js/wonders.js)
+    knowledgeFlat: 0, goldFlat: 0, tribute: 0, slowInvaders: 0,
     units: new Set(), buildings: new Set(), level: 1,
   };
 }
@@ -213,6 +221,7 @@ function recomputeMods(f) {
     for (const x of u.buildings || []) m.buildings.add(x);
     if (u.level) m.level = Math.max(m.level, u.level);
   }
+  if (typeof applyWonderMods === 'function') applyWonderMods(f, m);
   f.mods = m;
   for (const [u, old] of units) {
     const next = unitMaxHp(u);
@@ -308,6 +317,12 @@ function startResearch(f, key) {
   }
   f.research = { key, progress: Math.min(techCost(key), f.knowledgeBank) };
   f.knowledgeBank = Math.max(0, f.knowledgeBank - f.research.progress);
+  // The Enlightenment is no secret: the whole world hears when a nation's
+  // scholars begin it — which is what lets rivals try to stop them.
+  if (TECHS[key].project && typeof game !== 'undefined' && game && game.victoryOn !== undefined) {
+    game.log(f.isPlayer ? 'Your scholars begin The Enlightenment. The world will know.' : `${f.name}'s scholars have begun The Enlightenment!`, f.isPlayer ? 'good' : 'bad');
+    if (typeof chronicle === 'function') chronicle(`${f.name} began The Enlightenment.`, f.id, 'major');
+  }
   return null;
 }
 
@@ -391,7 +406,7 @@ function passiveKnowledge(f) {
     if (b.done && b.hp > 0 && b.type.key === 'church') k += perChurch;
     if (b.done && b.hp > 0 && b.type.knowledgeAura) k += b.type.knowledgeAura;
   }
-  return k * (1 + f.mods.yield.knowledge);
+  return (k + f.mods.knowledgeFlat) * (1 + f.mods.yield.knowledge);
 }
 
 // Called by a scholar at work (js/civilians.js). Already multiplied by the

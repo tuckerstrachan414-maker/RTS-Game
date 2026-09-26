@@ -292,8 +292,11 @@ class AIUtilityEngine {
   armyTarget() {
     const f = this.faction, arch = this.archetype();
     const threat = aiMaxThreat(f);
-    return Math.min(arch.armyMax,
-      Math.round((arch.armyBase + threat * 0.12 + f.nation.pop * arch.armyPerPop) * game.diff.armyMul));
+    // a nation pursuing a Domination victory keeps a bigger army than its
+    // ambition alone would (js/victory.js)
+    const dom = 1 + aiVictoryPush(f, 'domination') * 0.6;
+    return Math.min(Math.round(arch.armyMax * dom),
+      Math.round((arch.armyBase + threat * 0.12 + f.nation.pop * arch.armyPerPop) * game.diff.armyMul * dom));
   }
 
   // Every building in the game costs wood — including the Market, the only way
@@ -405,6 +408,7 @@ class AIUtilityEngine {
       this.scoreExpansion(),
       this.scoreGrandCastle(),
       aiScoreEraAdvance(this.faction),
+      aiScoreWonder(this.faction),
     ].filter(c => c && c.score > 0);
     if (!cands.length) return;
     // small bonus for continuing what we were already doing, so the nation

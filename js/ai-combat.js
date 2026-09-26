@@ -269,8 +269,13 @@ class AICombatManager {
     const p = f.brain.perception;
     const snow = aiSnowballLeader();
     const pacifist = arch.warRatio === Infinity;
+    // A nation about to WIN the match is everyone's enemy: past 75% of a
+    // victory (as far as the world can tell — js/victory.js), even a peaceful
+    // court will go to war to stop it.
+    const vt = aiVictoryThreat(f);
+    const stopWinner = vt && vt.level >= 0.75 ? vt.fid : -1;
     // peaceful ambitions never initiate — except joining a coalition
-    if (pacifist && !(snow >= 0 && snow !== f.id
+    if (pacifist && stopWinner < 0 && !(snow >= 0 && snow !== f.id
         && (ai.doctrine === 'hegemon' || ai.doctrine === 'turtle'))) return;
     // nobody opens a match with a war; harsher difficulties shorten the peace
     if (game.time < AI_PEACE_WINDOW / Math.max(0.5, game.diff.warAppetite)) return;
@@ -288,6 +293,8 @@ class AICombatManager {
     for (const o of rivals) {
       const st = dip.status(f.id, o.id);
       if (st === STATUS.WAR || st === STATUS.ALLIANCE) continue;
+      // a truce holds (js/diplomacy.js) — the AI never breaks one
+      if (dip.inTruce(f.id, o.id)) continue;
       // a vassal does not war on its lord (rebellion is its own decision —
       // js/leaders.js considerRebellion), nor a lord on its vassal
       if (court && (court.overlord[f.id] === o.id || court.overlord[o.id] === f.id)) continue;
@@ -302,7 +309,7 @@ class AICombatManager {
         if (game.time < game.diff.playerGrace) continue;
         if (game.diff.provokedOnly && ai.provocation < 3) continue;
       }
-      const dogpile = o.id === snow;
+      const dogpile = o.id === snow || o.id === stopWinner;
       if (pacifist && !dogpile) continue;
 
       // (a) the odds have to have held, not just flickered
@@ -320,6 +327,9 @@ class AICombatManager {
       let score = pWin + ai.grudge[o.id] * 0.02 - dip.relation(f.id, o.id) * 0.005;
       if (resourceMotive) score += 0.8;
       if (dogpile) score += 0.5;
+      if (o.id === stopWinner) score += 1.5;
+      // a conqueror chasing Domination looks for the next throne to take
+      score += aiVictoryPush(f, 'domination') * 0.6;
       if (arch.plunderGoal) score += p.estimatedLoot(o.id) * 0.001;
       if (score > bestScore) { bestScore = score; best = o; }
     }

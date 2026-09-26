@@ -232,6 +232,7 @@ function aiPursueGrand(f) {
   n.pay(GRAND_CASTLE_COST);
   c.grandProgress = 0.01;
   game.log(`${f.name} has begun raising a GRAND CASTLE — a monument to eclipse every other nation!`, 'bad');
+  chronicle(`${f.name} began a Grand Castle.`, f.id, 'minor');
   return true;
 }
 
@@ -297,6 +298,7 @@ function aiDiplomacy(f) {
       dip.rel[f.id][o.id] = Math.max(dip.rel[f.id][o.id], -30);
       dip.rel[o.id][f.id] = Math.max(dip.rel[o.id][f.id], -30);
       game.log(`The war between ${f.name} and ${o.name} gutters out — an exhausted peace.`, o.isPlayer ? 'good' : '');
+      chronicle(`The war between ${f.name} and ${o.name} guttered out in an exhausted peace.`, f.id, 'major');
     }
   }
 
@@ -329,6 +331,13 @@ function aiDiplomacy(f) {
         && !dip.embargoed(f.id, o.id)
         && (dip.relation(f.id, o.id) < -35 || o.id === snow));
       if (target) dip.declareEmbargo(f.id, target.id);
+    }
+    // a trading empire about to win is strangled with embargoes by anyone who
+    // is not bound to it — the peaceful answer to an Economic victory
+    const vt = aiVictoryThreat(f);
+    if (vt && vt.type === 'economic' && vt.level >= 0.7 && !dip.embargoed(f.id, vt.fid)
+        && dip.status(f.id, vt.fid) !== STATUS.ALLIANCE && game.court.overlord[f.id] !== vt.fid) {
+      dip.declareEmbargo(f.id, vt.fid);
     }
   }
 
@@ -478,6 +487,7 @@ function aiOfferPeaceToPlayer(f) {
           dip.rel[0][f.id] = Math.max(dip.rel[0][f.id], -20);
           dip.rel[f.id][0] = Math.max(dip.rel[f.id][0], -20);
           game.log(`Peace with ${f.name} — ${Math.round(pay)} gold in reparations paid to you.`, 'good');
+          chronicle(`${f.name} paid Azuria ${Math.round(pay)} gold for peace.`, 0, 'major');
           remember(f.id, 0, 'accepted_peace', 'Accepted our peace', 8, 1200);
         } },
       { label: 'Fight on', cls: 'bad', apply: () => {

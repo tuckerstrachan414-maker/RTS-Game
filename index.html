@@ -163,7 +163,7 @@
   body.ui-hidden #topbar, body.ui-hidden #buildbar, body.ui-hidden #menu-btn, body.ui-hidden #minimap-wrap, body.ui-hidden #panel,
   body.ui-hidden #diplomacy, body.ui-hidden #log, body.ui-hidden #tooltip, body.ui-hidden #place-bar,
   body.ui-hidden #eventcard, body.ui-hidden #research, body.ui-hidden #announce,
-  body.ui-hidden #leader { display: none !important; }
+  body.ui-hidden #leader, body.ui-hidden #ledger { display: none !important; }
   body.ui-hidden #ui-show { display: block; }
 
   #log { position: absolute; left: var(--hud-inset-l); top: var(--hud-row2);
@@ -399,6 +399,77 @@
     border-left: 2px solid #c9a64a; padding: 3px 8px; margin: 6px 0; }
   #eventcard button.aud { border-style: dashed; color: #c9b98f; }
 
+
+  /* ---- tabbed build bar ---- */
+  /* a 2x2 grid, so the tabs are no taller than one row of build buttons */
+  .btabs { display: grid; grid-template-columns: auto auto; gap: 2px; margin-right: 4px; flex: 0 0 auto; }
+  .btab { background: #232a36; color: #9ab; border: 1px solid #3a4658; border-radius: 3px; padding: 1px 5px;
+    font-size: 10px; cursor: pointer; display: flex; align-items: center; gap: 3px; touch-action: manipulation; }
+  .btab.on { background: #35507a; border-color: #6f8fc4; color: #fff; }
+  @media (pointer: coarse) { .btab { padding: 2px 5px; min-height: 18px; } .btab span:not(.icon) { font-size: 9px; } }
+
+  /* ---- the Ledger: victory races, legacy, chronicle ---- */
+  #ledger { display: none; position: absolute; inset: 0; background: rgba(8,10,14,0.6); z-index: 13;
+    align-items: center; justify-content: center; touch-action: none; }
+  #ledger.open { display: flex; }
+  .lg-box { width: min(860px, 96vw); max-height: 90vh; display: flex; flex-direction: column;
+    background: rgba(20,22,28,0.99); border: 1px solid #8a6f3a; border-radius: 10px; box-shadow: 0 16px 50px rgba(0,0,0,0.6); }
+  .lg-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px 8px; border-bottom: 1px solid #3a3528; flex-wrap: wrap; }
+  .lg-head h2 { font-family: Georgia, 'Palatino Linotype', serif; color: #f1dca0; font-size: 19px; }
+  .lg-tabs { display: flex; gap: 4px; margin-left: auto; }
+  #ledger button, #gameover button { background: #2c3442; color: #cde; border: 1px solid #46536a; border-radius: 4px;
+    padding: 4px 10px; cursor: pointer; font-size: 12px; touch-action: manipulation; }
+  #ledger button.on, #gameover button.primary { background: #35507a; border-color: #6f8fc4; color: #fff; }
+  .lg-body { padding: 10px 16px 16px; overflow-y: auto; touch-action: pan-y; font-size: 13px; }
+  .lg-note { color: #9aa8ba; margin-bottom: 10px; line-height: 1.4; }
+  .lg-sub { color: #c9b98f; margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .dim { color: #7d8796; font-size: 11px; }
+  .good { color: #7d7; } .bad { color: #f88; }
+  .vic { border-top: 1px solid #2e3240; padding: 7px 0; }
+  .vic-h { margin-bottom: 4px; } .vic-h b { color: #f1dca0; font-family: Georgia, serif; font-size: 14px; }
+  .vic-row { display: grid; grid-template-columns: 150px 1fr 70px; align-items: center; gap: 8px; margin: 2px 0; font-size: 12px; }
+  .vic-row.me .vic-n { color: #fff; font-weight: bold; }
+  .vic-bar { height: 8px; background: #232733; border-radius: 4px; overflow: hidden; }
+  .vic-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+  .vic-pct { text-align: right; color: #c9d1dc; }
+  .dot.empty { background: transparent; border: 1px solid #555; }
+  .lg-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  .lg-table th { text-align: left; color: #7d8796; font-weight: normal; border-bottom: 1px solid #2e3240; padding: 3px 6px; }
+  .lg-table td { padding: 3px 6px; border-bottom: 1px solid #1f2330; color: #c9d1dc; }
+  .lg-table tr.me td { color: #fff; background: rgba(74,144,217,0.08); }
+  .lg-miles .row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; margin: 1px 0; }
+  .chron-day { color: #c9b98f; font-family: Georgia, serif; margin: 8px 0 2px; font-size: 13px; }
+  .chron-e { font-size: 12px; color: #9aa8ba; margin: 1px 0 1px 8px; }
+  .chron-e.major { color: #e6ecf5; }
+  /* history chart */
+  .chart-host { margin: 4px 0 8px; }
+  .ch-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .ch-title { color: #c9d1dc; font-size: 12px; }
+  .ch-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: #9aa8ba; }
+  .ch-li { display: inline-flex; align-items: center; gap: 4px; }
+  .ch-key { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+  .ch-tbtn { margin-left: auto; font-size: 11px !important; padding: 2px 8px !important; }
+  .ch-wrap { position: relative; }
+  .ch-wrap canvas { display: block; border-radius: 4px; max-width: 100%; }
+  .ch-tip { display: none; position: absolute; background: rgba(12,14,20,0.96); border: 1px solid #3a4250; border-radius: 4px;
+    padding: 5px 8px; pointer-events: none; font-size: 11px; min-width: 130px; }
+  .ch-tip-h { color: #7d8796; margin-bottom: 2px; }
+  .ch-tip-r { display: flex; align-items: center; gap: 6px; }
+  .ch-tip-r b { color: #fff; min-width: 44px; }
+  .ch-tip-n { color: #9aa8ba; }
+  .ch-tip-k { width: 12px; height: 2px; display: inline-block; }
+  .ch-table { max-height: 220px; overflow-y: auto; }
+
+  /* ---- the end screen ---- */
+  #gameover .go-box { width: min(820px, 96vw); background: rgba(20,22,28,0.97); border: 1px solid #8a6f3a; border-radius: 10px;
+    padding: 18px 22px; text-align: left; box-shadow: 0 16px 50px rgba(0,0,0,0.6); }
+  #gameover h1 { font-family: Georgia, 'Palatino Linotype', serif; color: #f1dca0; text-align: center; }
+  #gameover p { margin: 6px auto 8px; text-align: center; }
+  #gameover .go-epi { text-align: center; color: #efe4c4; font-family: Georgia, serif; font-style: italic; margin-bottom: 4px; }
+  #gameover .go-epi b { font-style: normal; color: #f1dca0; }
+  #gameover .go-meta { text-align: center; color: #7d8796; font-size: 12px; margin-bottom: 8px; }
+  #gameover .go-btns { margin-top: 14px; }
+
   /* Pause menu: dims the frozen battlefield and floats a centered menu box. */
   #pause-menu { display: none; position: absolute; inset: 0; background: rgba(8,10,14,0.55);
     align-items: center; justify-content: center; z-index: 20; touch-action: none; }
@@ -480,14 +551,15 @@
   #difficulty button:hover { background: #3a4658; }
   #difficulty button b { display: block; font-size: 17px; margin-bottom: 3px; }
   #difficulty .diff-desc { font-size: 12.5px; color: #9ab; line-height: 1.4; }
-  #world-pick { width: min(480px, 92vw); text-align: left; }
-  #world-pick .world-label { color: #9ab; font-size: 12px; text-transform: uppercase;
+  #world-pick, #match-pick { width: min(480px, 92vw); text-align: left; }
+  #match-pick .world-label { margin-top: 10px; }
+  #difficulty .world-label { color: #9ab; font-size: 12px; text-transform: uppercase;
     letter-spacing: 0.08em; margin-bottom: 5px; }
-  #world-pick .world-row { display: flex; flex-wrap: wrap; gap: 6px; }
-  #world-pick .world-row button { width: auto; flex: 1 1 auto; text-align: center;
+  #difficulty .world-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  #difficulty .world-row button { width: auto; flex: 1 1 auto; text-align: center;
     padding: 7px 10px; font-size: 13px; }
-  #world-pick .world-row button.on { background: #3d5b78; border-color: #6f9ec9; }
-  #world-pick .world-desc { color: #9ab; font-size: 12px; margin-top: 6px; min-height: 2.6em; line-height: 1.4; }
+  #difficulty .world-row button.on { background: #3d5b78; border-color: #6f9ec9; }
+  #difficulty .world-desc { color: #9ab; font-size: 12px; margin-top: 6px; min-height: 2.6em; line-height: 1.4; }
 
   /* Above every floating HUD panel (the highest is the tooltip at 9) — the end screen
      has to be the last word, and a diplomacy panel left open used to sit on top of it. */
@@ -641,13 +713,8 @@
 <div id="buildbar" class="hud collapsible"></div>
 <div id="log"></div>
 
-<div id="gameover">
-  <h1></h1>
-  <p></p>
-  <div class="go-btns">
-    <button onclick="location.reload()">Play again</button>
-  </div>
-</div>
+<div id="gameover"></div>
+<div id="ledger"></div>
 
 <div id="difficulty">
   <h1><span class="icon icon-crown"></span> Nations</h1>
@@ -662,6 +729,14 @@
     <div class="world-row"></div>
     <div class="world-desc"></div>
   </div>
+  <div id="match-pick">
+    <div class="world-label">Victory</div>
+    <div class="world-row victory-row"></div>
+    <div class="world-desc victory-desc"></div>
+    <div class="world-label">Pace</div>
+    <div class="world-row pace-row"></div>
+    <div class="world-desc pace-desc"></div>
+  </div>
   <button data-diff="ramped"><b>Measured March</b><span class="diff-desc"></span></button>
   <button data-diff="slanted"><b>Quiet Frontier</b><span class="diff-desc"></span></button>
   <button data-diff="ruthless"><b>Iron Age</b><span class="diff-desc"></span></button>
@@ -674,6 +749,8 @@
     <button id="resume-btn"><span class="icon icon-show"></span> Resume</button>
     <button id="pm-diplo"><span class="icon icon-dove"></span> The Courts — Diplomacy (L)</button>
     <button id="pm-research"><span class="icon icon-book"></span> Research (T)</button>
+    <button id="pm-ledger"><span class="icon icon-trophy"></span> Victory &amp; Legacy (V)</button>
+    <button id="pm-chronicle"><span class="icon icon-quill"></span> Chronicle (J)</button>
     <button id="pm-army"><span class="icon icon-shield"></span> Select Army</button>
     <button id="pm-formations"><span class="icon icon-sword"></span> Formations</button>
     <button id="pm-speed"><span class="icon icon-speed"></span> Speed: <span id="speed-val">1x</span></button>
@@ -712,10 +789,12 @@
 <script src="js/tech.js"></script>
 <script src="js/civilians.js"></script>
 <script src="js/naval.js"></script>
+<script src="js/wonders.js"></script>
 <script src="js/factions.js"></script>
 <script src="js/diplomacy.js"></script>
 <script src="js/events.js"></script>
 <script src="js/leaders.js"></script>
+<script src="js/victory.js"></script>
 <script src="js/territory.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/ai-perception.js"></script>
@@ -726,6 +805,7 @@
 <script src="js/ui.js"></script>
 <script src="js/ui-research.js"></script>
 <script src="js/ui-leaders.js"></script>
+<script src="js/ui-victory.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

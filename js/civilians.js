@@ -494,7 +494,7 @@ function claimSite(u, f) {
   for (const b of f.buildings) {
     if (!b.site || b.done || b.hp <= 0) continue;
     if (b.site.wait > game.time) continue;              // recently unreachable
-    if ((counts.get(b) || 0) >= MAX_BUILDERS_PER_SITE) continue;
+    if ((counts.get(b) || 0) >= (b.type.maxBuilders || MAX_BUILDERS_PER_SITE)) continue;
     if (!siteReachable(b)) continue;
     // ready sites need hands; unready ones need hands only if there is still
     // something to carry that nobody else has already picked up
@@ -576,7 +576,9 @@ function builderRaise(u, dt, sb) {
     // Each builder on the site is worth one build-time's worth of pace, and a
     // site takes at most MAX_BUILDERS_PER_SITE of them, so a crowd finishes a
     // wall faster but never instantly.
-    advanceConstruction(sb, dt / sb.type.buildTime);
+    // Engineering and Architecture speed every builder up
+    const m = game.factions[u.faction].mods;
+    advanceConstruction(sb, dt / sb.type.buildTime * (1 + (m ? m.buildSpeed : 0)));
     return;
   }
   walkTo(u, dt, Math.floor(sb.cx), Math.floor(sb.cy), () => blockSite(sb));
