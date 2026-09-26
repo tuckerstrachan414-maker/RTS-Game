@@ -88,6 +88,12 @@ daylight, 2.5 of night — with the light gradually shifting between them
 rather than snapping. The top bar shows the day count and whether it's day
 ☀ or night 🌙; at night, your Houses' windows glow.
 
+**The year turns.** Every two days the season changes — Spring, Summer,
+Autumn, Winter — a forty-minute year. Harvests swell through the year (Autumn's
+is the biggest) and collapse in Winter, so fill your granaries in the autumn.
+Winter chills your people, slows any army marching in foreign land, and wears
+down an army camped in enemy territory. Pick your campaigns accordingly.
+
 **Every resource comes from a real tile:**
 
 | Resource | Comes from | Via |
@@ -421,6 +427,27 @@ your coast.
 | Royal Academy + Arcane Mastery | **Archmage** | Heavier fire, wider splash |
 | Royal Academy | **King** | One per nation. +15% damage to troops near him |
 
+**Soldiers grow.** Every soldier earns experience in battle and rises from
+Recruit to **Veteran**, **Elite** and finally **Legend** — each rank hits
+harder and lasts longer (gold chevrons over their heads). Legends get a name —
+*Aldric the Bold* — and steady the troops around them.
+
+**Morale decides battles.** Wounds, friends falling nearby, being outnumbered
+and a cavalry charge wear a soldier's nerve down; home ground, rest, the King
+and Legends build it back. A soldier whose nerve breaks **routs** — drops
+everything and runs home (you'll see a white rag), and panic spreads to those
+beside it — then rallies once it has recovered. Veterans hold longer. Lose your
+King in battle and your whole army is shaken.
+
+**Cavalry charges.** A horseman who rides a few tiles into the fight lands his
+first blow half again as hard and shakes the man he hits — unless that man has
+a spear, a halberd or a shield.
+
+**Armies heal at home, and cost money.** Wounded soldiers recover out of the
+fight on your land, fast near a Town Hall, Castle or Church. Soldiers eat and
+draw pay; ships and siege engines cost gold. An army you can't pay loses heart.
+In winter, an army deep in enemy land wears down.
+
 **Castle upgrades and research unlock troops.** A fresh Castle trains the basic
 five. The **Garrison** upgrade (Feudal Age) unlocks the Halberdier and Cavalier,
 the **Royal Academy** (Age of Kingdoms) the Mage and the King, and research
@@ -588,6 +615,16 @@ out and training is never blocked by cost or population. A red **DEV** badge
 stays on the topbar the whole time it's on so it's never left running by
 accident, and it resets to off on a new game.
 
+**Commanding an army (desktop):** right-click **moves** (the group marches
+through without stopping to fight) or attacks what you clicked · **F** then
+click, or **Ctrl+right-click**: **attack-move** (fight your way there) · **P**
+then click: **patrol** · **Z**: **hold** position · **X**: **stop** ·
+**Shift+right-click** queues waypoints · **Ctrl+1-9** makes a control group,
+**1-9** selects it (twice jumps to it) · **double-click** a soldier selects all
+of that type on screen · **I** selects idle soldiers · **Space** jumps to the
+latest attack alert (alerts also ping the minimap). On touch, the same orders
+are buttons on the army panel; double-tap then gives the target.
+
 **Controls (desktop):** WASD/arrows pan (Shift = faster) · wheel zooms ·
 left-click/drag selects an army, or buildings if the box has no units in it ·
 right-click moves/attacks — or, with bandits selected, sends them to rob an
@@ -638,6 +675,9 @@ Plain `<script>` modules, no build step:
 - `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
 - `js/civilians.js` — the citizenry: workers, builders, wanderers, gathering trips
   and construction sites
+- `js/army.js` — veterancy and Legends, morale and the rout, healing,
+  attrition, upkeep, and attack alerts
+- `js/seasons.js` — the four seasons and what they do to harvests, people and armies
 - `js/naval.js` — docks, ships, boarding and landings, and the AI's navy
 - `js/globe.js` — the orbit view: world texture, sphere projection, starfield
 - `js/tech.js` — knowledge, the technology tree, the Ages, tech modifiers

@@ -46,6 +46,11 @@ the code; stale docs are treated as bugs.
 - `js/economy.js` — Nation sim; `res` is a Proxy over per-building `store`s
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
 - `js/units.js` — unit defs, combat, projectiles, rob/haul, formations, separation
+- `js/army.js` — veterancy (`gainXp`/`promote`), morale and routs
+  (`hitMorale`/`tickRout`/`tickArmy`), healing, attrition hook, upkeep
+  (`armyUpkeep`/`payUpkeep`), player alerts (`alertPlayer`)
+- `js/seasons.js` — the seasons (a pure function of `game.dayCount`): farm
+  multiplier, happiness, winter march and attrition, AI winter granary
 - `js/civilians.js` — the citizenry: population embodiment, job assignment,
   gathering trips, builders and construction sites, per-job sprite
   (`civSpriteFor`)
@@ -180,6 +185,11 @@ the code; stale docs are treated as bugs.
   past visual review here (BUGS #31), and the scan is the only thing that caught
   them all.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
+  Player move orders go through `UI.commandMove`, which sets `u.order` after
+  the formation; AI units have `order === null` and behave as before.
+- A soldier's max HP includes its rank (`unitMaxHp`); promote through
+  `promote()` so HP is rescaled. Morale changes go through `hitMorale` (it
+  starts the rout).
 - **Technology effects live in `f.mods` and nowhere else.** Never read a tech
   list to decide a number — add the effect to the tech's `effects` in `TECHS`,
   make `recomputeMods` carry it, and read `f.mods` where the number is used.

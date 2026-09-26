@@ -153,8 +153,9 @@ class Nation {
     if (mods && mods.interest > 0) {
       this.deposit('gold', Math.min(3, this.total('gold') * mods.interest / 60) * dt);
     }
-    // eating
+    // eating — the citizens, and the army's rations and pay (js/army.js)
     this.withdraw('food', this.pop * EAT_RATE * dt);
+    payUpkeep(this.faction, dt);
     this.starving = this.total('food') <= 0.0001;
 
     // happiness — the tax-free part is factored out (happinessTargetWithoutTax)
@@ -225,6 +226,7 @@ class Nation {
     if (this.faction.kingAlive === false) target -= 12;
     const mods = this.faction.mods;
     if (mods) target += mods.happiness;
+    if (typeof seasonHappiness === 'function') target += seasonHappiness();
     // leaders' opinions, grievances and triumphs of the nation (js/leaders.js)
     if (typeof nationMoodBonus === 'function') target += nationMoodBonus(this.faction);
     return target;

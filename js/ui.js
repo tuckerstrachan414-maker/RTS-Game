@@ -165,6 +165,7 @@ class UI {
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
         if (this.placing) { this.placing = null; return; }
+        if (this.orderMode) { this.orderMode = null; return; }
         this.clearSelection(); this.closeDiplomacy();
       }
       const typing = document.activeElement && document.activeElement.tagName === 'INPUT'
@@ -175,6 +176,19 @@ class UI {
       if (e.key.toLowerCase() === 'l' && !typing && !this.paused) this.toggleDiplomacy();
       if (e.key.toLowerCase() === 'v' && !typing && !this.paused) this.toggleLedger(game.victoryOn ? 'victory' : 'legacy');
       if (e.key.toLowerCase() === 'j' && !typing && !this.paused) this.toggleLedger('chronicle');
+      if (!typing && !this.paused && /^[1-9]$/.test(e.key)) {
+        if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.assignGroup(+e.key); }
+        else this.recallGroup(+e.key);
+      }
+      if (!typing && !this.paused && !e.ctrlKey && !e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'f') this.armOrder('attackmove');
+        else if (k === 'p') this.armOrder('patrol');
+        else if (k === 'x') this.stopSelected();
+        else if (k === 'z') this.holdSelected();
+        else if (k === 'i') this.selectIdleArmy();
+        else if (e.key === ' ') { e.preventDefault(); this.jumpToAlert(); }
+      }
       if (e.key.toLowerCase() === 'b' && !typing && !this.paused && !e.ctrlKey && !e.metaKey) {
         const i = BUILD_TABS.findIndex(t => t.key === this.buildTab);
         this.setBuildTab(BUILD_TABS[(i + 1) % BUILD_TABS.length].key);
@@ -259,7 +273,10 @@ class UI {
       this.mouse.down = false;
       const [sx, sy] = this.mouse.dragStart;
       const dx = Math.abs(e.offsetX - sx), dy = Math.abs(e.offsetY - sy);
-      if (dx < 6 && dy < 6) this.clickSelect(e.offsetX, e.offsetY);
+      if (dx < 6 && dy < 6) {
+        if (this.orderMode) this.rightClick(e.offsetX, e.offsetY);   // F / P then click
+        else this.clickSelect(e.offsetX, e.offsetY);
+      }
       else this.boxSelect(sx, sy, e.offsetX, e.offsetY);
       this.mouse.dragStart = null;
     });
@@ -565,7 +582,18 @@ class UI {
       const d = wdist(wx, wy - 0.3, u.x, u.y);
       if (d < bestD) { best = u; bestD = d; }
     }
-    if (best) { this.selection.units = [best]; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); return; }
+    if (best) {
+      const now = performance.now();
+      const dbl = this.lastUnitClick && now - this.lastUnitClick.t < 380 && this.lastUnitClick.key === best.type.key;
+      this.lastUnitClick = { t: now, key: best.type.key };
+      if (dbl && !best.type.civilian) {
+        // double-click: every one of that type on screen
+        const same = game.factions[0].units.filter(u => u.alive && !u.aboard && !u.mission
+          && u.type.key === best.type.key && this.onScreen(u.x, u.y, 0));
+        this.selection.units = same.length ? same : [best];
+      } else this.selection.units = [best];
+      this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); return;
+    }
     const [tx, ty] = [Math.floor(wx), Math.floor(wy)];
     const b = game.map.inBounds(tx, ty) ? game.map.buildingAt[game.map.idx(tx, ty)] : null;
     if (b) { this.selection.building = b; this.selection.units = []; this.selection.buildings = []; this.refreshPanel(); return; }
@@ -645,15 +673,107 @@ class UI {
         else { u.orderAttack(target); razed++; }
       }
       if (robbed && robbable) game.log(`${robbed} bandit${robbed > 1 ? 's' : ''} moving to rob the ${target.type.name}.`);
+      this.orderMode = null;
     } else {
-      // march in formation: ranks facing the destination, melee up front
-      formationMove(this.selection.units, tx, ty);
+      const mode = this.orderMode || (this.keys['control'] || this.keys['meta'] ? 'attackmove' : null);
+      this.orderMode = null;
+      this.commandMove(this.selection.units, tx, ty, mode, !!this.keys['shift']);
+    }
+  }
+
+  // The one place a player's move-type order is given. `mode`: null (a plain
+  // move — march through, don't stop to fight), 'attackmove' (fight your way
+  // there), 'patrol' (back and forth between here and there, attack-moving).
+  // `queue` (Shift) appends a waypoint instead of replacing the order.
+  commandMove(units, tx, ty, mode = null, queue = false) {
+    const us = units.filter(u => u.alive && !u.type.civilian && !u.type.envoy && !u.mission);
+    if (!us.length) return;
+    if (queue && us.some(u => u.path.length || u.target || u.waypoints.length)) {
+      for (const u of us) {
+        if (u.path.length || u.target || u.waypoints.length) u.waypoints.push([tx, ty]);
+        else { u.orderMove(tx, ty); u.order = { kind: mode === 'attackmove' ? 'attackmove' : 'move', x: tx, y: ty }; }
+      }
+      this.markOrder(tx, ty, 'queue');
+      return;
+    }
+    // march in formation: ranks facing the destination, melee up front
+    formationMove(us, tx, ty);
+    for (const u of us) {
+      u.waypoints = [];
+      const [dx, dy] = u.dest || [tx, ty];
+      if (mode === 'patrol') u.order = { kind: 'patrol', a: [u.tileX, u.tileY], b: [dx, dy], leg: 1 };
+      else if (mode === 'attackmove') u.order = { kind: 'attackmove', x: dx, y: dy };
+      else u.order = { kind: 'move' };
       // Ordering a defensive group to move means "defend there instead", not
       // "go there and then walk all the way back" — so the post moves with it.
-      for (const u of this.selection.units) {
-        if (u.groupRole === 'defensive') u.defensivePost = u.dest ? [u.dest[0], u.dest[1]] : [tx, ty];
-      }
+      if (u.groupRole === 'defensive') u.defensivePost = [dx, dy];
     }
+    this.markOrder(tx, ty, mode || 'move');
+  }
+
+  // A brief marker where an order was given, so a click has visible effect.
+  markOrder(tx, ty, kind) { this.orderMark = { x: tx + 0.5, y: ty + 0.5, t: performance.now(), kind }; }
+
+  stopSelected() {
+    for (const u of this.selection.units) {
+      if (!u.alive || u.type.civilian) continue;
+      u.path = []; u.dest = null; u.target = null; u.order = null; u.waypoints = [];
+    }
+  }
+  holdSelected() {
+    for (const u of this.selection.units) {
+      if (!u.alive || u.type.civilian || u.type.envoy) continue;
+      u.path = []; u.dest = null; u.target = null; u.waypoints = [];
+      u.order = { kind: 'hold', x: u.tileX, y: u.tileY };
+    }
+    game.log('Holding position.');
+  }
+  armOrder(mode) {
+    if (!this.selection.units.some(u => !u.type.civilian)) return;
+    this.orderMode = mode;
+    game.log(mode === 'attackmove'
+      ? (this.isTouch ? 'Attack-move: double-tap where to fight your way to.' : 'Attack-move: right-click where to fight your way to.')
+      : (this.isTouch ? 'Patrol: double-tap the far end of the patrol.' : 'Patrol: right-click the far end of the patrol.'));
+  }
+
+  // ---------- control groups ----------
+  assignGroup(n) {
+    const us = this.selection.units.filter(u => u.alive && !u.type.civilian);
+    if (!us.length) return;
+    this.groups = this.groups || {};
+    this.groups[n] = us.map(u => u.id);
+    game.log(`Group ${n}: ${us.length} unit${us.length > 1 ? 's' : ''}.`);
+  }
+  recallGroup(n) {
+    const ids = this.groups && this.groups[n];
+    if (!ids) return;
+    const set = new Set(ids);
+    const us = game.factions[0].units.filter(u => u.alive && !u.aboard && set.has(u.id));
+    this.groups[n] = us.map(u => u.id);
+    if (!us.length) return;
+    const now = performance.now();
+    // pressing the number twice jumps the camera to the group
+    if (this.lastGroupKey && this.lastGroupKey.n === n && now - this.lastGroupKey.t < 400) {
+      const cx = us.reduce((a, u) => a + u.x, 0) / us.length, cy = us.reduce((a, u) => a + u.y, 0) / us.length;
+      this.centerOn(cx, cy);
+    }
+    this.lastGroupKey = { n, t: now };
+    this.selection.units = us; this.selection.building = null; this.selection.buildings = [];
+    this.splitMode = null;
+    this.refreshPanel();
+  }
+  selectIdleArmy() {
+    const us = game.factions[0].units.filter(u => u.alive && !u.aboard && !u.type.civilian && !u.type.envoy
+      && !u.mission && !u.target && !u.path.length && !u.order && !u.garrisoned() && !u.type.naval);
+    if (!us.length) return game.log('No idle soldiers.');
+    this.selection.units = us; this.selection.building = null; this.selection.buildings = [];
+    this.centerOn(us[0].x, us[0].y);
+    this.refreshPanel();
+  }
+  jumpToAlert() {
+    const a = latestAlert();
+    if (!a) return;
+    this.centerOn(a.x, a.y);
   }
 
   tryPlace() {
@@ -1054,7 +1174,8 @@ class UI {
     el('r-happy').innerHTML = hap + '%' + (n.starving ? ' ' + icon('wilted') : hap >= 70 ? ' ' + icon('happy') : hap >= 40 ? ' ' + icon('neutral') : ' ' + icon('angry'));
     el('r-happy').className = hap >= 70 ? 'good' : hap >= 40 ? '' : 'bad';
     el('r-food').className = n.starving ? 'bad' : '';
-    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'}`;
+    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'} · ${season().name}`;
+    el('r-daynight').parentElement.title = `${season().name} of Year ${yearOf()} — the season turns in ${fmtDuration(secondsToNextSeason())}. Farms ×${season().farm}; winter slows and wears down armies in enemy land.`;
     this.refreshKnowledgeStat();
     this.refreshBuildLocks();
   }
@@ -1269,15 +1390,33 @@ class UI {
       for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
       if (hauling) html += `<div class="good">Hauling plunder: ${icon('food')}${Math.floor(carried.food)} ${icon('wood')}${Math.floor(carried.wood)} ${icon('stone')}${Math.floor(carried.stone)} ${icon('gold')}${Math.floor(carried.gold)}</div>`;
       if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
+      html += this.armyStatusHTML(us);
       const fighters = us.filter(u => !u.type.envoy);
       if (fighters.length) html += this.targetPriorityHTML(fighters) + this.groupRoleHTML(fighters);
       if (fighters.length > 1) {
         html += `<div style="margin-top:8px"><button id="split-group" title="Peel some of these troops off into a group of their own, so the two halves can take different roles">Split Group</button></div>`;
       }
+      if (fighters.length) {
+        html += `<div class="orders">`
+          + `<button data-ord="attackmove" class="${this.orderMode === 'attackmove' ? 'on' : ''}" title="Fight your way to a spot (F, or Ctrl+right-click)">${icon('sword')} Attack-move</button>`
+          + `<button data-ord="patrol" class="${this.orderMode === 'patrol' ? 'on' : ''}" title="Walk back and forth, fighting anything met (P)">Patrol</button>`
+          + `<button data-ord="hold" title="Stand here; fight only what comes within reach (Z)">${icon('shield')} Hold</button>`
+          + `<button data-ord="stop" title="Drop every order (X)">Stop</button>`
+          + `</div>`;
+      }
       html += this.isTouch
-        ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
-        : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
+        ? `<div class="dim">Double-tap: move (marches through) / attack. Hold + drag: box-select.</div>`
+        : `<div class="dim">Right-click: move (marches through) · Ctrl+right-click: attack-move · Shift: queue waypoints · Ctrl+1-9: make a group, 1-9: select it.</div>`;
       p.innerHTML = html;
+      p.querySelectorAll('[data-ord]').forEach(b => {
+        b.onclick = () => {
+          const o = b.dataset.ord;
+          if (o === 'stop') this.stopSelected();
+          else if (o === 'hold') this.holdSelected();
+          else this.armOrder(o);
+          this.refreshPanel();
+        };
+      });
       // Wire type-based selection controls
       p.querySelectorAll('.ts-plus').forEach(btn => {
         btn.onclick = () => {
@@ -1338,6 +1477,36 @@ class UI {
       const split = document.getElementById('split-group');
       if (split) split.onclick = () => { this.splitMode = { picked: new Set() }; this.refreshPanel(); };
     }
+  }
+
+  // Rank, experience, morale and orders — for one soldier in detail, for a
+  // group in summary.
+  armyStatusHTML(us) {
+    const soldiers = us.filter(u => !u.type.civilian && !u.type.envoy);
+    if (!soldiers.length) return '';
+    const bar = (frac, col) => `<span class="mbar"><span style="width:${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%;background:${col}"></span></span>`;
+    const orderName = u => u.routing ? '<b class="bad">Routing!</b>'
+      : !u.order ? (u.target ? 'Fighting' : u.path.length ? 'Moving' : 'Idle')
+      : { move: 'Moving (no stopping)', attackmove: 'Attack-moving', hold: 'Holding position', patrol: 'Patrolling' }[u.order.kind];
+    if (soldiers.length === 1) {
+      const u = soldiers[0];
+      const next = RANKS[u.rank + 1];
+      const into = next ? (u.xp - RANKS[u.rank].xp) / (next.xp - RANKS[u.rank].xp) : 1;
+      return `<div class="astat">`
+        + (u.legendName ? `<div class="legend">${icon('star')} ${u.legendName}</div>` : '')
+        + `<div class="row"><span>${'⌃'.repeat(u.rank) || '·'} ${RANKS[u.rank].name}</span>${next ? bar(into, '#c9a64a') : '<span class="dim">max rank</span>'}</div>`
+        + `<div class="row"><span>Morale ${Math.round(u.morale)}</span>${bar(u.morale / 100, u.morale < 30 ? '#c95a4a' : '#6fb04a')}</div>`
+        + `<div class="row"><span>HP ${Math.ceil(u.hp)}/${Math.round(u.maxHp)}</span>${bar(u.hp / u.maxHp, '#5c5')}</div>`
+        + `<div class="dim">${orderName(u)}${u.waypoints.length ? ` · ${u.waypoints.length} waypoint${u.waypoints.length > 1 ? 's' : ''} queued` : ''}</div></div>`;
+    }
+    const avg = soldiers.reduce((a, u) => a + u.morale, 0) / soldiers.length;
+    const ranks = [0, 0, 0, 0];
+    for (const u of soldiers) ranks[u.rank]++;
+    const rankText = ranks.map((n, i) => n && i ? `${n} ${RANKS[i].name}${n > 1 ? 's' : ''}` : '').filter(Boolean).join(', ');
+    const routing = soldiers.filter(u => u.routing).length;
+    return `<div class="astat"><div class="row"><span>Morale ${Math.round(avg)}</span>${bar(avg / 100, avg < 30 ? '#c95a4a' : '#6fb04a')}</div>`
+      + (rankText ? `<div class="dim">${rankText}</div>` : '')
+      + (routing ? `<div class="bad">${routing} routing!</div>` : '') + `</div>`;
   }
 
   // The group's targeting priority. A selection whose members disagree shows a
@@ -1501,13 +1670,15 @@ class UI {
     const stock = r => `<div class="row"><span>In storage</span><b>${Math.floor(n.total(r))} / ${n.capacityFor(r) >= 1e8 ? '∞' : n.capacityFor(r)}</b></div>`;
     const count = k => f.buildings.filter(b => b.done && b.type.key === k).length;
     if (key === 'food') {
-      const inc = estimateIncome(f, 'food'), eat = n.pop * EAT_RATE;
+      const inc = estimateIncome(f, 'food'), eat = n.pop * EAT_RATE, rations = armyUpkeep(f).food;
       return head(icon('food'), 'Food')
         + `<div class="desc">Grown by Farm workers on crop fields — +50% next to water, +25% near a Well. Feeds your people; a surplus lets the nation grow.</div>`
         + stock('food')
         + `<div class="row"><span>From ${count('farm')} farm${count('farm') === 1 ? '' : 's'}</span><b class="good">+${inc.toFixed(1)}/s</b></div>`
         + `<div class="row"><span>Eaten by ${n.pop} citizens</span><b class="bad">−${eat.toFixed(1)}/s</b></div>`
-        + `<div class="row"><span>Net</span><b class="${inc - eat >= 0 ? 'good' : 'bad'}">${inc - eat >= 0 ? '+' : ''}${(inc - eat).toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Army rations</span><b class="bad">−${armyUpkeep(f).food.toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>${season().name} harvest</span><b>×${season().farm}</b></div>`
+        + `<div class="row"><span>Net</span><b class="${inc - eat - rations >= 0 ? 'good' : 'bad'}">${inc - eat - rations >= 0 ? '+' : ''}${(inc - eat - rations).toFixed(1)}/s</b></div>`
         + (n.starving ? `<div class="bad">Your people are STARVING — build farms now!</div>` : '');
     }
     if (key === 'wood') {
@@ -1530,6 +1701,7 @@ class UI {
         + stock('gold')
         + `<div class="row"><span>From ${count('mine')} mine${count('mine') === 1 ? '' : 's'} + ${count('market')} market${count('market') === 1 ? '' : 's'}</span><b class="good">+${estimateIncome(f, 'gold').toFixed(1)}/s</b></div>`
         + `<div class="row"><span>Taxes (${Math.round(n.tax * 100)}%)</span><b class="good">+${taxes.toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Army pay</span><b class="bad">−${armyUpkeep(f).gold.toFixed(2)}/s</b></div>`
         + `<div class="dim">Lifetime trade earnings: ${Math.floor(game.tradeGold)} gold.</div>`;
     }
     if (key === 'pop') {
@@ -1559,6 +1731,7 @@ class UI {
         [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * TAX_HAPPINESS_COST)],
       ];
       if (f.kingAlive === false) rows.push(['The King is dead', -12]);
+      if (seasonHappiness()) rows.push([season().name, seasonHappiness()]);
       for (const m of (f.moods || [])) if (m.until > game.time) rows.push([m.label, Math.round(m.value)]);
       return head(icon('heart'), 'Happiness')
         + `<div class="desc">How content your people are. Above 50% the nation can grow; low happiness stalls it.</div>`
@@ -1987,6 +2160,7 @@ class UI {
 
     // projectiles
     for (const p of game.projectiles) this.drawProjectile(p);
+    this.drawOrderMarks();
 
     // day/night tint over the whole scene
     this.drawDayNightOverlay();
@@ -2006,6 +2180,41 @@ class UI {
     this.minimapT -= 1;
     if (this.minimapT <= 0) { this.minimapT = 20; this.renderMinimap(); }
     this.blitMinimap();
+  }
+
+  // Where an order was just given (a ring that shrinks away), the queued
+  // waypoints of the selected units, and a crosshair while an attack-move or a
+  // patrol is armed.
+  drawOrderMarks() {
+    const ctx = this.ctx, z = this.cam.zoom;
+    const m = this.orderMark;
+    if (m) {
+      const age = (performance.now() - m.t) / 600;
+      if (age >= 1) this.orderMark = null;
+      else {
+        const [sx, sy] = this.worldToScreen(m.x, m.y);
+        ctx.strokeStyle = m.kind === 'attackmove' ? `rgba(255,110,90,${1 - age})` : m.kind === 'patrol' ? `rgba(120,200,255,${1 - age})` : `rgba(140,255,140,${1 - age})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(sx, sy, (8 - age * 5) * z, (4 - age * 2.5) * z, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    const sel = this.selection.units.filter(u => u.alive && u.waypoints && u.waypoints.length);
+    if (sel.length) {
+      ctx.setLineDash([3 * z, 3 * z]);
+      ctx.strokeStyle = 'rgba(140,255,140,0.45)'; ctx.lineWidth = 1;
+      for (const u of sel.slice(0, 20)) {
+        let [px, py] = this.worldToScreen(u.x, u.y);
+        ctx.beginPath(); ctx.moveTo(px, py);
+        for (const [x, y] of u.waypoints) { const [qx, qy] = this.worldToScreen(x + 0.5, y + 0.5); ctx.lineTo(qx, qy); }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    if (this.orderMode && !this.isTouch) {
+      const x = this.mouse.x, y = this.mouse.y;
+      ctx.strokeStyle = this.orderMode === 'attackmove' ? '#ff7a64' : '#78c8ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.moveTo(x - 13, y); ctx.lineTo(x + 13, y); ctx.moveTo(x, y - 13); ctx.lineTo(x, y + 13); ctx.stroke();
+    }
   }
 
   // Subtle dashed frontier lines wherever territory ownership changes between
@@ -2389,6 +2598,12 @@ class UI {
       if (u.mission && u.mission.kind === 'caravan') badge('#fd5');
       else if (u.mission && u.mission.kind === 'envoy') badge('#fff');
       if (u.carryTotal() > 0) badge('#a6763a', '#ffd24a');   // hauling plunder
+      if (u.rank) this.drawRank(u, px, y - gap);
+      if (u.routing) {                                     // a white rag on a stick
+        const w = Math.max(3, Math.round(3 * z));
+        ctx.fillStyle = '#6b4a2a'; ctx.fillRect(Math.round(px + 4 * z), Math.round(headY - 6 * z), Math.max(1, Math.round(z * 0.6)), Math.round(7 * z));
+        ctx.fillStyle = '#f0f0f0'; ctx.fillRect(Math.round(px + 4 * z), Math.round(headY - 6 * z), w, Math.round(2.2 * z));
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -2430,6 +2645,20 @@ class UI {
       }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // Veterancy chevrons: one per rank, gold, stacked; a Legend's are bright.
+  drawRank(u, px, y) {
+    const ctx = this.ctx, z = this.cam.zoom;
+    const w = Math.max(3, Math.round(2.5 * z)), h = Math.max(1, Math.round(z * 0.8));
+    for (let i = 0; i < u.rank; i++) {
+      const yy = Math.round(y - i * (h + Math.max(1, Math.round(z * 0.6))));
+      ctx.fillStyle = u.rank >= 3 ? '#fff3b0' : '#ffd24a';
+      ctx.fillRect(Math.round(px - w), yy, w, h);
+      ctx.fillRect(Math.round(px), yy, w, h);
+      ctx.fillStyle = '#5c4312';
+      ctx.fillRect(Math.round(px - w), yy + h, w * 2, Math.max(1, Math.round(z * 0.4)));
+    }
   }
 
   // Siege engines are single baked sprites (js/assets.js bakeSiege) that roll
@@ -2729,6 +2958,21 @@ class UI {
     mctx.putImageData(img, 0, 0);
   }
 
+  // Recent alerts ping the minimap: a red ring that swells and fades.
+  drawMinimapPings(ctx, w, h) {
+    if (!game.alerts) return;
+    const now = game.time;
+    for (const a of game.alerts) {
+      const age = now - a.t;
+      if (age > 6) continue;
+      const x = a.x / MAP_W * w, y = a.y / MAP_H * h;
+      const r = 3 + (age % 1.5) * 6;
+      ctx.strokeStyle = `rgba(255,80,60,${Math.max(0, 1 - age / 6)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+
   blitMinimap() {
     const mm = this.minictx;
     mm.clearRect(0, 0, this.minimap.width, this.minimap.height);
@@ -2738,6 +2982,7 @@ class UI {
     const kx = this.minimap.width / MAP_W, ky = this.minimap.height / MAP_H;
     mm.strokeStyle = '#fff';
     mm.strokeRect(this.cam.x * kx, this.cam.y * ky, this.canvas.width / s * kx, this.canvas.height / s * ky);
+    this.drawMinimapPings(mm, this.minimap.width, this.minimap.height);
   }
 }
 

@@ -67,6 +67,17 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
 
 Single-unit selections skip all of this and just call `orderMove` directly.
 
+**Player orders ride on top of the formation** (`UI.commandMove`, js/ui.js).
+The right-click no longer calls `formationMove` directly: `commandMove` does,
+and then stamps each mover's `u.order` — `{kind: 'move'}` (march through; no
+auto-acquire and no fight-back while the path is non-empty),
+`{kind: 'attackmove', x, y}` (acquire as usual, and `nextOrderLeg` re-paths to
+the slot after every fight), or `{kind: 'patrol', a, b, leg}`. Each unit's
+destination for the order is its own formation slot (`u.dest` after
+`formationMove`), so an attack-move re-forms on arrival rather than collapsing
+onto one tile. Shift queues `u.waypoints` instead. AI armies never get an
+`order`; `formationMove` is unchanged for them.
+
 **`separateUnits(dt)`**, called every tick from `Game.tick()` in `main.js`,
 is the physical no-overlap constraint — it runs regardless of whether units
 are marching in formation, standing still, or fighting. Every alive unit

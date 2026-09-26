@@ -187,7 +187,7 @@ function aiTick(f, dt) {
 // rates itself: a farm's real output now depends on how far its hands carry the
 // harvest, and a nation that thinks it is fed when it is not will starve.
 function estimateFoodRate(f) {
-  return estimateIncome(f, 'food') - f.nation.pop * EAT_RATE;
+  return estimateIncome(f, 'food') - f.nation.pop * EAT_RATE - armyUpkeep(f).food;
 }
 
 // richestEnemyStorage and maxThreatAgainst are gone: both read every rival's

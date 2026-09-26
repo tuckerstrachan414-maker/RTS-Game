@@ -180,6 +180,8 @@ function aiPlanDemand(f) {
   if (nextEra && techsOfEra(f, f.era) >= nextEra.needTechs - 1) {
     for (const k in nextEra.cost) if (k in d) d[k] += nextEra.cost[k];
   }
+  // fill the granaries through autumn for the winter (js/seasons.js)
+  d.food += winterFoodReserve(f);
   const short = Math.max(0, f.brain.utility.armyTarget() - f.armyUnits().length);
   if (short > 0) { d.food += short * 25; d.gold += short * 12; }
   if (arch.pursuesGrand && n.pop >= 40) {
@@ -295,8 +297,15 @@ class AIUtilityEngine {
     // a nation pursuing a Domination victory keeps a bigger army than its
     // ambition alone would (js/victory.js)
     const dom = 1 + aiVictoryPush(f, 'domination') * 0.6;
-    return Math.min(Math.round(arch.armyMax * dom),
+    const want = Math.min(Math.round(arch.armyMax * dom),
       Math.round((arch.armyBase + threat * 0.12 + f.nation.pop * arch.armyPerPop) * game.diff.armyMul * dom));
+    // An army has to be paid (js/army.js): never keep more soldiers than about
+    // two thirds of the gold income can carry — a nation at war dips into its
+    // treasury, so it allows itself a margin on what it has banked.
+    const income = estimateIncome(f, 'gold') + f.nation.taxIncome() + (f.mods ? f.mods.goldFlat : 0);
+    const banked = game.diplomacy.atWarAny(f.id) ? f.nation.total('gold') / 600 : 0;
+    const payable = Math.floor((income * 0.65 + banked) / UPKEEP_GOLD) + 4;
+    return Math.max(3, Math.min(want, payable));
   }
 
   // Every building in the game costs wood — including the Market, the only way

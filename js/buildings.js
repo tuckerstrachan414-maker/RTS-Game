@@ -464,6 +464,7 @@ function workerYieldRate(map, b, atTile = null) {
       if (nearBuilding(map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
     }
     rate *= bonus;
+    if (typeof seasonFarmMul === 'function') rate *= seasonFarmMul();   // js/seasons.js
   }
   if (type.key === 'lumber' && !atTile && !findWorkTile(map, b)) return 0;
   // the nation's technology, and the building's own level

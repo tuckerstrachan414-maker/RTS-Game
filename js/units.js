@@ -103,8 +103,17 @@ class Unit {
     this.type = UNIT_TYPES[typeKey];
     this.faction = factionId;
     this.x = tx + 0.5; this.y = ty + 0.5;    // position in tile units (center)
-    this.rank = 0;             // veterancy rank (0 recruit … 3 legend)
+    this.rank = 0;             // veterancy rank (0 recruit … 3 legend) — js/army.js
     this.xp = 0;
+    this.legendName = null;
+    this.morale = 100;         // 0..100; breaks into a rout below ROUT_AT
+    this.routing = null;       // {until} while fleeing home
+    this.lastHurtT = -99;      // healing waits for a lull
+    this.chargeDist = 0;       // tiles ridden since the last blow (cavalry charge)
+    // Standing orders from the player (null for the AI's units, which are
+    // driven by their brain): {kind:'move'|'attackmove'|'hold'|'patrol', ...}
+    this.order = null;
+    this.waypoints = [];       // Shift-queued destinations, taken in order
     this.maxHp = unitMaxHp(this);
     this.hp = this.maxHp;
     this.path = [];
@@ -168,6 +177,8 @@ class Unit {
     this.target = target;
     this.dest = null;
     this.formSpeed = 0;
+    this.order = null;
+    this.waypoints = [];
   }
 
   // send a robber to steal from an enemy storage building, then flee home
@@ -220,17 +231,28 @@ class Unit {
       game.diplomacy.tickMission(this, dt);  // caravan / envoy
     }
 
+    // a broken soldier runs for home and fights nobody (js/army.js)
+    if (this.routing && !this.mission) return tickRout(this, dt);
+
     // auto-acquire enemies in range. A garrison sweeps from its post instead of
     // from itself, so its reach is fixed to the ground it is holding and does
     // not creep forward every time it takes a step toward something.
-    if (!this.target && this.aggressive && !this.type.envoy && !this.mission) {
+    //
+    // A plain player move order means MOVE: the unit marches through and does
+    // not stop to fight until it arrives (attack-move is how you fight your way
+    // somewhere). Holding position only takes what is already within reach.
+    const o = this.order;
+    const marching = o && o.kind === 'move' && this.path.length > 0;
+    if (!this.target && this.aggressive && !this.type.envoy && !this.mission && !marching) {
       this.target = this.garrisoned()
         ? findEnemyNear(this, DEFENSE_LEASH, this.defensivePost[0] + 0.5, this.defensivePost[1] + 0.5)
+        : o && o.kind === 'hold' ? findEnemyNear(this, unitRange(this) + 0.4)
         : findEnemyNear(this, 5);
     }
     if (this.target && (targetDead(this.target) || !game.diplomacy.hostile(this.faction, targetFaction(this.target)))) {
       this.target = null;
     }
+    if (this.target && o && o.kind === 'hold' && this.distTo(this.target) > unitRange(this) + 0.6) this.target = null;
     // …and drops anything that runs beyond the leash rather than giving chase.
     // The +1 is hysteresis: without it a target hovering on the boundary gets
     // picked up and dropped on alternating ticks.
@@ -258,11 +280,47 @@ class Unit {
       this.followPath(dt);
     } else if (this.carryTotal() > 0 && !this.type.envoy) {
       this.startHaul();   // idle with plunder → carry it home
+    } else if (this.nextOrderLeg()) {
+      // a queued waypoint, a patrol turning back, or an attack-move resuming
+      // its march after a fight
     } else if (this.garrisoned()) {
       this.tickPatrol(dt);
     } else {
       this.setAnim('idle');
     }
+  }
+
+  // With nothing to fight and nowhere to walk: what do the standing orders say?
+  // Returns true when it gave the unit somewhere new to go.
+  nextOrderLeg() {
+    if (this.waypoints.length) {
+      const [x, y] = this.waypoints.shift();
+      const keep = this.order;
+      this.orderMove(x, y);
+      this.order = keep && keep.kind === 'attackmove' ? { kind: 'attackmove', x, y } : keep;
+      return true;
+    }
+    const o = this.order;
+    if (!o) return false;
+    if (o.kind === 'attackmove') {
+      if (wdist(this.x, this.y, o.x + 0.5, o.y + 0.5) > 1.6 && (this.repathT <= 0 || !this.dest)) {
+        this.orderMove(o.x, o.y);
+        this.order = o;
+        this.repathT = 1.5;
+        return this.path.length > 0;
+      }
+      this.order = null;
+      return false;
+    }
+    if (o.kind === 'patrol') {
+      o.leg = 1 - o.leg;
+      const [x, y] = o.leg ? o.b : o.a;
+      this.orderMove(x, y);
+      this.order = o;
+      return this.path.length > 0;
+    }
+    if (o.kind === 'move') this.order = null;
+    return false;
   }
 
   garrisoned() { return this.groupRole === 'defensive' && !!this.defensivePost && !this.mission; }
@@ -376,7 +434,19 @@ class Unit {
       if (this.type.projectile) {
         game.projectiles.push(new Projectile(this, this.target));
       } else {
-        dealDamage(this, this.target);
+        // The cavalry charge: a horseman who has ridden a few tiles into the
+        // fight lands his first blow half again as hard and shakes the man he
+        // hits — unless that man is holding a spear, a halberd or a shield.
+        let mult = 1;
+        const t = this.target;
+        if (this.type.mounted && this.chargeDist >= 3 && t instanceof Unit
+            && !['spear', 'halberd', 'shield'].includes(t.type.key)) {
+          mult = 1.5 + (game.factions[this.faction].mods.mountedDmg > 0 ? 0.25 : 0);
+          hitMorale(t, 18);
+          if (typeof fxCharge === 'function') fxCharge(this, t);
+        }
+        this.chargeDist = 0;
+        dealDamage(this, t, mult);
       }
     } else if (this.anim !== 'attack') this.setAnim('idle');
   }
@@ -400,6 +470,7 @@ class Unit {
     const step = speed * dt;
     if (Math.abs(dx) > 0.05) this.facing = dx > 0 ? 1 : -1;
     this.setAnim('walk');
+    if (this.type.mounted) this.chargeDist += Math.min(step, d);
     if (d <= step) {
       this.x = gx; this.y = gy;
       this.path.shift();
@@ -417,14 +488,24 @@ class Unit {
   takeDamage(amount, attacker) {
     if (this.dead) return;
     this.hp -= amount;
+    this.lastHurtT = game.time;
+    if (attacker && attacker instanceof Unit) gainXp(attacker, Math.min(amount, this.hp + amount) * XP_PER_DAMAGE);
+    if (this.faction === 0 && attacker && attacker.faction !== 0) {
+      alertPlayer(this.x, this.y, this.type.civilian ? 'Your citizens are under attack!' : this.type.naval
+        ? 'Your ships are under attack!' : 'Your troops are under attack!', this.type.civilian ? 'civ' : 'army');
+    }
     if (this.hp <= 0) {
       this.dead = true;
       this.setAnim('death', true);
+      if (attacker && attacker instanceof Unit) gainXp(attacker, XP_PER_KILL);
       onUnitDeath(this, attacker);
     } else {
       if (this.anim === 'idle') this.setAnim('hurt', true);
-      // fight back if idle — civilians have no fight to give and run instead
-      if (!this.target && !this.type.envoy && !this.type.civilian
+      hitMorale(this, amount * 0.6);
+      // fight back if idle — civilians have no fight to give and run instead;
+      // a unit under a plain move order keeps moving
+      const marching = this.order && this.order.kind === 'move' && this.path.length > 0;
+      if (!this.target && !this.type.envoy && !this.type.civilian && !this.routing && !marching
           && attacker && game.diplomacy.hostile(this.faction, targetFaction(attacker))) {
         this.target = attacker;
       }
@@ -568,8 +649,8 @@ function unitRange(u) {
   return r;
 }
 
-function dealDamage(attacker, target) {
-  const dmg = effectiveDamage(attacker, target);
+function dealDamage(attacker, target, mult = 1) {
+  const dmg = effectiveDamage(attacker, target) * mult;
   if (target instanceof Building) damageBuilding(target, dmg, attacker);
   else target.takeDamage(dmg, attacker);
 }
@@ -577,7 +658,13 @@ function dealDamage(attacker, target) {
 function damageBuilding(b, dmg, attacker) {
   if (b.hp <= 0) return;
   b.hp -= dmg;
+  b.lastHurtT = game.time;
+  if (attacker && attacker instanceof Unit) gainXp(attacker, dmg * XP_PER_DAMAGE * 0.3);
+  if (b.faction === 0 && attacker && attacker.faction !== 0) {
+    alertPlayer(b.cx, b.cy, `Your ${b.type.name} is under attack!`, 'bld');
+  }
   if (b.hp <= 0) {
+    if (attacker && attacker instanceof Unit) gainXp(attacker, XP_PER_RAZE);
     onBuildingDestroyed(b, attacker);
   }
 }

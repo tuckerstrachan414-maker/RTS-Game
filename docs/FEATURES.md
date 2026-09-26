@@ -376,7 +376,29 @@ shows `Day N` with a sun/moon glyph. **AI nations now play to the clock**: their
 tax controller (`solveTaxPolicy`, `js/ai-utility.js`) raises taxes through the
 night and eases them before dawn so happiness clears the growth gate, making the
 cycle a visible economic rhythm you can disrupt by dragging them into a war.
-Notably absent: no vision or stealth changes at night, no seasons.
+Notably absent: no vision or stealth changes at night.
+
+## Seasons — Moderate
+
+`js/seasons.js`. Four seasons of two days (ten minutes) each — a 40-minute
+year, so a two-hour match lives through three winters. Everything is a pure
+function of `game.dayCount` (it replays exactly, and the calendar is public to
+the AI):
+
+| Season | Farms | Happiness | Else |
+|---|---|---|---|
+| Spring | ×1.10 | +2 | |
+| Summer | ×1.20 | | |
+| Autumn | ×1.35 | | the harvest — the AI fills its granaries (`winterFoodReserve` into `aiPlanDemand`) |
+| Winter | ×0.45 | −3 | armies march 12% slower outside their own land; soldiers inside a hostile claim suffer attrition (0.15% HP/s — it wounds, never kills) |
+
+Farm yield goes through `workerYieldRate` (the one production formula),
+happiness through `happinessTargetWithoutTax` (so the AI's tax controller sees
+it), speed through `unitSpeed`, attrition through `tickArmy`. The topbar shows
+the season beside the day (hover for the year and the time to the next turn),
+the food tooltip the harvest multiplier, and spring and winter arrive with a
+title card. Seasonal ground art (snow, autumn leaves) is in the renderer — see
+Rendering.
 
 ## Physical resource storage — Deep
 
@@ -744,6 +766,58 @@ tiles, fight-back when hit, periodic repathing toward moving targets, building
 attack/destruction. Training consumes a citizen (requires 2 free) and runs
 through a per-castle queue with rally points; training time comes from
 `trainTimeFor` (Feudalism takes 20% off).
+
+**The life of a soldier** (`js/army.js`):
+- **Veterancy.** Soldiers earn experience from damage dealt (0.3/HP), kills
+  (+12) and razing (+18), and rise Recruit → Veteran (40) → Elite (120) →
+  Legend (260), each rank +10% damage and HP (`RANK_BONUS`, folded into
+  `effectiveDamage` and `unitMaxHp`). A promotion is a second wind (+20% HP,
+  +30 morale). **Legends are named** — "Aldric the Bold" — from the sim's own
+  RNG, chronicled, and steady the men around them. Ranks show as gold chevrons
+  over the unit and in the panel.
+- **Morale and the rout.** Every soldier has morale 0-100. Wounds (0.6 per HP),
+  comrades dying within 5 tiles (−8), the King's death (−35 army-wide), a
+  cavalry charge (−18) and being outnumbered wear it down; being out of the
+  fight, standing on home ground, the King or a Legend within 4 tiles build it
+  back (`tickArmy`, twice a second over a 6-tile spatial grid, so it is O(n)).
+  Veterans resist (−15% per rank). Below 12 — or badly wounded and shaken — a
+  soldier **routs** (`startRout`): drops its target and orders, runs for its
+  Town Hall, spreads panic to those beside it, and rallies after at least six
+  seconds once back above 45 (`tickRout`). A routing unit carries a white rag.
+  Unpaid armies cap at 60.
+- **The cavalry charge.** A mounted unit that has ridden 3+ tiles since its
+  last blow lands its next one at ×1.5 (×1.75 with Chivalry) and shakes the
+  target — unless the target holds a spear, a halberd or a shield.
+- **Healing and attrition.** Out of combat for 6s, a soldier heals 1.2%/s on
+  home ground and 3%/s within reach of a Town Hall, Castle, Church or the
+  Cathedral (ships at a Dock), scaled by Theology and the Cathedral. Winter
+  deep in hostile land wears an army down (`attritionRate`, js/seasons.js) —
+  it wounds but never kills.
+- **Upkeep.** A soldier still eats (0.04 food/s) and draws pay (0.015 gold/s;
+  siege engines and ships 0.04 gold, no food); Standing Army takes 40% off
+  (`armyUpkeep`, paid in `Nation.tick`). An unpaid army's morale is capped and
+  its people grumble. The AI now counts rations in `estimateFoodRate` and never
+  keeps more soldiers than about two thirds of its gold income can pay
+  (`armyTarget`).
+- **Alerts.** Anything of the player's attacked raises a throttled alert
+  (`alertPlayer`: troops, citizens, ships, buildings, routs), logged with
+  "Space to look", pinged on the minimap as a swelling red ring; **Space**
+  centres the camera on the newest.
+
+**Standing orders** (`Unit.order`, `Unit.waypoints`, `UI.commandMove`). A plain
+right-click is now a real **move**: the group marches through and does not stop
+to fight until it arrives (fight-back included). **Attack-move** (F then click,
+or Ctrl+right-click) fights its way there and resumes the march after each
+fight. **Patrol** (P then click) walks back and forth between here and there,
+attack-moving. **Hold** (Z) stands fast and engages only what is already within
+reach. **Stop** (X) drops everything. **Shift** queues waypoints (drawn as a
+dashed path while selected). **Control groups**: Ctrl+1-9 assigns, 1-9
+selects, pressing the number twice jumps the camera. **Double-click** a soldier
+selects all of that type on screen; **I** selects idle soldiers. The unit panel
+shows one soldier's rank, experience, morale, HP and current order — or a
+group's average morale, ranks and routing count — and carries Attack-move /
+Patrol / Hold / Stop buttons for touch. AI armies keep their brain-driven
+orders; `order` is null for them.
 
 **Siege and fortifications.** Walls, gates and Watchtowers carry
 `type.fortification`: a non-siege attacker does `FORT_RESIST` (35%) of its

@@ -140,6 +140,7 @@ class Game {
         if (f.id === 0) grown = f.nation.pop - before;
       }
       if (grown > 0) this.log(`Dawn breaks — ${grown} new citizen${grown > 1 ? 's' : ''} joined your nation.`, 'good');
+      onNewDaySeason();
     }
     this.isDay = isDayNow;
     for (const f of this.factions) {
@@ -154,6 +155,7 @@ class Game {
       f.units = f.units.filter(u => !u.dead || u.deathT < 8);
     }
     separateUnits(dt);
+    tickArmy(dt);
     for (const p of this.projectiles) p.tick(dt);
     this.projectiles = this.projectiles.filter(p => !p.done);
     this.market.tick(dt);
@@ -333,7 +335,12 @@ function onUnitDeath(unit, attacker) {
   }
   // a killed civilian is a citizen the nation no longer has
   if (unit.type.civilian) onCivilianDeath(unit);
+  // comrades falling around a soldier shake it; a King falling shakes an army
+  if (!unit.type.civilian && !unit.type.naval) {
+    forEachSoldierNear(unit.x, unit.y, 5, v => { if (v !== unit && v.faction === unit.faction) hitMorale(v, 8); });
+  }
   if (unit.type.key === 'king') {
+    for (const v of f.units) hitMorale(v, 35);
     f.kingAlive = false;
     game.log(`The King of ${f.name} has fallen in battle!`, unit.faction === 0 ? 'bad' : '');
     chronicle(`The King of ${f.name} fell in battle${attacker && attacker.faction !== undefined ? ' against ' + game.factions[attacker.faction].name : ''}.`, unit.faction, 'major');
