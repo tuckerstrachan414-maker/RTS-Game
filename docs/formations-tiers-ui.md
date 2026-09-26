@@ -440,6 +440,15 @@ Both full-screen overlays (`#difficulty`, `#gameover`) are
 overflows in *both* directions and the part above the viewport cannot be
 scrolled to, which clipped the first difficulty card on a 375px-tall phone.
 
+**The medieval theme changed colours only.** It remapped the stylesheet's
+palette in place and appended one theme block (gradients, gilt hairlines,
+serif type) that sets no size, padding or border width — so none of the rules
+above moved. The serif top-bar numerals are narrower than the sans ones: the
+top bar measured 36px (one row) at 1024×600 after the change against 61px (two
+rows) before, and 42px against 66px at 852×393; 667×375 is unchanged at 66px.
+The weather word in the top bar ("· Storm") did not wrap it at any of the five
+audit viewports.
+
 ## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
 
 Walls used to draw as procedural rectangles, then as one of two whole sprites
@@ -965,3 +974,30 @@ clock, so a tight 20-iteration timing loop can land on exactly one whole-world
 rebuild and report a number that has nothing to do with a real frame. Time
 `renderMinimapBase` on its own, and time `render` over enough iterations that
 the periodic work is amortised the way it is in the game.
+
+## Seasons, weather and effects — verification notes
+
+The seasonal art, the weather and the particle effects (`js/fx.js`) all run in
+the render loop on real time, so a headless shot has to let frames pass:
+
+- **Force a season** by setting `game.dayCount` (1-2 spring, 3-4 summer, 5-6
+  autumn, 7-8 winter); nothing else needs to move. `SeasonArt.current()` rebuilds
+  its sheets on the next frame.
+- **Force the weather** by writing the cache `weatherNow` reads:
+  `game.weatherStamp = game.dayCount * 2 + (game.isDay ? 0 : 1); game.weather = WEATHER.snow`.
+  It holds until the half-day turns. Then wait ~6 s of real time before the
+  screenshot — the weather eases in over five seconds (`WeatherFX.level`).
+- **Fire** needs a finished building under half HP on screen; **combat effects**
+  need blows landing on screen (they are no-ops off it). Staging a skirmish
+  beside the capital with `new Unit(key, fid, x, y)` pushed into two factions at
+  war, then unpausing for a few seconds, shows all of it.
+- A player capital's climate varies a lot by seed: seed 42 Small World sits at
+  temperature 0.79 (hot — dry season, no snow) and seed 7 at 0.63 (temperate).
+  Check `climateAt(th.cx, th.cy)` before expecting snow at home.
+- Render cost: time 30 `ui.render()` calls at zoom 1 and 3 with the weather
+  forced to rain and snow; with all of it on the numbers matched the pre-effects
+  build (≈32 ms at zoom 1 on seed 42, 5-7 ms at zoom 3).
+- Determinism is unaffected by construction (nothing in `js/fx.js` touches
+  sim state or `game.rng`), but the weather *mechanics* are sim — keep running
+  the two-run hash comparison after any change to `js/seasons.js`.
+

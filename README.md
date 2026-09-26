@@ -94,6 +94,18 @@ is the biggest) and collapse in Winter, so fill your granaries in the autumn.
 Winter chills your people, slows any army marching in foreign land, and wears
 down an army camped in enemy territory. Pick your campaigns accordingly.
 
+**And you can see it turn.** Meadows flower and orchards blossom in spring; the
+woods go gold and red in autumn and the harvest turns the fields gold; winter
+buries the land, the trees and the rooftops in snow and leaves the fields
+bare. The tropics have no snow — their winter is a dry season, when the grass
+bleaches to straw — and the far north is white from autumn on.
+
+**Watch the weather.** Every half-day brings its own: rain and storms in spring
+and autumn, fog, snow in winter. It shows in the top bar beside the season, and
+it matters: rain makes arrows and bolts hit 15% softer (a storm 25%, and slows
+ships), snow slows marching troops, and fog shortens every lookout's sight —
+the enemy's included, which makes a foggy morning a good time to move.
+
 **Every resource comes from a real tile:**
 
 | Resource | Comes from | Via |
@@ -176,6 +188,13 @@ colour, including yours, so you can read who owns a town at a glance. Trees,
 troops and buildings overlap each other by how near they are to you, so a
 soldier walking behind a keep goes behind it and a wood in front of a farm
 hides its front row.
+
+**And it is alive.** Chimneys smoke (more on a cold night), cavalry kick up
+dust, sunlight glints on the sea, and fireflies come out on summer nights. A
+fight throws sparks off armour and leaves blood on the ground; a building below
+half its strength catches fire and burns brighter as it falls, lighting up the
+night; a building that comes down collapses in a cloud of dust and leaves a
+scorch mark, and a catapult stone shakes the screen.
 
 **Box-select works on buildings too.** Drag a selection box like you would over
 an army; if it catches no units, it grabs every building inside instead (troops
@@ -723,6 +742,7 @@ Plain `<script>` modules, no build step:
 - `js/ui-research.js` — the Research screen, the Age banner, the knowledge readout
 - `js/wonders.js` — the seven Wonders: the race, their effects, their art, the AI
 - `js/upgrades.js` — building levels, builder repair, neighbour (adjacency) bonuses
+- `js/fx.js` — the living world: seasonal art, weather, fire, smoke, dust, blood and glints
 - `js/victory.js` — the five victories, the AI's race, legacy, milestones, the chronicle
 - `js/ui-victory.js` — the Ledger, the legacy chart, the end screen
 

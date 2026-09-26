@@ -1176,8 +1176,12 @@ class UI {
     el('r-happy').innerHTML = hap + '%' + (n.starving ? ' ' + icon('wilted') : hap >= 70 ? ' ' + icon('happy') : hap >= 40 ? ' ' + icon('neutral') : ' ' + icon('angry'));
     el('r-happy').className = hap >= 70 ? 'good' : hap >= 40 ? '' : 'bad';
     el('r-food').className = n.starving ? 'bad' : '';
-    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'} · ${season().name}`;
-    el('r-daynight').parentElement.title = `${season().name} of Year ${yearOf()} — the season turns in ${fmtDuration(secondsToNextSeason())}. Farms ×${season().farm}; winter slows and wears down armies in enemy land.`;
+    // the sky over your own capital, with its climate's say (js/seasons.js)
+    const home = game.factions[0].townhall();
+    const sky = home ? weatherAt(home.cx, home.cy) : weatherNow();
+    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'} · ${season().name}${sky.key === 'clear' ? '' : ' · ' + sky.name}`;
+    el('r-daynight').parentElement.title = `${season().name} of Year ${yearOf()} — the season turns in ${fmtDuration(secondsToNextSeason())}. Farms ×${season().farm}; winter slows and wears down armies in enemy land.`
+      + `\nWeather: ${sky.name}. ${sky.desc} It changes every half-day.`;
     this.refreshKnowledgeStat();
     this.refreshBuildLocks();
   }
@@ -2048,6 +2052,19 @@ class UI {
     const s = TILE * this.cam.zoom;
     ctx.fillStyle = '#2a3038';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    // the living world (js/fx.js): this frame's clock, the season's art, and a
+    // catapult's shudder
+    FX.beginFrame();
+    FX.update();
+    const season = SeasonArt.current();
+    const plain = [Assets.tileset];
+    const sheets = season ? season.sheets : null;
+    this.season = season;
+    climateShadeAt(0, 0);                    // make sure map.climateShade exists
+    const climate = game.map.climateShade;
+    const glints = this.cam.zoom >= 1.5;
+    ctx.save();
+    if (FX.shake > 0) ctx.translate(Math.round((fxRand() - 0.5) * FX.shake * 3), Math.round((fxRand() - 0.5) * FX.shake * 3));
     // East-west the sweep is NOT clamped to the map: it runs past the seam and
     // each tile is wrapped as it is read, so a view straddling the edge of the
     // world draws continuous ground instead of stopping at a wall.
@@ -2063,6 +2080,7 @@ class UI {
         const x = wrapX(xi);
         const i = map.idx(x, y);
         const t = map.terrain[i];
+        this.sheet = sheets ? sheets[climate[i]] : plain[0];     // this tile's season
         // Plateau tops get their own darker turf as the base coat; the rim pieces
         // are transparent past the rock, so those still go over ordinary grass and
         // let the low ground they overlook show through underneath. A top tile
@@ -2093,6 +2111,7 @@ class UI {
             ctx.fillStyle = DEEP_SHADES[Math.min(DEEP_SHADES.length - 1, dp - 2)];
             ctx.fillRect(Math.floor(bx), Math.floor(by), Math.ceil(s), Math.ceil(s));
           }
+          if (glints && !map.bridge[i]) FX.waterGlint(this, x, y);
           // A planned span is drawn ghosted until the builders have finished it —
           // map.bridge (the flag that makes the water walkable) is only stamped
           // on completion, so this is the one thing that shows the work is coming.
@@ -2149,12 +2168,15 @@ class UI {
         const x = wrapX(xi);
         const i = map.idx(x, y);
         if (map.terrain[i] !== T_ROCK) continue;
+        this.sheet = sheets ? sheets[climate[i]] : plain[0];
         const rnd = tileNoise(x, y);
         this.spriteAt(AT.ROCKS[map.decor[i] % 5],
           x + 0.5 + (rnd(0) - 0.5) * 0.34, y + 1 + (rnd(1) - 0.5) * 0.3,
           0.95 + rnd(2) * 0.35);
       }
     }
+
+    this.sheet = null;
 
     // flat structures painted onto the ground (crop fields): they are terrain as far as
     // the eye is concerned, so they belong under everything the depth pass sorts
@@ -2165,6 +2187,9 @@ class UI {
         this.drawBuildingGround(b);
       }
     }
+
+    // blood and scorch marks on the ground
+    FX.drawDecals(this);
 
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
@@ -2187,12 +2212,17 @@ class UI {
       }
     }
 
-    // projectiles
+    // projectiles, then fire, smoke and everything else in the air
     for (const p of game.projectiles) this.drawProjectile(p);
+    const lit = FX.drawFires(this);
+    FX.drawParticles(this);
     this.drawOrderMarks();
 
-    // day/night tint over the whole scene
+    // day/night tint over the whole scene; firelight and the weather over that
     this.drawDayNightOverlay();
+    FX.drawGlow(this, lit);
+    WeatherFX.draw(this);
+    ctx.restore();
 
     // placement ghost
     if (this.placing) this.drawGhost();
@@ -2309,7 +2339,7 @@ class UI {
   tile(at, x, y, sheet, scale = 1) {
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(x, y);
-    this.ctx.drawImage(sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s * scale), Math.ceil(s * scale));
+    this.ctx.drawImage(sheet || this.sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s * scale), Math.ceil(s * scale));
   }
 
   // Draw one tileset sprite at an arbitrary world position, `scale` tiles across,
@@ -2318,7 +2348,7 @@ class UI {
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(wx, wy);
     const d = Math.ceil(s * scale);
-    this.ctx.drawImage(Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE,
+    this.ctx.drawImage(this.sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE,
       Math.round(sx - d / 2), Math.round(sy - d), d, d);
   }
 
@@ -2389,6 +2419,8 @@ class UI {
     const ctx = this.ctx;
     const baseAlpha = ctx.globalAlpha;
     if (alpha < 1) ctx.globalAlpha = baseAlpha * alpha;
+    // the wood wears its season (js/fx.js)
+    if (this.season && map.climateShade) this.sheet = this.season.sheets[map.climateShade[map.idx(x, y)]];
     // undergrowth first, then the crown, so the big tree sits in front of its bush
     for (let k = 0; k < extras; k++) {
       const a = rnd(k * 3) * Math.PI * 2;
@@ -2402,6 +2434,7 @@ class UI {
     this.spriteAt(AT.TREES[variant % 3],
       x + 0.5 + (rnd(9) - 0.5) * 0.36, y + 1.12 + (rnd(10) - 0.5) * 0.34,
       TREE_CANOPY * (0.84 + rnd(11) * 0.34));
+    this.sheet = null;
     if (alpha < 1) ctx.globalAlpha = baseAlpha;
   }
 
@@ -2410,27 +2443,42 @@ class UI {
   // the types whose atlas cell was already right. A baked canvas is read at its own
   // size, not assumed to be 16x16: the Town Hall's is 32x32, so a 2x2 building can be
   // 2x2 tiles of actual art rather than one cell blown up.
-  buildingSprite(key, faction, dx, dy, size) {
+  // `snow` (0..1) lays winter on the roof: a cached cap of white along every
+  // upward edge of the sprite (SeasonArt.cap, js/fx.js).
+  buildingSprite(key, faction, dx, dy, size, snow = 0) {
     const baked = Assets.buildingArt[faction][key];
+    const ctx = this.ctx;
+    const a0 = ctx.globalAlpha;
     if (baked) {
       // A taller-than-wide canvas (a Wonder, drawn 2 tiles wide and 3 tall)
       // stands on its footprint and rises above it.
       const h = Math.round(size * baked.height / baked.width);
-      this.ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy - (h - size), size, h);
+      ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy - (h - size), size, h);
+      if (snow > 0) {
+        ctx.globalAlpha = a0 * snow;
+        ctx.drawImage(SeasonArt.cap(baked, 0, 0, baked.width, baked.height), dx, dy - (h - size), size, h);
+        ctx.globalAlpha = a0;
+      }
       return;
     }
     const type = BUILDING_TYPES[key];
     let art = type.art;
     if (type.pair) art = faction === 0 ? art[1] : art[0];
-    this.ctx.drawImage(Assets.factionTilesets[faction], art[0] * TILE, art[1] * TILE, TILE, TILE,
-      dx, dy, size, size);
+    const sheet = Assets.factionTilesets[faction];
+    ctx.drawImage(sheet, art[0] * TILE, art[1] * TILE, TILE, TILE, dx, dy, size, size);
+    if (snow > 0) {
+      ctx.globalAlpha = a0 * snow;
+      ctx.drawImage(SeasonArt.cap(sheet, art[0] * TILE, art[1] * TILE, TILE, TILE), dx, dy, size, size);
+      ctx.globalAlpha = a0;
+    }
   }
 
   // Ground-level art of a `flat` building — the farm's tilled field. Drawn with the
   // terrain rather than in the depth pass: soil is ground, and painting it later would
   // let a farm scrub out the bottom of a tree canopy standing in front of it.
   drawBuildingGround(b) {
-    const soil = b.done ? Assets.crop : Assets.tilled;
+    const fields = this.season && this.season.fields[climateShadeAt(b.x, b.y)];
+    const soil = fields ? (b.done ? fields.crop : fields.tilled) : b.done ? Assets.crop : Assets.tilled;
     for (const [tx, ty] of b.footprint()) this.drawTileCanvas(soil, tx, ty);
   }
 
@@ -2444,9 +2492,11 @@ class UI {
       this.spriteAt(AT.SIGN, b.x + 0.5, b.y + 1, 1);
     } else {
       ctx.globalAlpha = b.done ? 1 : 0.55;
+      const snow = b.done ? SeasonArt.snowWeight(climateShadeAt(b.x, b.y)) : 0;
       this.buildingSprite(b.type.key, b.faction, Math.floor(px), Math.floor(py),
-        Math.ceil(s * b.type.size));
+        Math.ceil(s * b.type.size), snow);
       ctx.globalAlpha = 1;
+      if (b.done && (b.type.key === 'house' || b.type.key === 'townhall')) FX.chimney(this, b);
       if (b.grand) {
         ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
         ctx.strokeRect(Math.floor(px) + 1, Math.floor(py) + 1, s * b.type.size - 2, s * b.type.size - 2);
@@ -2549,16 +2599,23 @@ class UI {
     };
     ctx.globalAlpha = b.done ? 1 : 0.5;
     let node = true;      // this tile is a tower or a gate — a landmark in the run
+    let piece;
     if (b.type.key === 'gate') {
       stubs();
-      this.drawTileCanvas(v > h ? art.gateV : art.gateH, b.x, b.y);
+      piece = v > h ? art.gateV : art.gateH;
     } else if (h === 2 && v === 0) {
-      this.drawTileCanvas(art.wallH, b.x, b.y); node = false;
+      piece = art.wallH; node = false;
     } else if (v === 2 && h === 0) {
-      this.drawTileCanvas(art.wallV, b.x, b.y); node = false;
+      piece = art.wallV; node = false;
     } else {
       stubs();
-      this.drawTileCanvas(art.tower, b.x, b.y);
+      piece = art.tower;
+    }
+    this.drawTileCanvas(piece, b.x, b.y);
+    const snow = b.done ? SeasonArt.snowWeight(climateShadeAt(b.x, b.y)) : 0;
+    if (snow > 0) {
+      ctx.globalAlpha = snow;
+      this.drawTileCanvas(SeasonArt.cap(piece, 0, 0, TILE, TILE), b.x, b.y);
     }
     ctx.globalAlpha = 1;
     if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
@@ -2625,6 +2682,7 @@ class UI {
     ctx.drawImage(sheet.canvas, frame * UF, anim.row * UF, UF, UF,
       Math.round(px - size / 2), drawY, size, size);
     ctx.restore();
+    if (u.type.mounted && u.anim === 'walk' && !u.dead) FX.hoof(this, u);
     // Overlays stack upward from the top of the figure. They used to hang off the top
     // edge of the 32px frame, which for a foot soldier (whose art starts 15 rows down)
     // parked them the better part of a tile above his head, adrift in the grass.
@@ -2984,6 +3042,10 @@ class UI {
     // million array allocations per rebuild, and it dominated the cost of the
     // whole minimap.
     const px = img.data;
+    const season = SeasonArt.current();
+    const snow = season && season.snow.some(v => v > 0) ? season.snow : null;
+    climateShadeAt(0, 0);
+    const shade = map.climateShade;
     const terr = new Float32Array(24);
     for (const k in colors) {
       terr[k * 3] = colors[k][0]; terr[k * 3 + 1] = colors[k][1]; terr[k * 3 + 2] = colors[k][2];
@@ -3010,6 +3072,11 @@ class UI {
       // deeper, so a mesa reads as one mass rather than as a ring of grey.
       if (map.high[i]) { r *= 0.72; g *= 0.78; b *= 0.66; }
       if (map.road[i]) { r = 200; g = 180; b = 120; }
+      // winter lies on the minimap as it does on the ground (js/fx.js)
+      if (snow && t !== T_WATER) {
+        const w = snow[shade[i]] * 0.72;
+        if (w > 0) { r += (236 - r) * w; g += (242 - g) * w; b += (248 - b) * w; }
+      }
       const own = game.territory ? game.territory.owner[i] : -1;
       if (own >= 0) {
         const oc = ownerCols[own], a = 0.28;

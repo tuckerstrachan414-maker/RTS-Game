@@ -50,7 +50,12 @@ the code; stale docs are treated as bugs.
   (`hitMorale`/`tickRout`/`tickArmy`), healing, attrition hook, upkeep
   (`armyUpkeep`/`payUpkeep`), player alerts (`alertPlayer`)
 - `js/seasons.js` — the seasons (a pure function of `game.dayCount`): farm
-  multiplier, happiness, winter march and attrition, AI winter granary
+  multiplier, happiness, winter march and attrition, AI winter granary; the
+  climate map (`climateAt`/`climateShadeAt`) and the weather (`weatherNow`/
+  `weatherAt` and its modifiers)
+- `js/fx.js` — the living world, render-only: seasonal atlas looks
+  (`SeasonArt`), weather drawing (`WeatherFX`), particles, decals, fire, smoke,
+  and the `fx*` hooks the sim calls
 - `js/civilians.js` — the citizenry: population embodiment, job assignment,
   gathering trips, builders and construction sites, per-job sprite
   (`civSpriteFor`)
@@ -192,6 +197,16 @@ the code; stale docs are treated as bugs.
   the pixel scan in `docs/formations-tiers-ui.md` — six separate holes shipped
   past visual review here (BUGS #31), and the scan is the only thing that caught
   them all.
+- **`js/fx.js` is render-only and must stay that way.** Its hooks (`fxHit`,
+  `fxHitBuilding`, `fxRaze`, `fxImpact`, `fxCharge`) are called from sim code
+  but may only read what they are handed and add particles; its randomness is
+  `fxRand`, never `game.rng`. The weather is the opposite: it is sim state
+  (`js/seasons.js`), rolled off `game.seed` with its own `mulberry32` rather
+  than `game.rng` so adding a roll never shifts the AI's stream.
+- The terrain pass draws through `ui.sheet` (the season's atlas for the tile's
+  climate shade); `tile()`/`spriteAt()` default to it, so anything drawn from
+  the plain atlas outside the terrain, rock and tree passes must leave
+  `ui.sheet` null — the passes reset it themselves.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
   Player move orders go through `UI.commandMove`, which sets `u.order` after
   the formation; AI units have `order === null` and behave as before.

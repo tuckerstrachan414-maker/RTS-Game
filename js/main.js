@@ -51,6 +51,7 @@ class Game {
     // boot() normally does it from the URL; this is the safety net for a Game
     // constructed some other way (a headless verification script, say).
     if (!WORLD) configureWorld({});
+    this.seed = seed | 0;   // the weather is rolled off it (js/seasons.js)
     this.devMode = false;   // cheat toggle: infinite resources + free/unlimited training for the player
     this.map = new GameMap(seed);
     this.factions = [];
@@ -379,6 +380,7 @@ function dropLoot(b) {
 }
 
 function onBuildingDestroyed(b, attacker) {
+  if (typeof fxRaze === 'function') fxRaze(b);
   // razing a storehouse scatters its goods on the ground to be carried off
   if (b.type.storage) dropLoot(b);
   // so does knocking over a half-built site: the materials the builders carried

@@ -489,6 +489,7 @@ class Unit {
     if (this.dead) return;
     this.hp -= amount;
     this.lastHurtT = game.time;
+    if (typeof fxHit === 'function') fxHit(this, attacker, amount, this.hp <= 0);   // js/fx.js: looks only
     if (attacker && attacker instanceof Unit) gainXp(attacker, Math.min(amount, this.hp + amount) * XP_PER_DAMAGE);
     if (this.faction === 0 && attacker && attacker.faction !== 0) {
       alertPlayer(this.x, this.y, this.type.civilian ? 'Your citizens are under attack!' : this.type.naval
@@ -618,6 +619,8 @@ function effectiveDamage(attacker, target) {
   }
   // starving nations fight poorly
   if (f && f.nation.starving) dmg *= 0.7;
+  // and nobody shoots straight in the rain (js/seasons.js)
+  if (type.dmgType === 'pierce' && typeof weatherPierceMul === 'function') dmg *= weatherPierceMul(attacker);
   return dmg;
 }
 
@@ -630,6 +633,7 @@ function unitSpeed(u) {
     if (u.type.naval) v *= 1 + m.shipSpeed;
   }
   if (typeof seasonSpeedMul === 'function') v *= seasonSpeedMul(u);
+  if (typeof weatherSpeedMul === 'function') v *= weatherSpeedMul(u);   // snow, storms (js/seasons.js)
   // the Great Wall: an invader marching inside its owner's borders is slowed
   if (game.territory && !u.type.naval && !u.type.civilian) {
     const own = game.territory.ownerAt(u.tileX, u.tileY);
@@ -659,6 +663,7 @@ function damageBuilding(b, dmg, attacker) {
   if (b.hp <= 0) return;
   b.hp -= dmg;
   b.lastHurtT = game.time;
+  if (typeof fxHitBuilding === 'function') fxHitBuilding(b, attacker, dmg);
   if (attacker && attacker instanceof Unit) gainXp(attacker, dmg * XP_PER_DAMAGE * 0.3);
   if (b.faction === 0 && attacker && attacker.faction !== 0) {
     alertPlayer(b.cx, b.cy, `Your ${b.type.name} is under attack!`, 'bld');

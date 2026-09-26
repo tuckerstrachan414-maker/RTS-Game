@@ -103,14 +103,16 @@ class AIPerception {
     const obs = this.observers;
     obs.length = 0;
     const f = this.faction;
+    // fog shortens every lookout's reach (js/seasons.js)
+    const fog = typeof weatherSightMul === 'function' ? weatherSightMul : () => 1;
     for (const u of f.units) {
       // a soldier in a ship's hold sees nothing; the hull's lookout sees further
-      if (u.alive && !u.aboard) obs.push([u.x, u.y, u.type.naval ? SIGHT_SHIP : SIGHT_UNIT]);
+      if (u.alive && !u.aboard) obs.push([u.x, u.y, (u.type.naval ? SIGHT_SHIP : SIGHT_UNIT) * fog(u.x, u.y)]);
     }
     for (const b of f.buildings) {
       if (!b.done || b.hp <= 0 || b.type.key === 'bridge') continue;
       const keep = b.type.key === 'townhall' || b.type.key === 'castle';
-      obs.push([b.cx, b.cy, keep ? SIGHT_KEEP : SIGHT_BUILDING]);
+      obs.push([b.cx, b.cy, (keep ? SIGHT_KEEP : SIGHT_BUILDING) * fog(b.cx, b.cy)]);
     }
     return obs;
   }

@@ -8,9 +8,9 @@
 // Checked with the dataviz palette validator on #14161c: lightness, chroma,
 // CVD and normal-vision separation and contrast all pass.
 const CHART_COLORS = ['#4a90d9', '#d94a4a', '#a54ad9', '#b98a26'];
-const CHART_SURFACE = '#14161c';
-const CHART_GRID = '#2a2e38';
-const CHART_INK = '#c9d1dc', CHART_MUTED = '#7d8796';
+const CHART_SURFACE = '#18130d';
+const CHART_GRID = '#33291d';
+const CHART_INK = '#e2d5b8', CHART_MUTED = '#938671';
 
 Object.assign(UI.prototype, {
   // ---------- the Ledger ----------

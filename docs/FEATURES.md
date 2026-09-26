@@ -387,7 +387,7 @@ night and eases them before dawn so happiness clears the growth gate, making the
 cycle a visible economic rhythm you can disrupt by dragging them into a war.
 Notably absent: no vision or stealth changes at night.
 
-## Seasons — Moderate
+## Seasons, climate & weather — Deep
 
 `js/seasons.js`. Four seasons of two days (ten minutes) each — a 40-minute
 year, so a two-hour match lives through three winters. Everything is a pure
@@ -406,8 +406,44 @@ happiness through `happinessTargetWithoutTax` (so the AI's tax controller sees
 it), speed through `unitSpeed`, attrition through `tickArmy`. The topbar shows
 the season beside the day (hover for the year and the time to the next turn),
 the food tooltip the harvest multiplier, and spring and winter arrive with a
-title card. Seasonal ground art (snow, autumn leaves) is in the renderer — see
-Rendering.
+title card.
+
+**Climate.** The seasons do not fall the same everywhere. `classifyClimate`
+reads the generator's temperature field once per map — box-blurred over 6
+tiles first, because the raw field is noisy enough that a few cool tiles inside
+a savanna made a snowy rectangle — into `map.climate` (hot above 0.72, cold
+below 0.3, temperate between: what the weather asks) and `map.climateShade`
+(0 hot … 4 temperate … 8 cold, ramped across a band either side of each
+threshold, with a half-step of fixed per-tile jitter: what the renderer
+paints). The tropics never see snow — their winter is a dry season — and the
+far north is white from autumn.
+
+**Weather.** Each half-day (daylight, then night) has its weather, a pure
+function of the match seed, the day and the season (`weatherNow`, rolled with
+`mulberry32` off `game.seed` — never `game.rng`, so it neither shifts the AI's
+stream nor varies between replays). The odds per season:
+
+| Season | Rain | Storm | Snow | Fog | Clear |
+|---|---|---|---|---|---|
+| Spring | 30% | 5% | | 10% | 55% |
+| Summer | 10% | 10% | | | 80% |
+| Autumn | 28% | 6% | | 20% | 46% |
+| Winter | | | 55% | 15% | 30% |
+
+`weatherAt(x, y)` lets the climate have its say — snow falls as rain in the
+tropics, and rain as snow on cold ground outside summer. It matters a little,
+and everywhere the same way for everyone:
+
+| Weather | Effect | Where |
+|---|---|---|
+| Rain | arrows and bolts hit 15% softer | `effectiveDamage` (`weatherPierceMul`, asked where the shooter stands — towers too) |
+| Storm | arrows 25% softer; ships 20% slower | `effectiveDamage`, `unitSpeed` |
+| Snow | troops march 10% slower | `unitSpeed` (`weatherSpeedMul`; civilians exempt) |
+| Fog | every lookout sees 40% less far | `AIPerception.gatherObservers` — the AI's eyes shrink, which is what makes a foggy morning the time to move |
+
+The topbar shows the weather over your own capital beside the season, with its
+effect in the tooltip. What it all looks like is in Rendering (the living
+world).
 
 ## Physical resource storage — Deep
 
@@ -1575,6 +1611,21 @@ testing, player-only:
 
 ## Desktop UI/HUD — Deep
 
+**A medieval theme.** Every panel, bar, button and screen wears walnut, bronze
+and parchment rather than the old slate blue: the palette in `index.html`'s
+stylesheet was remapped colour for colour (so every rule kept its structure),
+and a theme block at the end adds the texture — a gilt hairline and depth
+shadow on each `.hud` panel, carved bronze gradients on the buttons with a gold
+edge on hover, serif (Palatino/Book Antiqua/Georgia) headings, top-bar
+numbers and build-button names, bronze scrollbars. It changes no size, padding
+or border width, and the serif numerals happen to be narrower: at 1024 px the
+top bar now fits one row where it used to wrap to two. The Ledger's chart moved
+to a walnut surface with it, and its four series colours were re-validated
+against the new surface (all checks pass: lightness band, chroma, CVD
+separation, normal-vision floor, contrast). **The top bar shows the weather**
+over your capital beside the season ("Day 9 ☀ · Autumn · Rain"), and its tooltip
+says what the weather does.
+
 **The build bar is tabbed** (`BUILD_TABS`, `UI.setBuildTab`): Economy, Society,
 Military and Wonders, as a 2×2 grid of small tabs beside the buttons (no taller
 than one row of buttons, so a phone keeps its play area); **B** cycles tabs.
@@ -1695,6 +1746,54 @@ non-empty frames (idle/walk/attack/hurt/death) plus the opaque bounds of the
 figure inside its frame (`top`/`bottom`, used to place unit overlays and the
 selection ring), projectile sheet, pixel-art icon CSS sprites replacing emoji
 throughout the HUD.
+
+**The living world** (`js/fx.js`). Everything the renderer adds that the
+simulation never reads — nothing in the file touches `game.rng` or writes sim
+state, and its randomness is a private xorshift (`fxRand`), so a match replays
+identically whether or not anyone is watching it.
+
+- **Seasonal art** (`SeasonArt`). At load the atlas is re-baked into five
+  looks (`bakeSeasonLook`) — spring (fresher turf, wildflowers in the meadow
+  decor tiles, blossom on two of the three trees), summer (the art as drawn),
+  autumn (straw-gold turf; orange, maple-red and yellow woods, their soft outer
+  leaves browned as fallen ones), winter (snow over the turf keeping its
+  shading as drifts, evergreens under snow caps on every upward face, boulders
+  keeping their stone under a cap, the sea greyer with ice along the shore) and
+  the tropics' dry season (straw turf, dull olive woods). Farm fields have the
+  same five (`bakeFieldLook`: shoots, green crop, gold harvest, snowed-under
+  furrows, a thin dry crop). The last quarter of each season blends toward the
+  next in five steps. `SeasonArt.current()` builds, once per step of the year,
+  one sheet per climate shade (nine, blended between the pure climates), and the
+  terrain pass sets `ui.sheet` per tile from `map.climateShade` — so the seasons
+  cost the frame one lookup per tile. Winter also lays **snow on roofs and
+  wall-walks**: `SeasonArt.cap` bakes, once per sprite, a white line along every
+  upward edge, drawn over buildings (`buildingSprite`'s `snow` weight) and
+  rampart pieces; the minimap whitens the same land.
+- **Weather** (`WeatherFX`), in screen space over the scene, following the
+  weather at the camera: rain streaks (one path per frame) with splashes and a
+  grey wash, storms heavier with lightning flashes, snowfall in three depths,
+  drifting fog banks, autumn leaves on the wind, and fireflies on summer
+  nights. Particles are carried with the camera so a pan moves the ground
+  under the weather, and a change eases in and out over a few seconds.
+- **Particles and decals** (`FX`): dust, sparks, blood, smoke, embers, debris,
+  splashes and snow puffs in world space, sized in art pixels; blood and scorch
+  marks on the ground that fade. Fed by hooks the sim calls and that only read
+  what they are handed: `fxHit` (a blow on a unit — sparks off armour, blood,
+  a death's dust and stain; splashes and planking for a ship), `fxHitBuilding`
+  (chips and dust), `fxRaze` (a collapse: dust, debris, smoke, a scorch mark,
+  a small screen shake), `fxImpact` (arrows kick dust; a mage's fireball
+  bursts; a catapult stone craters and shakes the screen), `fxCharge` (a
+  cavalry charge landing). All are no-ops off screen, so a headless run
+  collects nothing.
+- **Fire.** A building below half strength burns — one flame, two, three as it
+  falls — each throwing smoke and embers, with firelight added over the night
+  overlay. Houses and the Town Hall keep a **chimney** smoking (thicker on
+  winter nights), horsemen kick up **dust** (snow in winter), and open water
+  **glints** in the sun (drawn inline in the terrain pass: one branch per
+  water tile when there is nothing to draw).
+
+Measured: a frame at zoom 1 costs the same with all of it running (≈32 ms,
+BUGS #38's number) and 5-7 ms at zoom 3.
 
 **Civilians have their own art, and pick it per job.** Five sheets
 (`assets/units/Civ*.png`: farmer, woodcutter, miner, builder, plain townsfolk)
