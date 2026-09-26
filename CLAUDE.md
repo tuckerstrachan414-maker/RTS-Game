@@ -81,6 +81,8 @@ the code; stale docs are treated as bugs.
   the AI's race (`aiVictoryFocus`/`aiVictoryPush`/`aiVictoryThreat`), legacy,
   milestones, stats sampling, `chronicle()`
 - `js/ui-victory.js` — the Ledger (V/J), the legacy chart, the end screen
+- `js/ui-advisor.js` — the Royal Steward: contextual counsel in the log
+  (`ADVICE`, `tickAdvisor`), toggled from the pause menu
 - `js/ai.js` — ambitions (`f.ai`), re-evaluation, proactive diplomacy, war
   waves, expansion, bridge/wall engineering, coalitions
 - `js/ai-perception.js` — `AIPerception` + `ScoutMemoryMap`: everything an AI

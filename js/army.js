@@ -104,10 +104,7 @@ function tickRout(u, dt) {
     return;
   }
   if (wdist(u.x, u.y, th.cx, th.cy) < 4) { u.setAnim('idle'); return; }
-  if (u.path.length === 0 || u.repathT <= 0) {
-    u.path = u.pathTo(Math.floor(th.cx), Math.floor(th.cy));
-    u.repathT = 2;
-  }
+  u.replan(Math.floor(th.cx), Math.floor(th.cy), 2);
   u.formSpeed = 0;
   u.followPath(dt);
 }

@@ -305,7 +305,13 @@ class AIUtilityEngine {
     const income = estimateIncome(f, 'gold') + f.nation.taxIncome() + (f.mods ? f.mods.goldFlat : 0);
     const banked = game.diplomacy.atWarAny(f.id) ? f.nation.total('gold') / 600 : 0;
     const payable = Math.floor((income * 0.65 + banked) / UPKEEP_GOLD) + 4;
-    return Math.max(3, Math.min(want, payable));
+    // …and fed by the people left at home. Every soldier is a citizen taken off
+    // the fields, so an army is capped by manpower too: without it aggressors
+    // marched 26 soldiers out of a nation of 12, fell an Age behind, and never
+    // recovered. A nation at war stretches it by a quarter.
+    const war = game.diplomacy.atWarAny(f.id) ? 1.25 : 1;
+    const manpower = Math.round((4 + f.nation.pop * (0.5 + arch.armyPerPop)) * war);
+    return Math.max(3, Math.min(want, payable, manpower));
   }
 
   // Every building in the game costs wood — including the Market, the only way

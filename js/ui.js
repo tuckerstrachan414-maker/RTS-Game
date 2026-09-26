@@ -1114,6 +1114,8 @@ class UI {
       this.commitFormations();
     };
     document.getElementById('pm-hide').onclick = () => { this.closePause(); document.body.classList.add('ui-hidden'); };
+    document.getElementById('advisor-val').textContent = advisorStored() ? 'ON' : 'OFF';
+    document.getElementById('pm-advisor').onclick = () => this.toggleAdvisor();
     document.getElementById('pm-devmode').onclick = () => {
       const on = game.toggleDevMode();
       document.getElementById('devmode-val').textContent = on ? 'ON' : 'OFF';

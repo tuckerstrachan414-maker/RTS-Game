@@ -367,7 +367,7 @@ the next: a building's workers walk home together, so two deliveries can land in
 the same tick and the implied rate comes out 6–9× the truth. That version
 existed long enough to make the first balance run unreadable.
 
-## Day/night cycle — Basic
+## Day/night cycle — Moderate
 
 `js/main.js` (`Game.lightLevel()`, `Game.tick`), `js/ui.js`
 (`drawDayNightOverlay`, `drawHouseGlow`). A 5-minute cycle — 2.5 minutes of
@@ -385,7 +385,12 @@ shows `Day N` with a sun/moon glyph. **AI nations now play to the clock**: their
 tax controller (`solveTaxPolicy`, `js/ai-utility.js`) raises taxes through the
 night and eases them before dawn so happiness clears the growth gate, making the
 cycle a visible economic rhythm you can disrupt by dragging them into a war.
-Notably absent: no vision or stealth changes at night.
+The weather is rolled per half-day, so night can bring its own fog or storm
+(see Seasons, climate & weather), and the night has its own life in the
+renderer (`js/fx.js`): burning buildings light up the dark, chimneys smoke
+thicker on a cold night, and fireflies come out on summer nights. Notably
+absent: no vision or stealth changes at night (fog is the weather that does
+that).
 
 ## Seasons, climate & weather — Deep
 
@@ -464,7 +469,9 @@ Storehouse, House, Builder House
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles anywhere in a 25-tile square — up/down/left/right — around it; idles only
 once that whole reach is exhausted), Quarry, Gold Mine (needs a cave), Market,
-Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
+Church, Well, Castle (it and the Town Hall are **keeps** — they shoot, and
+swords do a third of their damage to them; see Units & combat), Wall/Gate
+(line-drag placement including 45° diagonals;
 rendered as one connected structure in both axes — see the renderer entry),
 Bridge (water-only, rotatable, drag to lay a span, one plank-deck sprite that
 tiles seamlessly in both axes; straight runs only — a horizontal and a vertical bridge can never touch or
@@ -583,7 +590,7 @@ staffed), by housing pressure for Houses, by storage pressure for Storehouses,
 and by war for Watchtowers. In a 50-minute soak every nation upgrades 10–25
 buildings.
 
-## Naval — docks, ships, invasions, sea trade — Moderate
+## Naval — docks, ships, invasions, sea trade — Deep
 
 **Sea trade and sailing envoys.** A trade pact between nations whose Markets
 stand on different continents runs by sea (`Diplomacy.createRoute` →
@@ -780,7 +787,11 @@ scholars or burning the Library stops the flow, and `recordYield` still
 measures the building's output for `estimateIncome`. Every tick
 (`tickResearch`) the nation's knowledge pours into its current study; with
 nothing selected it banks, up to `KNOWLEDGE_BANK_CAP` × pace. `f.knowledgeRate`
-is an exponential average for the HUD and the AI.
+is an exponential average for the HUD and the AI. **War disrupts scholarship**
+(`warKnowledgePenalty`): every war a nation is fighting costs it 15% of its
+knowledge, to at most 45% — shown in red beside the rate on the Research
+screen. It is what lets a coalition's war actually slow a nation racing for the
+Enlightenment, and the long-run price of an aggressive court.
 
 **30 technologies** in three branches across four Ages (`TECHS`), each with a
 cost scaled by the game's pace (`techCost`), prerequisites, effects and
@@ -802,8 +813,12 @@ build wishes all go through it) and building levels.
 starts (`startEraAdvance`). The Age gates the next Age's techs and the castle
 upgrades. A nation's Age is public — it is shown in Diplomacy and announced to
 everyone — so the AI may read a rival's `era`; which techs a rival holds is
-not, and nothing in the AI reads `o.techs`. The last study,
-**The Enlightenment** (2400), is a `project`: it is the Science Victory
+not, and nothing in the AI reads `o.techs`. Every tech and every Age's
+knowledge project costs more the later its Age (`ERA_COST_MUL` 1 / 1.35 / 2.3
+/ 3.4 for Tribal to Imperial), because knowledge compounds: a late-game nation
+reads twenty-odd knowledge a second, and a flat cost increase only nudged the
+end of the match. The last study, **The Enlightenment** (5,000 base — about
+30,600 knowledge at Standard pace), is a `project`: it is the Science Victory
 (js/victory.js).
 
 **The player's side.** Press **T** (or click the knowledge readout / Age chip
@@ -942,9 +957,17 @@ Patrol / Hold / Stop buttons for touch. AI armies keep their brain-driven
 orders; `order` is null for them.
 
 **Siege and fortifications.** Walls, gates and Watchtowers carry
-`type.fortification`: a non-siege attacker does `FORT_RESIST` (35%) of its
-damage to them, and a siege engine does full damage, so a fortified town is a
-siege problem rather than a numbers problem. The Catapult (`type.siege`,
+`type.fortification`, and the **Town Hall and the Castle are keeps**
+(`type.keep`): a non-siege attacker does `FORT_RESIST` (35%) of its damage to
+either, and a siege engine does full damage, so a fortified town is a siege
+problem rather than a numbers problem. Keeps have their own flag so the wall
+techs and the Great Wall, which strengthen fortifications, do not also treble
+a capital. **Both keeps shoot**, through the Watchtower's code (`tickTowers`):
+the Town Hall (2,000 HP, was 900) 8 pierce every 1.4 s at 6 tiles, the Castle
+(1,200 HP, was 600) 6 every 1.6 s at 6 tiles. Before this a capital was paper:
+on seed 7 an AI army of nineteen took a Town Hall — and with it the whole match —
+sixty seconds after declaring war. The AI brings Catapults against any rival
+whose Town Hall or Castle it has seen (`aiTroopPool`). The Catapult (`type.siege`,
 `dmgType: 'siege'`) reaches 7.5 tiles, splashes, and deals only
 `SIEGE_VS_UNITS` (30%) to troops; its `minRange` of 2 makes it back off
 (`Unit.backAway`) rather than fire at a soldier at its wheels. Its stone
@@ -1258,7 +1281,15 @@ make simply looking at a leader change what the world does.
 **Truces**: every road out of a war sets a five-minute truce (`TRUCE_TIME`,
 `Diplomacy.setStatus`); the AI never breaks one, and a player who does is a
 truce-breaker to every court (`leaderOnTruceBroken`). Without it an AI could
-declare, sue and declare again once a minute. A symmetric *mood* between each pair (`rel`, −100…+100) and a status matrix
+declare, sue and declare again once a minute. The other end of that loop is
+closed too: **a court that declares a war sees it through its first 150
+seconds** (`AI_WAR_COMMITMENT`, `aiDiplomacy`) unless it is outmatched two to
+one — war weariness passes every archetype's peace threshold within a minute,
+so without this a nation bought peace a minute after declaring. And **a war
+against a nation within reach of victory** (75% of any race, as far as the
+world can see) is not sued away at all until the war has truly broken the
+side fighting it (weariness near its cap and outmatched two to one) — before
+this, every war to stop a runaway leader was bought off within minutes. A symmetric *mood* between each pair (`rel`, −100…+100) and a status matrix
 (war/neutral/trade/alliance) per pair, plus `warSince`/`lastBlood` matrices for
 peace-seeking. `relation(a, b)` is **directional**: the mood plus a's leader's
 ledger about b. Caravan pay is scaled by each side's trade technology, and
@@ -1347,7 +1378,10 @@ and 110 strength — floors that make a 30-vs-0 comparison impossible), an
 advantage measured against remembered intel with unknowns treated as dangerous,
 a motive (grudge, bad blood, a resource the market cannot supply, or a runaway
 power), a route the army can actually walk, and odds that have **held for 30
-seconds** rather than flickered once. Nothing opens hostilities inside the first
+seconds** rather than flickered once. The exception is a **dogpile** — the
+runaway power, or a nation past 75% of a victory as the world can see it — which
+is marched on without the held advantage or fresh scouting: public knowledge is
+enough to know a rival is about to win. Nothing opens hostilities inside the first
 ~150 seconds (scaled by difficulty). Defence is reactive, at two scales: a
 wave is recalled when enemy soldiers are visible near the capital, and **any
 incursion onto the nation's land gets a response force**
@@ -1364,7 +1398,11 @@ battles (100+ dead) and loses a third as many buildings.
 negative; a lumber camp on a worked-out forest is unstaffed so the shortage
 surfaces; recruits are held back from the workforce when the army is under
 strength, and crews when the navy wants a hull (capped at a third of the
-population; see Naval). Staffing now moves real people
+population; see Naval). **The army is capped by manpower** as well as by pay
+(`armyTarget`): at most 4 + population × (0.5 + the archetype's per-citizen
+rate), a quarter more at war — every soldier is a citizen off the fields, and
+without the cap an aggressor marched 26 soldiers out of a nation of 12 and fell
+an Age behind for good. Staffing now moves real people
 without knowing it — `staffWorkers` sets `b.workers` exactly as before and
 `reconcileJobs` (js/civilians.js) walks citizens to match, including the Town
 Hall's and Builder Houses' builder slots, which come first in the building list
@@ -1455,7 +1493,11 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 difficulty, a **Victory** choice (Victory conditions / Endless) and a **Pace**
 (Quick / Standard / Epic). Both round-trip in the URL (`&victory=0`,
 `&pace=quick|epic`), like the seed. Pace (`PACES`, `js/tech.js`) scales every
-research cost (0.8 / 1.35 / 2.0) and every victory threshold (0.6 / 1 / 1.5).
+research cost (0.8 / 1.8 / 2.6) and every victory threshold (0.6 / 1.4 / 2.0).
+Standard was 1.35 / 1: two-hour soaks on three seeds all ended in a Science
+Victory at 84-88 minutes, with every nation in the Imperial Age by the
+67-minute mark — well short of the "roughly two hours" the setup screen
+promises. Quick is unchanged.
 
 **Five races, run by every nation at once** (`VICTORY_TYPES`), checked each
 second (`tickVictory`):
@@ -1463,7 +1505,7 @@ second (`tickVictory`):
   by your hand.
 - **Science** — complete **The Enlightenment** (the tech tree's final project).
   Beginning it is announced to the world.
-- **Culture** — bank `CULTURE_TARGET` (12,000 × pace) culture with at least three
+- **Culture** — bank `CULTURE_TARGET` (14,000 × pace) culture with at least three
   Wonders standing. Culture accrues every second from standing Wonders (1/s
   each), a Grand Castle (0.5/s) and Churches (0.04/s each) (`cultureRate`),
   so a rival has real time to raze or seize the Wonders that feed it.
@@ -1489,14 +1531,22 @@ Enlightenment) and past 75% of any victory the leader becomes everyone's target:
 even a peaceful court will go to war to stop it, merchants and hegemons
 embargo a trading empire, and doctrine re-evaluation tilts toward aggression.
 
-**Pacing, measured.** On Standard, headless soaks (four AI-run nations, three
-seeds across Small/Standard/Duel worlds) now end in their first victory at
-roughly 80-100 minutes, with the race varying by seed (Culture, Science;
-conquest on the island). It took four tuning passes to get there — the first
-had Culture won in 56 minutes and an Economic "hold 9,000 gold" won in 45 —
-and the levers were: culture as an accumulation rather than a Wonder count,
-Economic needing trade rather than a hoard, steeper later-Age research costs
-(`ERA_COST_MUL`), and wars on a would-be winner at 75% rather than 85%.
+**Pacing, measured.** On Standard, 150-minute headless soaks (four AI-run
+nations, the player's on autopilot) now run from about 100 to past 150
+minutes: seed 42 (Small World, Measured March) ended in a Science Victory at
+99 minutes after a coalition war on the leader that ended with one of its
+attackers made its vassal; seed 21 (Small, Quiet Frontier) in a Culture Victory
+at 110; seeds 7 and 12 (Small / Standard World, Quiet Frontier / Iron Age) were
+still racing at the 150-minute cap, a nation past 75% and the world at war with
+it. War-heavy matches run longest, because every war costs knowledge. It took
+six tuning passes: the first had Culture won in 56 minutes and an Economic
+"hold 9,000 gold" won in 45, and the last had every seed ending at 84-88
+minutes. The levers: culture as an accumulation rather than a Wonder count;
+Economic needing trade rather than a hoard; steeper later-Age costs
+(`ERA_COST_MUL`) and a dearer Enlightenment; the victory-threshold multiplier;
+wars on a would-be winner at 75%, held rather than bought off; and war costing
+knowledge. The soaks also show 100-220 soldiers dying per match, and capitals
+standing through the whole of it — keeps fall to sieges, not rushes.
 
 **Legacy** (`legacyScore`) is every nation's standing in history: Age × 150,
 techs × 15, Wonders × 200, culture/20, population × 2, land/12, trade/25,
@@ -1610,6 +1660,18 @@ testing, player-only:
   reload/new game, since it's a debug aid, not a game setting.
 
 ## Desktop UI/HUD — Deep
+
+**The Royal Steward** (`js/ui-advisor.js`). Counsel for a player finding
+their way through the systems, spoken in the message log (gilt edge, italic
+serif, a quill) and left up for 16 s rather than 9: research left idle, empty
+granaries, full houses, war declared (and what the keeps will and won't do), no
+Castle, no Library, idle hands, the first foreign court, the Feudal Age, the
+first building levels, autumn's harvest, a rival halfway to a victory, damage
+waiting for repair, no Market, and the first fog, storm and snow. Each is said
+once a match, a few (hunger, crowding, idle hands, war, rivals, autumn) again
+after a long quiet, and never more than one every 40 s of game time
+(`ADVISOR_GAP`). It reads the game and changes nothing. **Advisor: ON/OFF** in
+the pause menu turns it off, remembered in the browser's local storage.
 
 **A medieval theme.** Every panel, bar, button and screen wears walnut, bronze
 and parchment rather than the old slate blue: the palette in `index.html`'s

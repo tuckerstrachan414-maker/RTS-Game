@@ -265,6 +265,8 @@ function aiStrategy(f) {
 // gifts, embargoes, declared wars and sued peace — with the player and with
 // each other. (Diplomacy.tick keeps only ambient relations drift.)
 
+const AI_WAR_COMMITMENT = 150;   // seconds a war is fought before suing for peace
+
 function aiDiplomacy(f) {
   const ai = f.ai, prof = aiArchetype(f), dip = game.diplomacy, n = f.nation;
   const rivals = game.factions.filter(o => o.id !== f.id && !o.eliminated);
@@ -286,9 +288,21 @@ function aiDiplomacy(f) {
     const dur = game.time - dip.warSince[f.id][o.id];
     const durLimit = prof.plunderGoal ? 90 : 240;   // raid wars are short by design
     const theirStr = f.brain.perception.estimatedStrength(o.id).value;
+    // A war to stop a nation on the brink of victory is not given up lightly.
+    // The leader is nearly always the stronger side, so "weary and losing"
+    // fired within a minute and every such war was bought off before a single
+    // Library burned. It holds until the war has truly broken us (weariness
+    // near its cap and outmatched two to one) or the threat has passed.
+    const nearWin = game.victoryOn && VICTORY_KEYS.some(t => publicVictoryProgress(f, o, t) >= 0.75);
+    if (nearWin && !(n.warWeariness >= 24 && f.strength() < theirStr * 0.5)) continue;
     const losing = f.strength() < theirStr * 0.8;
     const winning = f.strength() > theirStr * 1.5;
-    if (n.warWeariness > prof.peaceWeariness && (losing || dur > durLimit)
+    // A court that declares a war sees it through its first campaign season:
+    // weariness passes the peace threshold within a minute of any war, so
+    // without this a nation bought peace a minute after declaring and wars
+    // flickered on and off. Only a rout (outmatched two to one) cuts it short.
+    const committed = dur < AI_WAR_COMMITMENT && f.strength() >= theirStr * 0.5;
+    if (!committed && n.warWeariness > prof.peaceWeariness && (losing || dur > durLimit)
         && (!winning || prof.plunderGoal)) {        // raiders quit while ahead; conquerors don't
       if (o.isPlayer) aiOfferPeaceToPlayer(f);
       else if (n.res.gold >= 100) dip.suePeace(f.id, o.id);

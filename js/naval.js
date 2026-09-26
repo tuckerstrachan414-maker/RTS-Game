@@ -114,13 +114,19 @@ function tickBoard(u, dt) {
   if (!ship || ship.dead || shipLoad(ship) >= ship.type.capacity) {
     u.mission = null; u.aggressive = true; return;
   }
-  if (wdist(u.x, u.y, ship.x, ship.y) <= BOARD_RANGE) return embark(u, ship);
-  if (u.path.length === 0 || u.repathT <= 0) {
-    // Aim at the shore beside the hull rather than the hull itself — the goal
-    // tile is water, and the land pathfinder is allowed to stop adjacent to an
-    // impassable goal, which is exactly the quay we want.
-    u.path = unitPathTo(u, Math.floor(ship.x), Math.floor(ship.y));
-    u.repathT = 1.2;
+  const d = wdist(u.x, u.y, ship.x, ship.y);
+  if (d <= BOARD_RANGE) return embark(u, ship);
+  // Aim at the shore beside the hull rather than the hull itself — the goal
+  // tile is water, and the land pathfinder is allowed to stop adjacent to an
+  // impassable goal, which is exactly the quay we want.
+  u.replan(Math.floor(ship.x), Math.floor(ship.y));
+  if (u.planFailed) {
+    // as close as the shore allows: a boat rows the last stretch out to a
+    // hull lying off the beach, and a hull the unit cannot reach at all is
+    // given up on rather than searched for every tick
+    if (d <= BOARD_RANGE * 2.5) return embark(u, ship);
+    if (u.planFails >= 4) { u.mission = null; u.aggressive = true; u.planFails = 0; }
+    return;
   }
   u.followPath(dt);
 }

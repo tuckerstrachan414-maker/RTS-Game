@@ -105,19 +105,26 @@ class Game {
     });
   }
 
-  log(text, cls = '') {
+  // `ms` is how long the line stays up; the Steward's counsel (js/ui-advisor.js)
+  // stays longer than news, and wears a quill.
+  log(text, cls = '', ms = 9000) {
     this.msgs.push({ text, cls, t: this.time });
     if (this.msgs.length > 60) this.msgs.shift();
     const el = document.getElementById('log');
     const div = document.createElement('div');
     div.className = 'msg ' + cls;
-    div.textContent = text;
+    if (cls === 'advice') {
+      const q = document.createElement('span');
+      q.className = 'icon icon-quill';
+      div.appendChild(q);
+      div.appendChild(document.createTextNode(' ' + text));
+    } else div.textContent = text;
     el.appendChild(div);
     // A landscape phone is ~390px tall; seven stacked messages ate a quarter of it and
     // ran into the build panel. Keep fewer lines when there is less room for them.
     const maxLines = window.innerHeight < 460 ? 3 : window.innerHeight < 620 ? 5 : 7;
     while (el.children.length > maxLines) el.removeChild(el.firstChild);
-    setTimeout(() => { div.classList.add('fade'); setTimeout(() => div.remove(), 1200); }, 9000);
+    setTimeout(() => { div.classList.add('fade'); setTimeout(() => div.remove(), 1200); }, ms);
   }
 
   // 1 at midday (brightest), 0 at midnight (darkest). A single cosine over the whole
@@ -566,7 +573,7 @@ function startGame(seed, diffKey, opts = {}) {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); ui.refreshResearch(); ui.refreshLeader(); ui.refreshLedger(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); ui.refreshResearch(); ui.refreshLeader(); ui.refreshLedger(); ui.tickAdvisor(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

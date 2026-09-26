@@ -298,6 +298,8 @@ class AICombatManager {
         if (!mem) continue;
         const live = game.map.buildingAt[game.map.idx(mem.x, mem.y)];
         if (!live || live.faction !== o.id || live.hp <= 0 || !live.type.storage) continue;
+        // this raider already found there is no road to it
+        if (bnd.robBlocked && bnd.robBlocked.b === live && game.time < bnd.robBlocked.until) continue;
         const s = p.rememberedStore(o.id, mem);
         const v = s ? s.food + s.wood + s.stone + s.gold : 0;
         if (v > bv) { bv = v; best = live; }
@@ -380,8 +382,10 @@ class AICombatManager {
 
       // (a) the odds have to have held, not just flickered
       if (!dogpile && this.advantageHeld(o.id) < WAR_RESOLVE_TIME) continue;
-      // (b) we have to trust what we know about them
-      if (p.confidence(o.id) < arch.minConfidence) continue;
+      // (b) we have to trust what we know about them — unless the whole world
+      // can see what they are: a runaway power or a nation on the brink of
+      // victory is marched on on public knowledge, not on fresh scouting
+      if (!dogpile && p.confidence(o.id) < arch.minConfidence) continue;
       // (c) there has to be a reason
       const resourceMotive = verdict && verdict.choice === 'war' && verdict.target === o;
       const grudged = ai.grudge[o.id] >= 5;
@@ -430,9 +434,11 @@ function aiTroopPool(f) {
   if (hasTech(f, 'engineering')) {
     const army = f.armyUnits();
     const siege = army.filter(u => u.type.siege).length;
-    // one engine per eight soldiers, and only if there is a fortified enemy to use it on
+    // one engine per eight soldiers, and only if there is a fortified enemy to
+    // use it on — and every capital is a keep now, so any rival whose Town
+    // Hall or Castle we have seen counts
     const walls = game.factions.some(o => o !== f && !o.eliminated
-      && f.brain.perception.knownBuildings(o.id).some(m => m.key === 'wall' || m.key === 'watchtower' || m.key === 'gate'));
+      && f.brain.perception.knownBuildings(o.id).some(m => ['wall', 'watchtower', 'gate', 'townhall', 'castle'].includes(m.key)));
     if ((walls || f.era >= 3) && siege < Math.max(1, Math.floor(army.length / 8))) pool.push('catapult', 'catapult', 'catapult');
   }
   return pool;

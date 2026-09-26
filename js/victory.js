@@ -12,6 +12,9 @@
 // conquest, dated), awards first-to milestones, and scores every nation's
 // legacy. Those are what the end screen is made of.
 
+// "a Science Victory", "an Economic Victory".
+function aVictory(name) { return `${/^[AEIOU]/.test(name) ? 'an' : 'a'} ${name} Victory`; }
+
 const VICTORY_TYPES = {
   domination: { name: 'Domination', icon: 'sword',
     desc: 'Every rival conquered, or sworn to you as a vassal.' },
@@ -27,7 +30,7 @@ const VICTORY_TYPES = {
 const VICTORY_KEYS = Object.keys(VICTORY_TYPES);
 // Culture: points per second from what a nation has raised. Wonders are the
 // engine; a nation needs at least two standing to win this way at all.
-const CULTURE_TARGET = 12000;       // × pace
+const CULTURE_TARGET = 14000;       // × pace
 const CULTURE_PER_WONDER = 1.0;
 const CULTURE_GRAND = 0.5;
 const CULTURE_PER_CHURCH = 0.04;
@@ -143,9 +146,9 @@ function tickVictory(dt) {
         if (v.holdSince[f.id][type] == null) {
           v.holdSince[f.id][type] = game.time;
           const msg = f.isPlayer ? `Hold it for ${VICTORY_HOLD / 60} minutes and the world is yours.` : `Stop them within ${VICTORY_HOLD / 60} minutes or lose the match!`;
-          game.log(`${f.name} has met the conditions for a ${VICTORY_TYPES[type].name} Victory! ${msg}`, f.isPlayer ? 'good' : 'bad');
+          game.log(`${f.name} has met the conditions for ${aVictory(VICTORY_TYPES[type].name)}! ${msg}`, f.isPlayer ? 'good' : 'bad');
           if (typeof ui !== 'undefined' && ui) ui.announce(`${VICTORY_TYPES[type].name} Victory at hand`, `${f.name} — ${msg}`, f.isPlayer ? '' : 'bad');
-          chronicle(`${f.name} stood on the brink of a ${VICTORY_TYPES[type].name} Victory.`, f.id, 'major');
+          chronicle(`${f.name} stood on the brink of ${aVictory(VICTORY_TYPES[type].name)}.`, f.id, 'major');
           continue;
         }
         if (game.time - v.holdSince[f.id][type] < VICTORY_HOLD) continue;
@@ -170,11 +173,11 @@ function warnProgress(f, type, p) {
   const name = VICTORY_TYPES[type].name;
   const pct = Math.round(next * 100);
   if (f.isPlayer) {
-    game.log(`Your nation is ${pct}% of the way to a ${name} Victory.`, 'good');
+    game.log(`Your nation is ${pct}% of the way to ${aVictory(name)}.`, 'good');
   } else {
-    game.log(`${f.name} is ${pct}% of the way to a ${name} Victory!`, 'bad');
-    if (next >= 0.9 && typeof ui !== 'undefined' && ui) ui.announce(`${f.name} nears victory`, `${pct}% of the way to a ${name} Victory. The world must act.`, 'bad');
-    chronicle(`${f.name} drew near a ${name} Victory (${pct}%).`, f.id, next >= 0.9 ? 'major' : 'minor');
+    game.log(`${f.name} is ${pct}% of the way to ${aVictory(name)}!`, 'bad');
+    if (next >= 0.9 && typeof ui !== 'undefined' && ui) ui.announce(`${f.name} nears victory`, `${pct}% of the way to ${aVictory(name)}. The world must act.`, 'bad');
+    chronicle(`${f.name} drew near ${aVictory(name)} (${pct}%).`, f.id, next >= 0.9 ? 'major' : 'minor');
   }
 }
 
@@ -182,9 +185,9 @@ function declareVictory(f, type) {
   const v = game.victory;
   v.winner = { fid: f.id, type };
   const name = VICTORY_TYPES[type].name;
-  chronicle(`${f.name} won a ${name} Victory.`, f.id, 'major');
+  chronicle(`${f.name} won ${aVictory(name)}.`, f.id, 'major');
   if (f.isPlayer) game.endGame('victory', `A ${name} Victory`, victoryText(f, type));
-  else game.endGame('defeat', `${f.name} wins`, `${leaderFullName(f)} of ${f.name} achieved a ${name} Victory. ${victoryText(f, type)}`);
+  else game.endGame('defeat', `${f.name} wins`, `${leaderFullName(f)} of ${f.name} achieved ${aVictory(name)}. ${victoryText(f, type)}`);
 }
 
 function victoryText(f, type) {

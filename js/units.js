@@ -33,8 +33,10 @@ const UNIT_TYPES = {
 for (const k of ['cavalier', 'bandit']) UNIT_TYPES[k].mounted = true;
 
 // Damage a non-siege attacker deals to a fortification (walls, gates,
-// watchtowers). Swords against stone is slow work; a catapult is how a siege
-// is actually won.
+// watchtowers) or a keep (the Town Hall and the Castle). Swords against stone
+// is slow work; a catapult is how a siege is actually won. Keeps have their own
+// flag rather than `fortification` so the wall techs and the Great Wall, which
+// strengthen fortifications, do not also treble a capital.
 const FORT_RESIST = 0.35;
 // Damage a siege engine deals to anything that is not a building.
 const SIEGE_VS_UNITS = 0.3;
@@ -166,6 +168,26 @@ class Unit {
     this.dest = [tx, ty];
     this.formSpeed = formSpeed;
     this.path = this.pathTo(tx, ty);
+    this.planFailed = false; this.planFails = 0;
+  }
+
+  // Plan a route toward a tile, at most once per `period` seconds — including
+  // after a plan that came back empty. Every caller used to re-plan whenever
+  // its path was empty, so a goal the unit could not reach (a transport lying
+  // off a shore it could not get to, a storehouse across the water, an enemy
+  // on a boat) was searched again every tick: 6,000 A* nodes ten times a second
+  // per stuck unit, and hour-long wars slowed the sim to a crawl (four fifths
+  // of all CPU in a late-game profile). `planFails` counts consecutive empty
+  // plans so a caller can give up.
+  replan(tx, ty, period = 1.2) {
+    const goal = ty * 65536 + tx;      // a new goal is planned for at once
+    if (this.repathT > 0 && (this.path.length > 0 || (this.planFailed && this.planGoal === goal))) return;
+    if (this.planGoal !== goal) this.planFails = 0;
+    this.planGoal = goal;
+    this.path = this.pathTo(tx, ty);
+    this.repathT = period;
+    this.planFailed = this.path.length === 0;
+    this.planFails = this.planFailed ? (this.planFails || 0) + 1 : 0;
   }
 
   // Every repath in this class goes through here so a hull is never handed a
@@ -269,12 +291,11 @@ class Unit {
         this.path = [];
         this.tryAttack(dt);
       } else {
-        if (this.path.length === 0 || this.repathT <= 0) {
-          const [tx, ty] = targetCenter(this.target);
-          this.path = this.pathTo(Math.floor(tx), Math.floor(ty));
-          this.repathT = 1.2;
-        }
-        this.followPath(dt);
+        const [tx, ty] = targetCenter(this.target);
+        this.replan(Math.floor(tx), Math.floor(ty));
+        // nowhere left to go and still out of reach: this one cannot be got at
+        if (this.planFails >= 4) { this.target = null; this.planFails = 0; }
+        else this.followPath(dt);
       }
     } else if (this.path.length > 0) {
       this.followPath(dt);
@@ -394,10 +415,16 @@ class Unit {
       if (b.faction === 0 && this.robWarn !== true) { this.robWarn = true; game.log(`Bandits are robbing your ${b.type.name}!`, 'bad'); }
       if (room <= 0.01 || left < 0.5) this.startHaul();
     } else {
-      if (this.path.length === 0 || this.repathT <= 0) {
-        const [tx, ty] = targetCenter(b);
-        this.path = this.pathTo(Math.floor(tx), Math.floor(ty));
-        this.repathT = 1.2;
+      const [tx, ty] = targetCenter(b);
+      this.replan(Math.floor(tx), Math.floor(ty));
+      if (this.planFails >= 3) {
+        // there is no road to it (across the water, walled off): give it up,
+        // and let the raider's nation know not to send us straight back
+        this.robBlocked = { b, until: game.time + 120 };
+        this.planFails = 0;
+        if (this.carryTotal() > 0.5) return this.startHaul();
+        this.mission = null; this.aggressive = true;
+        return;
       }
       this.followPath(dt);
     }
@@ -416,11 +443,8 @@ class Unit {
       this.mission = null; this.aggressive = true; this.robWarn = false;
       if (this.faction === 0 && banked > 0.5) game.log(`Your raiders banked ${Math.round(banked)} plunder!`, 'good');
     } else {
-      if (this.path.length === 0 || this.repathT <= 0) {
-        const [tx, ty] = targetCenter(home);
-        this.path = this.pathTo(Math.floor(tx), Math.floor(ty));
-        this.repathT = 1.2;
-      }
+      const [tx, ty] = targetCenter(home);
+      this.replan(Math.floor(tx), Math.floor(ty), 2);
       this.followPath(dt);
     }
   }
@@ -607,7 +631,7 @@ function effectiveDamage(attacker, target) {
     if (target.type.arrowWard && type.dmgType === 'pierce') dmg *= 1 - target.type.arrowWard;
     if (type.siege) dmg *= SIEGE_VS_UNITS;
   } else if (isBld) {
-    if (target.type.fortification && !type.siege) dmg *= FORT_RESIST;
+    if ((target.type.fortification || target.type.keep) && !type.siege) dmg *= FORT_RESIST;
   }
   // king aura
   if (f && f.kingAlive && !(attacker instanceof Building)) {

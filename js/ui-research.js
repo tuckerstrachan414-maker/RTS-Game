@@ -22,7 +22,7 @@ Object.assign(UI.prototype, {
     if (!this.researchOpen()) return;
     const f = game.factions[0];
     const stateKey = [f.era, [...f.techs].join(','), f.research ? f.research.key : '-',
-      f.researchQueue.join(','), !eraBlocker(f)].join('|');
+      f.researchQueue.join(','), !eraBlocker(f), warKnowledgePenalty(f)].join('|');
     const el = document.getElementById('research');
     if (force || stateKey !== this.researchKey || this.researchDirty) {
       this.researchKey = stateKey;
@@ -41,6 +41,7 @@ Object.assign(UI.prototype, {
     let html = `<div class="rs-head"><h2>${icon('book')} Research</h2>`
       + `<span class="rs-era">${icon('pillar')} ${ERAS[f.era].name}</span>`
       + `<span class="rs-rate">${icon('book')} <b>${rate.toFixed(2)}</b> knowledge/s`
+      + (warKnowledgePenalty(f) > 0 ? ` · <span class="bad" title="Every war costs 15% of your knowledge, to at most 45%.">war −${Math.round(warKnowledgePenalty(f) * 100)}%</span>` : '')
       + (f.knowledgeBank >= 1 ? ` · <span class="dim">${Math.floor(f.knowledgeBank)} banked</span>` : '')
       + `</span><button id="rs-close" title="Close (T)">✕</button></div>`;
 

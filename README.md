@@ -120,7 +120,10 @@ Click a finished building and use **+/−** to assign idle citizens to its worke
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
 happiness, the Castle trains units, the Dock builds ships, Walls/Gates/Bridges
 shape the battlefield, and
-the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
+the Town Hall is your nation's heart — lose it and you lose the game. It is a
+fortified keep: its archers shoot any enemy in range, and swords and arrows do
+only a third of their damage to it — breaking one takes catapults, or a long
+siege. Your Castle is built the same way. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
 **Your people are on the map.** Every citizen you have is a person walking
@@ -274,7 +277,8 @@ and they sit and read, pouring knowledge into whatever you are studying.
 Scholars are citizens like any other, so every one of them is a farmhand or a
 lumberjack you are not employing — the classic guns, butter *or books* choice.
 Later, **Education** unlocks the **University**: four scholars, each worth
-nearly two in a Library.
+nearly two in a Library. **War disrupts scholarship**: every war you are
+fighting costs 15% of your knowledge (up to 45%) — the Research screen shows it.
 
 **Research (press T, or click the knowledge readout on the top bar)** opens the
 tree: 30 technologies in three branches — **Economy**, **Military** and
@@ -304,9 +308,10 @@ when a rival enters a new one, and see it in Diplomacy); their technologies are
 not.
 
 **Watchtowers** (Masonry, 20🪵 40🪨) are stone towers whose archers shoot any
-enemy in range on their own. Walls, gates and towers are **fortifications**:
-ordinary troops do only a third of their damage to them, so breaking a
-fortified town takes siege engines.
+enemy in range on their own. Walls, gates and towers are **fortifications**,
+and your Town Hall and Castle are **keeps** that shoot too: ordinary troops do
+only a third of their damage to any of them, so breaking a fortified town takes
+siege engines — or a long siege while its defenders gather.
 
 ## The rulers of the world
 
@@ -648,8 +653,16 @@ bridge rivers to reach each other, and eliminate one another, so the continent
 you face in the late game may not be the one you started on.
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
-while it's up. From there: Diplomacy, Research, Select Army (grabs your whole standing
-army), Formations, game **Speed** (1x/2x/3x), Hide UI, **Dev Mode**, and New Game.
+while it's up. From there: Diplomacy, Research, Victory & Legacy, the Chronicle,
+Select Army (grabs your whole standing army), Formations, game **Speed**
+(1x/2x/3x), Hide UI, **Advisor** on/off, **Dev Mode**, and New Game.
+
+**The Royal Steward advises you.** Now and then a line in the message log with a
+gold edge and a quill is your Steward's counsel — research left idle, granaries
+emptying, full houses, a war declared on you, a rival closing on victory, the
+first fog or snow — each said when it matters and rarely twice. Seasoned
+rulers can dismiss the Steward from the pause menu (Advisor: OFF); the choice is
+remembered.
 
 **Dev Mode** (Menu → Dev Mode) is a cheat for testing: your resources never run
 out and training is never blocked by cost or population. A red **DEV** badge

@@ -266,6 +266,37 @@ heuristic.
 
 ## Fixed
 
+- **#58 Hour-long wars slowed the sim twenty-fold: stuck units re-ran A* every
+  tick** — `js/units.js` (the chase in `Unit.tick`, `tickRob`, `tickHaul`),
+  `js/naval.js` `tickBoard`, `js/army.js` `tickRout`. Every one of them
+  re-planned whenever `path.length === 0 || repathT <= 0` — and an empty path
+  is exactly what a failed search returns, so a goal a unit could not reach was
+  searched again on the very next tick: a soldier ordered aboard a transport
+  lying off a shore it could not get to, a bandit sent at a storehouse across the
+  water, a soldier chasing an enemy on a boat. 6,000 A* nodes ten times a second
+  per stuck unit: a five-minute stretch of a 60-minute soak took 54 s of wall
+  time (2 s early in the match), and a CPU profile put 80% of it in `findPath`.
+  Found by timing the sim in five-minute chunks and attributing every A* call
+  to its caller. `Unit.replan` now plans at most once per period even after a
+  failed search (a new goal still plans at once) and counts consecutive
+  failures; a chaser drops a target it has failed to reach four times, a
+  bandit gives up an unreachable storehouse (and its nation does not send it
+  back for two minutes), and a soldier boarding a hull lying off the beach
+  rows the last few tiles out to it or, if it cannot get near, gives the order
+  up. Civilians already had this backoff (#50).
+
+- **#56 A capital fell in a minute, and with it the match** — `js/buildings.js`
+  (Town Hall, Castle). The Town Hall had 900 HP, took full damage from
+  anything, and did not fight back, so on seed 7 an AI army of nineteen razed it
+  sixty seconds after declaring war and the game was over at minute 17. Both
+  keeps are now `keep: true` (non-siege attackers do 35%, like walls) and shoot
+  (`tickTowers`); the Town Hall has 2,000 HP and the Castle 1,200. The same
+  seed now runs 80 minutes of wars with nobody's capital falling to a rush — a
+  capital is taken with catapults, which the AI brings once it has seen one.
+
+- **#57 "a Economic Victory"** — `js/victory.js`. Every victory message built
+  its article by hand; `aVictory(name)` picks "a" or "an".
+
 - **#53 No AI ever launched a ship, so nobody went to war across water** —
   `js/naval.js` `trainShip`, `js/ai-utility.js` `staffWorkers`. A hull takes a
   citizen to crew her and `trainShip` refuses with "No free citizens to crew

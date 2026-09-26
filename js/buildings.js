@@ -24,9 +24,10 @@ const MINE_RADIUS = 3;
 const BUILDING_TYPES = {
   townhall: {
     key: 'townhall', name: 'Town Hall', art: null, size: 2,
-    cost: {}, hp: 900, buildTime: 0, slots: 2, builders: true, solid: true,
+    cost: {}, hp: 2000, buildTime: 0, slots: 2, builders: true, solid: true, keep: true,
+    dmg: 8, dmgType: 'pierce', range: 6, cooldown: 1.4, projectile: 'arrow',
     storage: { food: 300, wood: 300, stone: 300, gold: 1e9 },
-    desc: 'Heart of your nation. Stores resources, and quarters two builders. Lose it and your nation falls.',
+    desc: 'Heart of your nation: a fortified keep whose archers shoot any enemy in range, and which only siege engines breach quickly. Stores resources, and quarters two builders. Lose it and your nation falls.',
   },
   storehouse: {
     key: 'storehouse', name: 'Storehouse', art: null, size: 1,
@@ -93,8 +94,9 @@ const BUILDING_TYPES = {
   },
   castle: {
     key: 'castle', name: 'Castle', art: null, size: 2,
-    cost: { wood: 40, stone: 60 }, hp: 600, buildTime: 16, slots: 0, solid: true,
-    desc: 'Trains your army and envoys. Upgrade to a Grand Castle — a monument to your prosperity.',
+    cost: { wood: 40, stone: 60 }, hp: 1200, buildTime: 16, slots: 0, solid: true, keep: true,
+    dmg: 6, dmgType: 'pierce', range: 6, cooldown: 1.6, projectile: 'arrow',
+    desc: 'Trains your army and envoys, and its archers shoot any enemy in range; only siege engines breach it quickly. Upgrade to a Grand Castle — a monument to your prosperity.',
   },
   // Knowledge. Scholars sit in the Library and read; nothing is hauled — what
   // they learn goes straight into the nation's research (js/tech.js).

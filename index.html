@@ -697,6 +697,8 @@
   .bbtn b { font-family: var(--serif); font-weight: normal; font-size: 13px; color: #f3e6c8; }
   .msg { background: linear-gradient(90deg, rgba(40,30,19,0.9), rgba(28,21,14,0.8)); border-left-color: #8a6e45; }
   .msg.good { border-color: #6fa04a; } .msg.bad { border-color: #b0503f; }
+  .msg.advice { border-color: #c9a24e; color: #f3e6c4; font-family: var(--serif); font-style: italic;
+    background: linear-gradient(90deg, rgba(58,44,24,0.94), rgba(34,26,16,0.86)); }
   #minimap { border-color: #8a6e45; box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
   *::-webkit-scrollbar { width: 8px; height: 8px; }
   *::-webkit-scrollbar-track { background: rgba(0,0,0,0.25); }
@@ -797,6 +799,7 @@
     <button id="pm-formations"><span class="icon icon-sword"></span> Formations</button>
     <button id="pm-speed"><span class="icon icon-speed"></span> Speed: <span id="speed-val">1x</span></button>
     <button id="pm-hide"><span class="icon icon-hide"></span> Hide UI</button>
+    <button id="pm-advisor" title="The Royal Steward's counsel in the message log"><span class="icon icon-quill"></span> Advisor: <span id="advisor-val">ON</span></button>
     <button id="pm-devmode" title="Cheat: infinite resources and unlimited troop training"><span class="icon icon-upgrade"></span> Dev Mode: <span id="devmode-val">OFF</span></button>
     <button id="pm-restart" title="Abandon this game and start a new one">↺ New Game</button>
   </div>
@@ -852,6 +855,7 @@
 <script src="js/ui-research.js"></script>
 <script src="js/ui-leaders.js"></script>
 <script src="js/ui-victory.js"></script>
+<script src="js/ui-advisor.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

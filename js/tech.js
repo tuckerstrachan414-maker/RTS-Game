@@ -143,7 +143,7 @@ const TECHS = {
     effects: { trade: 0.5, yield: { gold: 0.2 } }, desc: 'Trade income +50%; gold +20%.' },
   architecture: { name: 'Architecture', era: 3, branch: 'civic', cost: 520, req: ['guilds', 'fortification'],
     effects: { buildSpeed: 0.3, buildHp: 0.2 }, desc: 'Construction 30% faster; buildings +20% HP; Wonders rise faster.' },
-  enlightenment: { name: 'The Enlightenment', era: 3, branch: 'civic', cost: 4000,
+  enlightenment: { name: 'The Enlightenment', era: 3, branch: 'civic', cost: 5000,
     req: ['printing', 'arcana', 'mercantilism', 'architecture'], project: true,
     effects: { yield: { knowledge: 0.2 }, happiness: 10 },
     desc: 'The culmination of a civilization. With victory conditions on, completing it wins a Science Victory.' },
@@ -155,8 +155,8 @@ const TECH_KEYS = Object.keys(TECHS);
 // victory threshold). Chosen on the setup screen; stored on the Game.
 const PACES = {
   quick:    { label: 'Quick', research: 0.8, victory: 0.6, desc: 'About an hour. The Ages come quickly and the races are short.' },
-  standard: { label: 'Standard', research: 1.35, victory: 1, desc: 'The intended pace: roughly two hours of rising Ages before anyone can claim the world.' },
-  epic:     { label: 'Epic', research: 2.0, victory: 1.5, desc: 'An evening-long saga. Every Age is hard-won and every race is long.' },
+  standard: { label: 'Standard', research: 1.8, victory: 1.4, desc: 'The intended pace: roughly two hours of rising Ages before anyone can claim the world.' },
+  epic:     { label: 'Epic', research: 2.6, victory: 2.0, desc: 'An evening-long saga. Every Age is hard-won and every race is long.' },
 };
 function paceMul() { return (game && game.pace ? game.pace.research : 1); }
 // Later Ages cost disproportionately more. A late nation's knowledge stacks
@@ -164,7 +164,7 @@ function paceMul() { return (game && game.pace ? game.pace.research : 1); }
 // Observatory, research pacts, a University's worth of scholars) and without a
 // steeper curve the whole Imperial Age and the Enlightenment fell in about ten
 // minutes once a nation got there.
-const ERA_COST_MUL = [1, 1.3, 1.8, 2.6];
+const ERA_COST_MUL = [1, 1.35, 2.3, 3.4];
 function techCost(key) { return Math.round(TECHS[key].cost * ERA_COST_MUL[TECHS[key].era] * paceMul()); }
 function eraKnowledgeCost(era) { return Math.round((ERAS[era].knowledge || 0) * ERA_COST_MUL[era - 1] * paceMul()); }
 
@@ -416,10 +416,24 @@ function creditKnowledge(fid, amount) {
   if (f && f.techs) f.knowledgeIn += amount;
 }
 
+// War disrupts scholarship: every war a nation is fighting costs it 15% of
+// its knowledge, to at most 45%. It is what lets a coalition's war actually
+// slow a nation racing for the Enlightenment (js/victory.js) rather than just
+// burning its farms, and it is the price an aggressor pays in the long run.
+const WAR_KNOWLEDGE_COST = 0.15, WAR_KNOWLEDGE_MAX = 0.45;
+function warKnowledgePenalty(f) {
+  if (typeof game === 'undefined' || !game || !game.diplomacy) return 0;
+  let wars = 0;
+  for (const o of game.factions) {
+    if (o.id !== f.id && !o.eliminated && game.diplomacy.status(f.id, o.id) === 'war') wars++;
+  }
+  return Math.min(WAR_KNOWLEDGE_MAX, wars * WAR_KNOWLEDGE_COST);
+}
+
 function tickResearch(f, dt) {
   if (!f.techs) return;
   const pact = typeof researchPactBonus === 'function' ? researchPactBonus(f) : 0;
-  const gained = (passiveKnowledge(f) * dt + f.knowledgeIn) * (1 + pact);
+  const gained = (passiveKnowledge(f) * dt + f.knowledgeIn) * (1 + pact) * (1 - warKnowledgePenalty(f));
   f.knowledgeIn = 0;
   f.knowledgeTotal += gained;
   // an exponential average makes a readable rate out of scholars' lumpy deliveries

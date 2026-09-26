@@ -368,7 +368,10 @@ const FX = {
   // lands. `size` and `grow` are in art pixels (1/16 of a tile), so a puff
   // keeps its proportions at every zoom.
   add(kind, x, y, o = {}) {
-    if (this.parts.length >= FX_MAX_PARTICLES) this.parts.shift();
+    // At the cap a new puff is simply dropped: shifting the oldest out is an
+    // O(n) move per particle, and a tab in the background (or a headless run)
+    // never renders, so nothing ages out and every blow would pay it.
+    if (this.parts.length >= FX_MAX_PARTICLES) return;
     const pal = FX_PAL[kind] || FX_PAL.dust;
     this.parts.push({
       kind, x, y, z: o.z || 0,

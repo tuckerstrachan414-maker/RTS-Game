@@ -222,27 +222,6 @@ const PIXEL_ICONS = {
       '................',
     ],
   },
-  upgrade: {
-    pal: { k: '#3a2616', y: '#ffd24a', o: '#c98f1c', s: '#a9a39a', d: '#6f6a62' },
-    rows: [
-      '.......kk.......',
-      '......kyyk......',
-      '.....kyyyyk.....',
-      '....kyyyyyyk....',
-      '...kyyyyyyyyk...',
-      '...kkkyyyykkk...',
-      '.....kyooyk.....',
-      '.....kyooyk.....',
-      '.....kyooyk.....',
-      '.....kkkkkk.....',
-      '.kkkkkkkkkkkkkk.',
-      '.kssssssdsssssk.',
-      '.kssssssdsssssk.',
-      '.kddddddddddddk.',
-      '.ksssdssssssdsk.',
-      '.kkkkkkkkkkkkkk.',
-    ],
-  },
   chevron: {
     pal: { k: '#5c4312', y: '#ffd24a' },
     rows: [
