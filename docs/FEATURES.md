@@ -318,11 +318,27 @@ the queue rather than stopping everything else. The AI's invasion shipyard is
 the case that forced it (a Dock must be on the coast; see Naval), and it is the
 only thing that sets the flag today.
 
+**Builders also upgrade and repair** (`js/upgrades.js`, see Buildings). An
+upgrade is a second site on a *finished* building (`b.site.upgrade`), supplied
+and raised exactly like a new one while the building keeps working, so `b.site`
+alone no longer means "under construction". Repair is the builders' third job:
+a builder with nothing to build, one waiting on materials at its own site, and
+— up to a third of the crew — one between jobs, mends the nearest damaged
+building that has been quiet for 10 s, paying for it pro rata as it goes. The
+builder's panel line reads "Repairing the …" / "Upgrading the …".
+
 ## Economy & population — Deep
 
 `js/economy.js`. Citizens eat continuously; population grows once per dawn
-(see Day/night cycle below) by 30% of the housing cap (rounded, capped at the
-cap), gated on surplus food (> 2× pop), free housing, and happiness > 50;
+(see Day/night cycle below) by 30% of the housing cap — but never by more than
+a quarter of the current population (min 5), and capped at the cap — gated on
+surplus food (> 2× pop), free housing, and happiness > 50; **crowding**
+(`Nation.crowding`: −0.3 happiness per citizen past 30) is the real ceiling on
+size — a big nation keeps growing only by building churches, wells and markets
+and studying the civic techs (the AI's church/well targets scale with
+population to match). Without the two, growth was a fraction of a cap the AI
+raised as fast as it grew — 800 citizens a nation by the hour (BUGS #44,
+fixed);
 starvation kills a citizen every 12s (floor of 2) and weakens the army (−30%
 damage). Happiness is a drift toward a computed target: base 50, fed/starving,
 housed/overcrowded, building auras (church/well/market, diminishing with pop),
@@ -351,7 +367,7 @@ the next: a building's workers walk home together, so two deliveries can land in
 the same tick and the implied rate comes out 6–9× the truth. That version
 existed long enough to make the first balance run unreadable.
 
-## Day/night cycle — Basic
+## Day/night cycle — Moderate
 
 `js/main.js` (`Game.lightLevel()`, `Game.tick`), `js/ui.js`
 (`drawDayNightOverlay`, `drawHouseGlow`). A 5-minute cycle — 2.5 minutes of
@@ -369,7 +385,70 @@ shows `Day N` with a sun/moon glyph. **AI nations now play to the clock**: their
 tax controller (`solveTaxPolicy`, `js/ai-utility.js`) raises taxes through the
 night and eases them before dawn so happiness clears the growth gate, making the
 cycle a visible economic rhythm you can disrupt by dragging them into a war.
-Notably absent: no vision or stealth changes at night, no seasons.
+The weather is rolled per half-day, so night can bring its own fog or storm
+(see Seasons, climate & weather), and the night has its own life in the
+renderer (`js/fx.js`): burning buildings light up the dark, chimneys smoke
+thicker on a cold night, and fireflies come out on summer nights. Notably
+absent: no vision or stealth changes at night (fog is the weather that does
+that).
+
+## Seasons, climate & weather — Deep
+
+`js/seasons.js`. Four seasons of two days (ten minutes) each — a 40-minute
+year, so a two-hour match lives through three winters. Everything is a pure
+function of `game.dayCount` (it replays exactly, and the calendar is public to
+the AI):
+
+| Season | Farms | Happiness | Else |
+|---|---|---|---|
+| Spring | ×1.10 | +2 | |
+| Summer | ×1.20 | | |
+| Autumn | ×1.35 | | the harvest — the AI fills its granaries (`winterFoodReserve` into `aiPlanDemand`) |
+| Winter | ×0.45 | −3 | armies march 12% slower outside their own land; soldiers inside a hostile claim suffer attrition (0.15% HP/s — it wounds, never kills) |
+
+Farm yield goes through `workerYieldRate` (the one production formula),
+happiness through `happinessTargetWithoutTax` (so the AI's tax controller sees
+it), speed through `unitSpeed`, attrition through `tickArmy`. The topbar shows
+the season beside the day (hover for the year and the time to the next turn),
+the food tooltip the harvest multiplier, and spring and winter arrive with a
+title card.
+
+**Climate.** The seasons do not fall the same everywhere. `classifyClimate`
+reads the generator's temperature field once per map — box-blurred over 6
+tiles first, because the raw field is noisy enough that a few cool tiles inside
+a savanna made a snowy rectangle — into `map.climate` (hot above 0.72, cold
+below 0.3, temperate between: what the weather asks) and `map.climateShade`
+(0 hot … 4 temperate … 8 cold, ramped across a band either side of each
+threshold, with a half-step of fixed per-tile jitter: what the renderer
+paints). The tropics never see snow — their winter is a dry season — and the
+far north is white from autumn.
+
+**Weather.** Each half-day (daylight, then night) has its weather, a pure
+function of the match seed, the day and the season (`weatherNow`, rolled with
+`mulberry32` off `game.seed` — never `game.rng`, so it neither shifts the AI's
+stream nor varies between replays). The odds per season:
+
+| Season | Rain | Storm | Snow | Fog | Clear |
+|---|---|---|---|---|---|
+| Spring | 30% | 5% | | 10% | 55% |
+| Summer | 10% | 10% | | | 80% |
+| Autumn | 28% | 6% | | 20% | 46% |
+| Winter | | | 55% | 15% | 30% |
+
+`weatherAt(x, y)` lets the climate have its say — snow falls as rain in the
+tropics, and rain as snow on cold ground outside summer. It matters a little,
+and everywhere the same way for everyone:
+
+| Weather | Effect | Where |
+|---|---|---|
+| Rain | arrows and bolts hit 15% softer | `effectiveDamage` (`weatherPierceMul`, asked where the shooter stands — towers too) |
+| Storm | arrows 25% softer; ships 20% slower | `effectiveDamage`, `unitSpeed` |
+| Snow | troops march 10% slower | `unitSpeed` (`weatherSpeedMul`; civilians exempt) |
+| Fog | every lookout sees 40% less far | `AIPerception.gatherObservers` — the AI's eyes shrink, which is what makes a foggy morning the time to move |
+
+The topbar shows the weather over your own capital beside the season, with its
+effect in the tooltip. What it all looks like is in Rendering (the living
+world).
 
 ## Physical resource storage — Deep
 
@@ -380,15 +459,19 @@ raid targets), withdrawals drain the Town Hall first. Storage is finite, an
 overflow warning fires for the player, and everything in a store is robbable
 or spillable as loot. This underpins the entire raiding design.
 
-## Buildings — Moderate
+## Buildings — Deep
 
-`js/buildings.js` (+ the Dock, added by `js/naval.js`). 15 types: Town Hall,
+`js/buildings.js` (+ the Dock, added by `js/naval.js`). 18 types — the
+research buildings **Library**, **University** and **Watchtower** (see
+Research; the Watchtower shoots, see `tickTowers`) joined the original 15: Town Hall,
 Storehouse, House, Builder House
 (3 builder slots — see Construction & builders), Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
 tiles anywhere in a 25-tile square — up/down/left/right — around it; idles only
 once that whole reach is exhausted), Quarry, Gold Mine (needs a cave), Market,
-Church, Well, Castle, Wall/Gate (line-drag placement including 45° diagonals;
+Church, Well, Castle (it and the Town Hall are **keeps** — they shoot, and
+swords do a third of their damage to them; see Units & combat), Wall/Gate
+(line-drag placement including 45° diagonals;
 rendered as one connected structure in both axes — see the renderer entry),
 Bridge (water-only, rotatable, drag to lay a span, one plank-deck sprite that
 tiles seamlessly in both axes; straight runs only — a horizontal and a vertical bridge can never touch or
@@ -443,12 +526,87 @@ come down. AI nations now build walls/gates
 (turtle doctrine rings) and bridges — always a straight single-axis span now,
 never the old L-shaped dogleg, since a bend would touch two orientations at
 the corner and `canPlace` would refuse it (`aiFindCrossing`/
-`straightCrossingSearch`, `js/ai.js`) — for war-route engineering too. Gaps: no
-building upgrades outside the Castle, no repair, and pasted layouts don't
-rotate/mirror (a copied bridge always pastes horizontal, regardless of the
-orientation it was copied from — see BUGS).
+`straightCrossingSearch`, `js/ai.js`) — for war-route engineering too. Gaps:
+pasted layouts don't rotate/mirror (a copied bridge always pastes horizontal,
+regardless of the orientation it was copied from — see BUGS).
 
-## Naval — docks, ships, invasions — Moderate
+### Upgrades, repair and neighbours (`js/upgrades.js`)
+
+**Levels.** Twelve buildings — Farm, Lumber Camp, Quarry, Gold Mine, Market,
+Library, University, House, Storehouse, Church, Watchtower and Builder House
+(`UPGRADEABLE`) — rise to **level 2** once **Heavy Plough** is researched and to
+**level 3** with **Guilds** (`f.mods.level`, set by the tech's
+`unlocks.level`). Each level is **+40% output, housing and storage**
+(`levelYieldMul` in `workerYieldRate`, `housingCap`, `storageCap`) and **+35%
+hit points** (`buildingMaxHp`). An upgrade is real construction, not a button
+that spends money: `startUpgrade` stakes an **upgrade site on the standing
+building** — `b.site` with `upgrade: true`, the same needs/delivered/inbound
+ledger a new site has — costing 1.5× (level 2) or 2.5× (level 3) the base cost
+(plus stone for a second storey even on an all-wood building), and builders
+haul it there 15 at a time and then raise it (`claimSite`/`siteWorkable`/
+`builderRaise` in `js/civilians.js` all accept upgrade sites; `advanceUpgrade`
+finishes it). The building **keeps working throughout**. Demolishing one
+mid-upgrade refunds the delivered materials in full; destroying it spills them
+as loot like any site. The panel shows `Level n/3`, the button (with the
+reason it's locked, from `upgradeBlocker`), and the upgrade's materials and
+progress; the map shows an amber materials bar and a gold progress bar over the
+building while it works, and gold studs in its top-right corner for each level
+above 1.
+
+**Repair.** A damaged building is mended by builders once it has been out of
+the fighting for 10 s (`REPAIR_QUIET`; `b.lastHurtT` is stamped by every blow).
+A builder takes up a repair (`findRepair`, the nearest damaged building within
+40 tiles) when it has nothing to build, **or** between jobs while the repair crew
+is short-handed — up to a third of a nation's builders, at least one
+(`repairHandsOpen`) — so a burned granary doesn't wait behind the tenth length
+of wall; a builder waiting on materials at its own site mends something
+meanwhile too. Each repairer restores 2% of max HP per second and pays 30% of
+the building's cost for a full repair, pro rata, from the stores; it stops when
+the stores run dry. Bridges and buildings with an open site are skipped. The
+panel says whether the building is still too hot to mend.
+
+**Adjacency.** Some buildings earn more from their neighbours
+(`computeAdjacency`, cached 8 s per building by `adjacencyBonus`, applied in
+`workerYieldRate`, so the AI's `estimateIncome` sees it too):
+
+| Building | Neighbour | Bonus |
+|---|---|---|
+| Farm | each finished Farm touching it (a field system) | +5%, max +15% |
+| Market | each House within 3 tiles (customers) | +8%, max +40% |
+| Library / University | each Church, Library, University, Great Cathedral or Great Library within 3 tiles | +15%, max +30% |
+| Lumber Camp / Quarry / Gold Mine | a Storehouse within 3 tiles | no flat bonus — it's the short haul, already paid in walking time; the panel just names it |
+
+The building panel shows the bonus and why; the **placement ghost** shows the
+bonus a building would earn on the tile under the cursor ("+15% neighbours").
+The AI plans for it too: `findBuildSpot` (`js/factions.js`) first tries
+`neighbourlySpot`, which scans the tiles around the partner buildings near its
+anchor and takes the best-paying legal spot, before falling back to the old
+spiral search.
+
+**The AI upgrades.** `aiScoreBuildingUpgrade` is one of the utility engine's
+investment candidates once level 2 is unlocked: one upgrade at a time, scored by
+the marginal utility of what the building makes (scaled by how fully it is
+staffed), by housing pressure for Houses, by storage pressure for Storehouses,
+and by war for Watchtowers. In a 50-minute soak every nation upgrades 10–25
+buildings.
+
+## Naval — docks, ships, invasions, sea trade — Deep
+
+**Sea trade and sailing envoys.** A trade pact between nations whose Markets
+stand on different continents runs by sea (`Diplomacy.createRoute` →
+`openSeaLane`): once both nations have a Dock, the lane between them is charted
+once (a 60,000-node sea A*), and two **Merchant Ships** (`SHIP_TYPES.merchant`,
+baked in `bakeShips` — a cog with a cream sail banded in the owner's colour and
+crates on deck) sail it back and forth, following the stored lane rather than
+searching the ocean again. A voyage pays more the longer it is. Until both
+Docks exist the route waits (and says so); a burned Dock closes the lane until a
+new one stands; galleys at war sink merchantmen. **Envoys** to a court across
+the sea take ship from their nation's Dock (`sendEnvoyBySea`): the Prince leaves
+the map for the voyage, the proposal is delivered on arrival
+(`deliverProposal`, the same decision a walking envoy's arrival makes), and he
+comes home the same way. Before this, no proposal or trade could ever cross
+water on a world of continents.
+
 
 `js/naval.js`. A world of continents is unplayable without a way across the
 water, so this is the minimum viable navy: a place to build hulls, a hull that
@@ -498,15 +656,33 @@ unreachable. A direct order still lands whatever it was aimed at.
 brain, because getting an army across an ocean is a campaign rather than a
 marginal-utility choice). Two jobs:
 
-- **Exploration.** A nation on its own continent cannot scout its way to
-  knowing anybody, and an AI that knows nobody never does anything. So the
-  navy's first job is discovery: once the nation is on its feet, build a dock,
-  build a galley, and keep it working outward through water it has never seen
-  (`aiSeaScoutTarget`, biased to a middle distance so it works away from home
-  rather than circling its own harbour). Everything it learns it learns by
-  looking — a ship is in `f.units` and so observes exactly like any other unit
-  (`AIPerception.gatherObservers`), so no rule about reading rival state is
-  bent to make this work.
+- **Exploration and watch** (`aiNavalExplore`). A nation on its own continent
+  cannot scout its way to knowing anybody, and an AI that knows nobody never
+  does anything. So the navy's first job is discovery, and then keeping watch:
+  once the nation is on its feet it builds a dock and up to two galleys
+  (`SEA_SCOUTS_MAX`) that **survey** every overseas rival whose picture has gone
+  stale (confidence under `SEA_SURVEY_CONF` 0.5 — nothing seen for about a
+  minute and a half) or whose capital is unfound. A survey sails for the water
+  nearest a tile of the rival's **drawn claim** (public knowledge, the same hint
+  `aiEnemyAnchor` falls back to) and, once on station, patrols along water that
+  touches their claimed shore (`aiSurveyPoint`); the claim is re-sampled every
+  20 s, so successive voyages work their way round the coast. With nobody to
+  survey but capitals still unfound, a scout charts water it has never seen
+  (`aiSeaScoutTarget`, biased to a middle distance). Crossings path with the
+  landing budget (`SEA_VOYAGE_ITER`), not a soldier's. Everything it learns it
+  learns by looking — a ship is in `f.units` and so observes like any other
+  unit (`AIPerception.gatherObservers`; a hull's masthead sees 10 tiles, a
+  soldier 7), so no rule about reading rival state is bent to make this work.
+  Before the survey, a scout charted open water, never saw a town (capitals sit
+  inland), and every AI's confidence in every overseas rival stayed at zero —
+  which `considerWar` reads as "we know nothing about them" (BUGS #39).
+- **Crews.** A hull takes a citizen to crew her, and `trainShip` refuses when
+  nobody is free. `aiNavalCrewWanted` counts the crews the navy needs right now
+  (missing sea scouts, an invasion's missing transports and escort, net of
+  hulls already on the slipway) and `staffWorkers` holds that many citizens
+  back from the trades — releasing a worker from the best-staffed trade that
+  isn't feeding anyone when every hand is already busy. Without it no AI ever
+  launched a hull (BUGS #53).
 - **Invasion.** A small state machine on `f.ai.invasion`: `building` (waiting
   on a Dock) → `fleet` (waiting on hulls) → `loading` (army walking aboard) →
   `sailing`, and it dissolves the moment the war does. On landing it hands the
@@ -595,6 +771,89 @@ and panels stay live throughout, and the sim keeps running.
 
 The globe is only offered on wrapping worlds — Duel Island has no far side.
 
+## Research, knowledge & the Ages — Deep
+
+`js/tech.js` (data, state, the AI's choices), `js/ui-research.js` (the Research
+screen, the Age banner, the topbar readout), `js/civilians.js` (`tickScholar`).
+
+**Knowledge** is the fifth output and the only one that is not a good: it is
+never stored in a building, never robbed, never traded. The Town Hall produces
+`BASE_KNOWLEDGE` (0.08/s), each Church `CHURCH_KNOWLEDGE` (+Mysticism/
+Theology), and scholars in a **Library** (3 slots, 0.1/s each) or
+**University** (Education, 2×2, 4 slots, 0.18/s each) produce the rest. A
+scholar is a gatherer that never hauls: it walks to the building once and
+credits `creditKnowledge` every tick it sits there (`tickScholar`), so killing
+scholars or burning the Library stops the flow, and `recordYield` still
+measures the building's output for `estimateIncome`. Every tick
+(`tickResearch`) the nation's knowledge pours into its current study; with
+nothing selected it banks, up to `KNOWLEDGE_BANK_CAP` × pace. `f.knowledgeRate`
+is an exponential average for the HUD and the AI. **War disrupts scholarship**
+(`warKnowledgePenalty`): every war a nation is fighting costs it 15% of its
+knowledge, to at most 45% — shown in red beside the rate on the Research
+screen. It is what lets a coalition's war actually slow a nation racing for the
+Enlightenment, and the long-run price of an aggressive court.
+
+**30 technologies** in three branches across four Ages (`TECHS`), each with a
+cost scaled by the game's pace (`techCost`), prerequisites, effects and
+unlocks. Effects all land in one table, `f.mods`, rebuilt from scratch by
+`recomputeMods` whenever a tech completes; the systems that care read that
+table rather than the tech list: `workerYieldRate` (yields — the single place
+production maths lives still), `effectiveDamage`/`unitRange`/`unitSpeed`,
+`unitMaxHp`/`buildingMaxHp`, `storageCap`, `Nation.housingCap`,
+`happinessTargetWithoutTax`, `Nation.taxIncome` (the one tax formula — the HUD,
+the AI's perception and the doctrine re-evaluation all call it now),
+war-weariness gain, `trainTimeFor`, and Banking's treasury interest. Unlocks
+are units (`type.tech`, checked by `trainUnit`), buildings (`type.requires`,
+checked by `buildingBlocker` — the build bar, placement, paste and the AI's
+build wishes all go through it) and building levels.
+
+**The Ages** (`ERAS`): Tribal → Feudal → Kingdom → Imperial. Advancing takes
+`needTechs` of the current Age's technologies (3/4/5), a knowledge project
+(`era:N`, studied like a tech) and a payment in goods, paid when the advance
+starts (`startEraAdvance`). The Age gates the next Age's techs and the castle
+upgrades. A nation's Age is public — it is shown in Diplomacy and announced to
+everyone — so the AI may read a rival's `era`; which techs a rival holds is
+not, and nothing in the AI reads `o.techs`. Every tech and every Age's
+knowledge project costs more the later its Age (`ERA_COST_MUL` 1 / 1.35 / 2.3
+/ 3.4 for Tribal to Imperial), because knowledge compounds: a late-game nation
+reads twenty-odd knowledge a second, and a flat cost increase only nudged the
+end of the match. The last study, **The Enlightenment** (5,000 base — about
+30,600 knowledge at Standard pace), is a `project`: it is the Science Victory
+(js/victory.js).
+
+**The player's side.** Press **T** (or click the knowledge readout / Age chip
+on the topbar, or Menu → Research) for a non-pausing screen: the current study
+with a progress bar and ETA, the queue (each removable), the next Age with its
+requirements and an Advance button, and the tree in four Age columns, each card
+striped with its branch colour and marked known / studying / queued / available
+/ blocked with its prerequisites. Clicking a tech further down the tree queues
+the whole path to it (`queueResearchPath`). Stopping a study banks its progress
+rather than losing it. Entering a new Age puts a title card across the screen
+(`UI.announce`). The build bar greys out and locks buildings that need research
+(`refreshBuildLocks`), and the castle panel locks units behind their tech.
+
+**The AI** studies by ambition (`aiChooseResearch`): branch affinities per
+archetype (`AI_TECH_AFFINITY`), a short list of favourites each
+(`AI_TECH_FAVOURITES`), a pull toward techs that fix a structural shortage or
+starvation, toward military techs at war, toward the current Age's techs while
+the next Age is short of them, and toward cheaper techs first. Advancing an Age
+is an investment candidate in the utility engine (`aiScoreEraAdvance`) scored
+high enough to beat routine buildings — an Age is a once-per-era leap, and a
+low score let an always-affordable House win the arbitration forever (found in
+testing: a nation sat in the Feudal Age with every Feudal tech and the bill in
+its vaults). Nations staff scholars to a quota ahead of the gathering trades
+(`aiScholarShare`, 8-22% of the population by ambition, more when a rival is
+an Age ahead) — without it a Library built last in the list only ever got
+whoever was left over. They build Libraries (`aiDesiredScholarBuildings`), a
+University once Education is in, and Watchtowers (turtles ring their town with
+them; anyone recently hurt adds two). Their troop mix grows with the tree
+(`aiTroopPool`): Shieldmen after Iron Working, Crossbowmen replacing Archers,
+Archmages, and one Catapult per eight soldiers once there is a fortified enemy
+to use it on.
+
+Measured on seed 42, Small World, four AI-run nations: every nation reaches the
+Feudal Age by about minute 15-20 and the Age of Kingdoms by about minute 30-40.
+
 ## Market & commodity trading — Deep
 
 `js/market.js`. A global supply/demand exchange for food/wood/stone with gold
@@ -626,19 +885,106 @@ storehouse without a raider along watches the spoils rot on the ground.
 
 ## Units & combat — Deep
 
-`js/units.js`. **Nine** unit types across 3 castle tiers, with three damage
-types (melee/pierce/magic), armor (Halberdier, ignored by magic), an
-anti-cavalry bonus (Spearman ×2.2 vs Cavalier), projectiles (arrows, fireballs
-with splash), the unique King (aura: +15% damage in 4 tiles; morale penalty on
-death), and the Prince envoy. The roster was cut from 13 to 9 (Shieldman,
-Crossbowman, Archmage and Horseman are gone) so that no unit is a strictly
-better version of another: tier 1 is Swordsman / Spearman / Archer / Bandit /
-Prince, tier 2 is Halberdier (the armoured tank, which inherited the
-Shieldman's armor at 2) and Cavalier (shock cavalry, promoted down from tier
-3), tier 3 is Mage and King. Real-time combat with cooldowns, auto-acquire
-within 5 tiles, fight-back when hit, periodic repathing toward moving targets,
-building attack/destruction. Training consumes a citizen (requires 2 free) and
-runs through a per-castle queue with rally points.
+`js/units.js`. **Thirteen** unit types across 3 castle tiers and four Ages,
+with four damage types (melee/pierce/magic/siege), armor (Halberdier 2,
+Shieldman 3; magic and siege ignore it, the Crossbowman's `pierceArmor` strips
+3 of it), an arrow-ward (the Shieldman halves pierce damage), an anti-cavalry
+bonus (Spearman ×2.2 vs Cavalier), projectiles (arrows, fireballs with splash,
+lobbed catapult stones), the unique King (aura: +15% damage in 4 tiles; morale
+penalty on death), and the Prince envoy. The castle tiers still hold the core
+nine — tier 1 Swordsman / Spearman / Archer / Bandit / Prince, tier 2 (Garrison)
+Halberdier and Cavalier, tier 3 (Royal Academy) Mage and King — and research
+(`js/tech.js`) brings back the four sheets the pack shipped with that had sat
+unused, each with a job nobody else does: the **Shieldman** (Iron Working — an
+arrow wall), the **Crossbowman** (Crossbows — armour-piercing, slow reload),
+the **Catapult** (Engineering — siege) and the **Archmage** (Arcane Mastery,
+tier 3 — heavy splash). Real-time combat with cooldowns, auto-acquire within 5
+tiles, fight-back when hit, periodic repathing toward moving targets, building
+attack/destruction. Training consumes a citizen (requires 2 free) and runs
+through a per-castle queue with rally points; training time comes from
+`trainTimeFor` (Feudalism takes 20% off).
+
+**The life of a soldier** (`js/army.js`):
+- **Veterancy.** Soldiers earn experience from damage dealt (0.3/HP), kills
+  (+12) and razing (+18), and rise Recruit → Veteran (40) → Elite (120) →
+  Legend (260), each rank +10% damage and HP (`RANK_BONUS`, folded into
+  `effectiveDamage` and `unitMaxHp`). A promotion is a second wind (+20% HP,
+  +30 morale). **Legends are named** — "Aldric the Bold" — from the sim's own
+  RNG, chronicled, and steady the men around them. Ranks show as gold chevrons
+  over the unit and in the panel.
+- **Morale and the rout.** Every soldier has morale 0-100. Wounds (0.6 per HP),
+  comrades dying within 5 tiles (−8), the King's death (−35 army-wide), a
+  cavalry charge (−18) and being outnumbered wear it down; being out of the
+  fight, standing on home ground, the King or a Legend within 4 tiles build it
+  back (`tickArmy`, twice a second over a 6-tile spatial grid, so it is O(n)).
+  Veterans resist (−15% per rank). Below 12 — or badly wounded and shaken — a
+  soldier **routs** (`startRout`): drops its target and orders, runs for its
+  Town Hall, spreads panic to those beside it, and rallies after at least six
+  seconds once back above 45 (`tickRout`). A routing unit carries a white rag.
+  Unpaid armies cap at 60.
+- **The cavalry charge.** A mounted unit that has ridden 3+ tiles since its
+  last blow lands its next one at ×1.5 (×1.75 with Chivalry) and shakes the
+  target — unless the target holds a spear, a halberd or a shield.
+- **Healing and attrition.** Out of combat for 6s, a soldier heals 1.2%/s on
+  home ground and 3%/s within reach of a Town Hall, Castle, Church or the
+  Cathedral (ships at a Dock), scaled by Theology and the Cathedral. Winter
+  deep in hostile land wears an army down (`attritionRate`, js/seasons.js) —
+  it wounds but never kills.
+- **Upkeep.** A soldier still eats (0.04 food/s) and draws pay (0.015 gold/s;
+  siege engines and ships 0.04 gold, no food); Standing Army takes 40% off
+  (`armyUpkeep`, paid in `Nation.tick`). An unpaid army's morale is capped and
+  its people grumble. The AI now counts rations in `estimateFoodRate` and never
+  keeps more soldiers than about two thirds of its gold income can pay
+  (`armyTarget`).
+- **Alerts.** Anything of the player's attacked raises a throttled alert
+  (`alertPlayer`: troops, citizens, ships, buildings, routs), logged with
+  "Space to look", pinged on the minimap as a swelling red ring; **Space**
+  centres the camera on the newest.
+
+**Standing orders** (`Unit.order`, `Unit.waypoints`, `UI.commandMove`). A plain
+right-click is now a real **move**: the group marches through and does not stop
+to fight until it arrives (fight-back included). **Attack-move** (F then click,
+or Ctrl+right-click) fights its way there and resumes the march after each
+fight. **Patrol** (P then click) walks back and forth between here and there,
+attack-moving. **Hold** (Z) stands fast and engages only what is already within
+reach. **Stop** (X) drops everything. **Shift** queues waypoints (drawn as a
+dashed path while selected). **Control groups**: Ctrl+1-9 assigns, 1-9
+selects, pressing the number twice jumps the camera. **Double-click** a soldier
+selects all of that type on screen; **I** selects idle soldiers. The unit panel
+shows one soldier's rank, experience, morale, HP and current order — or a
+group's average morale, ranks and routing count — and carries Attack-move /
+Patrol / Hold / Stop buttons for touch. AI armies keep their brain-driven
+orders; `order` is null for them.
+
+**Siege and fortifications.** Walls, gates and Watchtowers carry
+`type.fortification`, and the **Town Hall and the Castle are keeps**
+(`type.keep`): a non-siege attacker does `FORT_RESIST` (35%) of its damage to
+either, and a siege engine does full damage, so a fortified town is a siege
+problem rather than a numbers problem. Keeps have their own flag so the wall
+techs and the Great Wall, which strengthen fortifications, do not also treble
+a capital. **Both keeps shoot**, through the Watchtower's code (`tickTowers`):
+the Town Hall (2,000 HP, was 900) 8 pierce every 1.4 s at 6 tiles, the Castle
+(1,200 HP, was 600) 6 every 1.6 s at 6 tiles. Before this a capital was paper:
+on seed 7 an AI army of nineteen took a Town Hall — and with it the whole match —
+sixty seconds after declaring war. The AI brings Catapults against any rival
+whose Town Hall or Castle it has seen (`aiTroopPool`). The Catapult (`type.siege`,
+`dmgType: 'siege'`) reaches 7.5 tiles, splashes, and deals only
+`SIEGE_VS_UNITS` (30%) to troops; its `minRange` of 2 makes it back off
+(`Unit.backAway`) rather than fire at a soldier at its wheels. Its stone
+lands on the building it was aimed at even when the landing point is on the
+footprint's edge, and splash damage is worked out per victim
+(`Projectile.dmgVs`) so armour and arrow-wards still count. It is drawn as a
+baked sprite (`bakeSiege`, `js/assets.js`; `UI.drawSiege`), and the stone as a
+lobbed arc with a ground shadow (`UI.drawBoulder`).
+
+**Technology modifies combat in one place.** `effectiveDamage` folds in the
+attacker's nation's `f.mods.dmg[dmgType]` and `mountedDmg` (see Research), and
+the veterancy rank; `unitRange` adds Fletching's half tile for pierce units;
+`unitSpeed` applies mounted and naval speed; a unit's maximum HP is
+`unitMaxHp(u)` (`js/tech.js`), stored as `u.maxHp`, and a finished tech
+rescales every living unit's current HP proportionally so nobody reads as
+wounded by a promotion. `u.type.hp` is no longer read anywhere outside
+`unitMaxHp`.
 
 **Bridges are destructible, and one hit takes the whole span.** A bridge is
 never picked up by passive auto-acquire (`findEnemyNear` explicitly skips
@@ -781,8 +1127,11 @@ hatch for units stranded on impassable tiles. Full detail in
 ## Castle tiers — Moderate
 
 `js/buildings.js` (`CASTLE_UPGRADES`), `js/factions.js`. Two purchasable
-upgrades: Garrison (tier 2: Halberdier/Cavalier) and
-Royal Academy (tier 3: Mage/King). Locked units render with
+upgrades: Garrison (tier 2: Halberdier/Cavalier; needs the **Feudal Age**) and
+Royal Academy (tier 3: Mage/King/Archmage; needs the **Age of Kingdoms**) —
+`CASTLE_UPGRADES[n].era`, checked by `startCastleUpgrade`, which returns the
+reason as an error string, and by the AI's `scoreUpgrade`/`aiPlanDemand`. The
+castle panel shows the upgrade locked with the Age it needs. Locked units render with
 a lock icon and unlock hint. The AI buys upgrades under threat/doctrine/
 population triggers (conquest and prosperity upgrade eagerly) and filters its
 training pool by tier. Data-driven — a tier 4 needs only data entries. The
@@ -792,11 +1141,159 @@ condition — prosperity-doctrine AI nations race for one same as before, but
 completing it (yours or a rival's) has no effect on whether the game continues.
 See "Defeat" below.
 
+## Leaders & the courts — Deep
+
+`js/leaders.js` (identity, portraits, voice, the opinion ledger, promises,
+initiative, vassals, deals), `js/ui-leaders.js` (the Courts list and the
+Audience screen), hooks in `js/diplomacy.js`, `js/territory.js`, `js/ai.js`,
+`js/main.js`.
+
+**Every rival is a person.** `rollLeaders` (seeded, in the Game constructor)
+gives each AI nation a ruler: a name from a per-nation pool (Norse for
+Crimson, Byzantine for Violeta, Iberian for Aurelia), a sex (for titles
+only), an age, a face, **two traits** drawn from the strongest pulls of the
+rolled personality (`LEADER_TRAITS`: Warmonger, Merchant Prince, Covetous,
+Paranoid, Honorable, Schemer, Zealot, Scholar — never both Honorable and
+Schemer), and a **hidden agenda** (`LEADER_AGENDAS`: Warlord, Trade Baron,
+Seeker of Wisdom, Territorial, Peacemaker, Builder, Tribute Seeker) that
+leans on the personality without copying it. The title follows the Age
+(Chieftain → Lord/Lady → King/Queen → Emperor/Empress), and a leader earns an
+epithet from their deeds (`leaderEpithet`: the Faithless, the Conqueror, the
+Builder, the Bold, the Wise, the Generous, the Just). The agenda is revealed
+to the player after three dealings (`noteDealing` — cards, audiences, gifts,
+pacts).
+
+**Portraits** are 32×32 pixel busts drawn in code (`drawPortrait`): skin,
+hair colour and style (greying past 55), beard, eyes, an occasional scar, the
+nation's colour as banner and cloak, a collar that grows richer with the Age,
+and headwear by Age (a feathered band, a circlet, a crown, an imperial crown).
+Cached per leader and Age as a data URL.
+
+**Opinion is a ledger, not a number.** `Diplomacy.relation(a, b)` — which
+every AI decision already reads — is now *directional*: the shared mood between
+the two courts (`rel`, symmetric, as before) plus `opinionMods(a, b)`, the sum
+of everything a's leader remembers about b and every live reason it has.
+*Memories* (`remember(a, b, key, label, value, halfLife)`) decay on their own
+half-life — a gift fades in ten minutes, a betrayal lasts an hour — and a
+repeated key refreshes or stacks rather than piling up duplicates; traits and
+agendas scale how hard something lands (an Honorable leader weighs promises
+×1.5, a Zealot takes rebuffs ×2, a Builder takes razings ×2, a Collector values
+gifts ×1.5). *Live reasons* (`liveReasons`) are recomputed every 2s and read
+only public facts or the leader's own perception: trading partners, allies,
+declared friends, research pacts, vassalage, embargoes, common enemies, being
+at war with a friend, and the agenda (a Warlord respects an army it has seen
+and despises a weak one; a Scholar admires a later Age; a Territorial ruler
+resents contested frontier tiles; a Peacemaker counts the wars you declared in
+the last 20 minutes; a Builder admires your Wonders). The Audience screen
+shows the whole breakdown, line by line.
+
+**What gets remembered** (among others): declaring war on them (−30, 30 min),
+betraying a friendship (−40 to them and −15 to everyone else), breaking your
+word (−32, 40 min; Honorable courts elsewhere −8 on hearsay), keeping it
+(+14), gifts, aid in famine or war, joining their wars, rebuffed envoys,
+refused ultimatums, spurned peace or friendship, apologies, extortion,
+razing their buildings (stacking), conquering a nation (everyone), denouncing
+them — or denouncing their enemies.
+
+**Promises.** Several of a leader's questions are answered with your word,
+tracked in `game.court.promises` and checked by `tickPromises`:
+*withdraw* (no soldiers at their border in 45s — checked against what their
+own eyes can see), *nosettle* (no building finished near their claim for 6
+minutes — `leaderOnBuilding` catches it the moment one completes), *defend*
+(if the named rival declares war on them within 10 minutes, you must join the
+war within 60s — `leaderOnWar` calls it in). Kept and broken promises show on
+the Audience screen and in the chronicle.
+
+**Leaders ask, request, demand and offer** (`leaderInitiative`, called from
+`aiDiplomacy` after the AI's own diplomacy). Every card is spoken in the
+leader's voice (`LEADER_LINES`, five registers — proud, warm, cunning,
+measured, merchant — picked by the leading trait) with their portrait
+(`pushPlayerEvent({portrait, quote})`). **First contact** comes first: the
+moment a court first lays eyes on Azuria it introduces itself (greet as
+friends / send a welcome gift / "stay out of our way"), and no court
+petitions you before it has met you — on a world of continents, the courts
+across the sea stay "unknown" in the Courts panel until someone crosses it.
+Then, in order of urgency: *surrender offers* (their war with you is lost —
+accept their fealty, demand 150 gold for peace, or no mercy), *demands for
+your submission* (they are crushing you — submit as their vassal, or never),
+*soldiers at the border*, *building too close*, *famine* (send food or gold),
+*war aid* against a stronger enemy; and, at a human pace, *friendship*
+offers, *research pacts*, *resource trades* (their plentiful good for their
+scarcest, priced at market — `tradeOfferFor`), *gossip* ("which neighbour do
+you trust least?" — naming one sours them on that nation), *"will you stand
+with us?"* (a defend promise) and *joint wars*. Per-kind cooldowns
+(`leaderCool`) and the 45s politeness cooldown keep it to a card every few
+minutes per court. Existing cards — envoy proposals, disputes, ultimatums,
+peace offers, coalitions — are spoken by the leader now too, and every card
+from a leader carries an **Audience…** button.
+
+**The Audience screen** (`UI.openLeader`; from the Courts list, a card, or L
+then Audience): the portrait, full name and epithet, Age and age, traits and
+agenda (or "hidden — n/3 dealings"), their standing with every other court,
+a greeting that depends on their opinion, the opinion breakdown, your
+promises to them, and actions — gifts (50/150), declare friendship (accepted
+at 20-35 opinion by trait), research pact, trade pact and alliance (by envoy),
+demand tribute (paid only if they fear your army, and resented), denounce,
+embargo, declare war (a betrayal, with a confirmation, if you are friends),
+sue for peace, demand surrender, declare independence / release vassal — plus
+a **deal builder** (give/receive any of the four goods; `considerDeal` prices
+it by their marginal utility, `dealValue`, and wants a sweetener from a
+nation it dislikes and gives a friend a discount), and questions ("what do you
+think of X?", "what do you want from us?" — which names what would actually
+raise their opinion).
+
+**Friendship, denouncement, research pacts.** A declared friendship is public
+and lasts 15 minutes; an AI will not declare war on a friend unless its
+opinion has fallen below −30 (−60 if Honorable, −10 if a Schemer), and doing
+it is a *betrayal* the whole continent remembers. Denouncing is public too and
+moves third parties' opinions both ways. A research pact costs each side 60
+gold and gives both +15% knowledge for 10 minutes (`researchPactBonus`, applied
+in `tickResearch`). AI courts befriend and denounce each other on their own
+(`aiCourtBusiness`).
+
+**Vassals** (`makeVassal`, `game.court.overlord`). A nation that has lost a
+real war — at least 4 minutes long, with its Town Hall battered or 3+ buildings
+burned by that enemy, against a force it believes is 2.2× its own (3.5× for a
+Zealot, 1.8× for the Paranoid) — offers fealty (`wouldSubmit`); the player can
+also demand it. A vassal is allied with its lord, takes up the lord's wars
+(and its lord's future wars, `leaderOnWar`), pays a fifth of its treasury
+(max 150) every minute, will not be attacked by its lord, and may **rebel**
+(`considerRebellion`) when it believes itself stronger and resents the rule
+(Honorable vassals rarely). A fallen lord frees its vassals. **The player can
+become a vassal too** — a crushing enemy can demand Azuria's submission, which
+ends the war at the price of tribute and your freedom to make war on them, and
+the Audience screen then offers *Declare independence* (which is war).
+AI-AI wars end in vassalage too (`aiCourtBusiness`).
+
+**Moods** (`addMood`/`nationMoodBonus`) are temporary nation-wide happiness
+effects for events that should be felt at home (celebrations, mourning);
+`happinessTargetWithoutTax` reads them and the happiness tooltip lists them.
+
+**Dialogue never touches the sim RNG.** `leaderLine` picks its line from a
+hash of speaker, topic and a 45-second time bucket — a panel that re-renders
+a greeting twice a second would otherwise pull numbers from `game.rng` and
+make simply looking at a leader change what the world does.
+
 ## Diplomacy — Deep
 
-`js/diplomacy.js` (mechanisms) + `js/ai.js` (`aiDiplomacy`, AI initiative).
-Symmetric relations (−100…+100) and a status matrix (war/neutral/trade/
-alliance) per pair, plus `warSince`/`lastBlood` matrices for peace-seeking.
+`js/diplomacy.js` (mechanisms) + `js/ai.js` (`aiDiplomacy`, AI initiative) +
+`js/leaders.js` (opinion, promises, friendship, vassals — see Leaders above).
+**Truces**: every road out of a war sets a five-minute truce (`TRUCE_TIME`,
+`Diplomacy.setStatus`); the AI never breaks one, and a player who does is a
+truce-breaker to every court (`leaderOnTruceBroken`). Without it an AI could
+declare, sue and declare again once a minute. The other end of that loop is
+closed too: **a court that declares a war sees it through its first 150
+seconds** (`AI_WAR_COMMITMENT`, `aiDiplomacy`) unless it is outmatched two to
+one — war weariness passes every archetype's peace threshold within a minute,
+so without this a nation bought peace a minute after declaring. And **a war
+against a nation within reach of victory** (75% of any race, as far as the
+world can see) is not sued away at all until the war has truly broken the
+side fighting it (weariness near its cap and outmatched two to one) — before
+this, every war to stop a runaway leader was bought off within minutes. A symmetric *mood* between each pair (`rel`, −100…+100) and a status matrix
+(war/neutral/trade/alliance) per pair, plus `warSince`/`lastBlood` matrices for
+peace-seeking. `relation(a, b)` is **directional**: the mood plus a's leader's
+ledger about b. Caravan pay is scaled by each side's trade technology, and
+each nation's lifetime trade earnings are tracked (`f.tradeEarned`).
 Gifts buy relations. Trade pacts and alliances require a Prince envoy who
 physically rides to the target's Town Hall — for the player AND for every AI
 nation (the old instant AI pact flips are gone). AI→player proposals arrive as
@@ -836,8 +1333,9 @@ seeing a rival's farmhands says nothing about their army, so `observe` and
 observers (a lumberjack at the treeline is a real pair of eyes). Each nation
 keeps a `ScoutMemoryMap`:
 rival positions, rough army sizes and storehouse contents, written only by real
-line of sight (7 tiles per soldier, 9 per building, 12 for a town hall or
-castle), combat contact, or diplomacy. Memories decay, and — the important part
+line of sight (7 tiles per soldier, 10 per ship, 9 per building, 12 for a town
+hall or castle — measured the short way round the east-west seam; a soldier in
+a ship's hold sees nothing, and is not seen), combat contact, or diplomacy. Memories decay, and — the important part
 — **low confidence inflates a threat rather than shrinking it**, so a nation
 that has lost track of a neighbour treats it as dangerous and sends a rider
 instead of guessing. Scouts are real units carrying a `scout` mission: they ride
@@ -861,7 +1359,13 @@ with triple-gated hysteresis.
 `rollPersonalities` in `js/factions.js`): five traits — aggression, mercantile,
 greed, caution, loyalty — drawn without replacement from six temperaments and
 jittered. The warlord next door in one game is a walled-up trader in the next.
-`?seed=N` still reproduces the whole setup.
+`?seed=N` still reproduces the whole setup. **Leaders' traits anchor the
+ambition** (js/leaders.js): `seedDoctrine` and `reevaluateDoctrine` add a
+bonus for the doctrine a trait implies (Warmonger/Zealot → aggressor, Merchant
+Prince → merchant, Paranoid → turtle, Covetous/Schemer → raider,
+Honorable/Scholar → hegemon). Without it, a soak with the leaders layer had
+every nation drift to *merchant* the moment its coffers filled — full treasuries
+score the merchant ambition highly — and nobody declared a war for an hour.
 
 **Investment is arbitrated, not scripted.** Each tick the engine scores
 building, castle upgrade, expansion and Grand Castle against each other and runs
@@ -874,14 +1378,31 @@ and 110 strength — floors that make a 30-vs-0 comparison impossible), an
 advantage measured against remembered intel with unknowns treated as dangerous,
 a motive (grudge, bad blood, a resource the market cannot supply, or a runaway
 power), a route the army can actually walk, and odds that have **held for 30
-seconds** rather than flickered once. Nothing opens hostilities inside the first
-~150 seconds (scaled by difficulty). Defence is reactive: a wave is recalled
-when enemy soldiers are visible near the capital.
+seconds** rather than flickered once. The exception is a **dogpile** — the
+runaway power, or a nation past 75% of a victory as the world can see it — which
+is marched on without the held advantage or fresh scouting: public knowledge is
+enough to know a rival is about to win. Nothing opens hostilities inside the first
+~150 seconds (scaled by difficulty). Defence is reactive, at two scales: a
+wave is recalled when enemy soldiers are visible near the capital, and **any
+incursion onto the nation's land gets a response force**
+(`AICombatManager.respondToIncursions`): the biggest knot of hostile soldiers
+it can *see* on its own claim is answered by the nearest soldiers not already
+committed to a wave or a landing (never the King), about 1.5× as strong as what
+is coming (`RESPONSE_MARGIN`), attack-moving on it for up to 75 s and then
+walking home. Before it, a landing party could burn sixty outlying buildings
+one at a time while the army stood in the capital — a 90-minute, three-war soak
+cost seventeen soldiers' lives in all; with it, the same seed fights real
+battles (100+ dead) and loses a third as many buildings.
 
 **Economy.** Deficit-scored build planning; farms staffed first when food is
 negative; a lumber camp on a worked-out forest is unstaffed so the shortage
 surfaces; recruits are held back from the workforce when the army is under
-strength (capped at a third of the population). Staffing now moves real people
+strength, and crews when the navy wants a hull (capped at a third of the
+population; see Naval). **The army is capped by manpower** as well as by pay
+(`armyTarget`): at most 4 + population × (0.5 + the archetype's per-citizen
+rate), a quarter more at war — every soldier is a citizen off the fields, and
+without the cap an aggressor marched 26 soldiers out of a nation of 12 and fell
+an Age behind for good. Staffing now moves real people
 without knowing it — `staffWorkers` sets `b.workers` exactly as before and
 `reconcileJobs` (js/civilians.js) walks citizens to match, including the Town
 Hall's and Builder Houses' builder slots, which come first in the building list
@@ -909,8 +1430,14 @@ buildings (townhall 20/r12, castle 14/r10, walls 6/r4, others 8/r6),
 recomputed every 5s; the strongest nation owns each tile, a runner-up within
 60% marks it contested. Rendered as dashed frontier lines on the main map and
 an ownership tint on the minimap. Sustained contested frontiers sour relations
-and spark **border disputes**; so does completing a building on another
-nation's claim. Player disputes arrive as event cards (Concede / Negotiate
+(−0.4 per 5s past 25 contested tiles — it was −1, which on its own drove a
+neighbour to −100 inside an hour) and spark **border disputes**; so does
+completing a building on another nation's claim. **A settled dispute now
+settles something**: `concession[a][b]` hands every tile the two contest to
+`b` (uncontested) until it expires — conceding gives the ground away for 10
+minutes, negotiating draws a line for 15, and AI-AI disputes concede from the
+weaker side. Before this, conceding did nothing but raise relations, and the
+same dispute re-fired every 90 seconds for the rest of the match. Player disputes arrive as event cards (Concede / Negotiate
 40g / Stand firm — ignoring one is worse); AI–AI disputes resolve from
 strength, ambition and relations, and can harden into wars or soften into
 trade pacts. Two helpers hang off the same field for defensive garrisons
@@ -924,13 +1451,19 @@ posted on foreign ground then simply holds position rather than wandering off
 looking for friendly soil. Gaps: territory has no direct economic effect (no
 tile tribute), walls don't project claims far.
 
-## Event cards — Moderate
+## Event cards — Deep
 
 `js/events.js` (queue + resolution) + `ui.refreshEventCard` (`js/ui.js`,
 `#eventcard` HUD element). AI-initiated interactions reach the player as
 non-pausing choice cards: envoy proposals, border disputes, ultimatums
 (tribute / counter-offer / refuse, with war 60s after refusal), peace offers
-with reparations, and coalition invites against runaway powers. One card
+with reparations, coalition invites against runaway powers — and now the
+leaders' own questions, requests and offers (first contact, soldiers at the
+border, building too close, famine, war aid, friendship, research pacts,
+resource trades, gossip, "stand with us", joint wars, surrender and demands
+for submission — see Leaders). A card from a leader shows their portrait,
+title and epithet, their words in quotes, what the answer means, per-option
+hints (e.g. what a promise commits you to) and an Audience… button. One card
 shown at a time (queue capped at 3, "+N more" badge), a draining timer bar,
 per-faction politeness cooldowns (45s), and expiry consequences — silence is
 an answer. Hidden by Hide UI like every HUD element.
@@ -939,7 +1472,8 @@ an answer. Hidden by Hide UI like every HUD element.
 
 `js/main.js` (`DIFFICULTIES`, `#difficulty` overlay in `index.html`). Chosen
 on a pre-game screen before the Game is constructed (or via `?difficulty=`,
-which round-trips in the URL with `?seed=`): **Measured March** (ramped — wars
+which round-trips in the URL with `?seed=`) — alongside the world, the
+**Victory** setting and the **Pace** (see Victory, legacy & the end of a match): **Measured March** (ramped — wars
 telegraphed by ultimatums, 5-minute player grace, victors consolidate 180s
 after conquests, coalitions form against snowballing powers), **Quiet
 Frontier** (AI wars each other freely but only marches on the player after
@@ -949,28 +1483,152 @@ no ultimatums, no consolidation, bigger armies). Knobs: `warAppetite`,
 `ultimatums`, `consolidation`, `coalitions`, `armyMul`, `playerGrace`,
 `provokedOnly`.
 
-## Defeat — Moderate
+## Victory, legacy & the end of a match — Deep
 
-`js/main.js` (`Game.checkDefeat`/`Game.end`). **There is no way to win.**
-Rival nations can be conquered, eliminate each other, race a Grand Castle, or
-end up allied with every survivor — none of it ends the game, for the player
-or for them. The only end state is the player's own Town Hall falling
-(`Your Town Hall lies in ruins. The nation is lost.`), which freezes the sim
-and shows the end screen (skull icon, "Defeat", *Play again*). There is no
-"keep playing" — defeat is the only way to arrive at the end screen, so there
-is nothing to play on past.
+`js/victory.js` (the races, milestones, legacy, stats, the chronicle),
+`js/ui-victory.js` (the Ledger, the history chart, the end screen),
+`js/main.js` (`Game.endGame`, `Game.continueAfterVictory`, the setup options).
 
-Elimination (any nation's, not just the player's) still kills the faction's
-units and cancels its trade routes, and its buildings are **annexed** by
-whoever felled its Town Hall (`conqueredBy` → `annexBuildings`) rather than
-erased — so taking a rival's mining town is worth more than burning it, and the
-map consolidates into real empires either way. Every survivor rethinks its
-ambition on any nation's fall; on paced difficulties the victor rests
-(consolidation) before its next war. The map keeps consolidating with or
-without the player watching — an unwatched corner of the continent can end up
-one giant empire, or the player can outlast every rival and simply keep ruling
-alone; neither stops the sim. No score screen or stats beyond lifetime trade
-gold.
+**Chosen before the match.** The setup screen now has, beside the world and the
+difficulty, a **Victory** choice (Victory conditions / Endless) and a **Pace**
+(Quick / Standard / Epic). Both round-trip in the URL (`&victory=0`,
+`&pace=quick|epic`), like the seed. Pace (`PACES`, `js/tech.js`) scales every
+research cost (0.8 / 1.8 / 2.6) and every victory threshold (0.6 / 1.4 / 2.0).
+Standard was 1.35 / 1: two-hour soaks on three seeds all ended in a Science
+Victory at 84-88 minutes, with every nation in the Imperial Age by the
+67-minute mark — well short of the "roughly two hours" the setup screen
+promises. Quick is unchanged.
+
+**Five races, run by every nation at once** (`VICTORY_TYPES`), checked each
+second (`tickVictory`):
+- **Domination** — every rival eliminated or your vassal, at least one of them
+  by your hand.
+- **Science** — complete **The Enlightenment** (the tech tree's final project).
+  Beginning it is announced to the world.
+- **Culture** — bank `CULTURE_TARGET` (14,000 × pace) culture with at least three
+  Wonders standing. Culture accrues every second from standing Wonders (1/s
+  each), a Grand Castle (0.5/s) and Churches (0.04/s each) (`cultureRate`),
+  so a rival has real time to raze or seize the Wonders that feed it.
+- **Economic** — 8,000 gold earned from trade routes over the match (caravans and
+  merchant ships, `f.tradeEarned` — so it needs partners, and an embargo or a
+  sunk fleet hurts it) *and* 20,000 in the treasury, held for three minutes.
+- **Diplomatic** — every surviving nation your ally or vassal, in the Age of
+  Kingdoms or later, held for three minutes.
+
+The first nation to finish one wins (`declareVictory` → `Game.endGame`). If it
+is not you, you have lost — the end screen says who won and how. Progress is
+announced at 50% (your own races only), 75% and 90% (`warnProgress`), and a
+held condition starts a visible countdown. Without victory conditions the
+match is endless, exactly as before.
+
+**The AI races too.** Each nation picks a race to pursue by ambition and
+progress, re-chosen every two minutes (`aiVictoryFocus`, `AI_VICTORY_AFFINITY`);
+`aiVictoryPush` then leans its scholar share (Science), Wonder building
+(Culture), army size and war appetite (Domination). Every nation also watches
+the race from the outside (`aiVictoryThreat`, public facts only — Wonders,
+conquests, vassals, alliances, trade fleets, Ages and the announced
+Enlightenment) and past 75% of any victory the leader becomes everyone's target:
+even a peaceful court will go to war to stop it, merchants and hegemons
+embargo a trading empire, and doctrine re-evaluation tilts toward aggression.
+
+**Pacing, measured.** On Standard, 150-minute headless soaks (four AI-run
+nations, the player's on autopilot) now run from about 100 to past 150
+minutes: seed 42 (Small World, Measured March) ended in a Science Victory at
+99 minutes after a coalition war on the leader that ended with one of its
+attackers made its vassal; seed 21 (Small, Quiet Frontier) in a Culture Victory
+at 110; seeds 7 and 12 (Small / Standard World, Quiet Frontier / Iron Age) were
+still racing at the 150-minute cap, a nation past 75% and the world at war with
+it. War-heavy matches run longest, because every war costs knowledge. It took
+six tuning passes: the first had Culture won in 56 minutes and an Economic
+"hold 9,000 gold" won in 45, and the last had every seed ending at 84-88
+minutes. The levers: culture as an accumulation rather than a Wonder count;
+Economic needing trade rather than a hoard; steeper later-Age costs
+(`ERA_COST_MUL`) and a dearer Enlightenment; the victory-threshold multiplier;
+wars on a would-be winner at 75%, held rather than bought off; and war costing
+knowledge. The soaks also show 100-220 soldiers dying per match, and capitals
+standing through the whole of it — keeps fall to sieges, not rushes.
+
+**Legacy** (`legacyScore`) is every nation's standing in history: Age × 150,
+techs × 15, Wonders × 200, culture/20, population × 2, land/12, trade/25,
+vassals × 150, conquests × 250, a Grand Castle, milestones, plus 10 per promise
+kept and minus 25 per broken promise and 40 per betrayal. **Milestones**
+(`MILESTONES`) are first-to awards — first into each Age, first Wonder, first
+nation of a hundred, first conquest, first vassal, first 3,000-gold treasury,
+first to fifteen techs — each announced and chronicled. In an endless match,
+legacy is the score. Statistics are sampled every 30s (`sampleStats`: legacy,
+population, army, gold, land, Age) for the charts, thinned in long matches.
+
+**The chronicle** (`chronicle(text, fid, weight)`) is the dated history of the
+match: wars and peaces, alliances and pacts, Ages, Wonders begun/finished/
+seized/destroyed, conquests and falls, vassalage and rebellion, friendships,
+denouncements, betrayals and broken truces, broken promises, first contacts,
+kings fallen, milestones, victory warnings and the victory itself.
+
+**The Ledger** (V, or J for the chronicle; Menu → Victory & Legacy /
+Chronicle) is a non-pausing screen with three tabs: **Victory** (every race,
+with each nation's progress bar and any running hold countdown — rivals'
+treasuries show as "?" until you have met them), **Legacy** (a line chart of
+every nation's legacy over the match, the standings table and the milestones),
+and **Chronicle** (the full history, by day, majors in bold).
+
+**The history chart** follows the dataviz method: each nation keeps its own
+hue (colour follows the entity), with Aurelia's gold taken a step deeper
+(`#b98a26`) for the chart only, because the banner gold failed the lightness
+band on the dark surface — the four chart colours pass the palette validator
+(lightness, chroma, CVD and normal-vision separation, contrast) on `#14161c`.
+2px lines, end dots with a surface ring, hairline solid grid, a legend above,
+direct end labels only where they don't collide, a crosshair + tooltip listing
+every nation at the hovered time (values lead, names follow, line keys; built
+with `textContent`), and a Table toggle.
+
+**The end screen** (`UI.showEndScreen`), for a victory or a defeat of any kind:
+the title and what happened, **your epithet** as history will remember you
+(`playerEpithet` — the Conqueror, the Overlord, the Builder, the Enlightened,
+the Merchant, the Peaceful, the Just, the Bold, the Faithless, the Steadfast),
+time, day, Age and legacy rank, the legacy chart, the final standings, and the
+chronicle's major entries. After a victory you may **Rule on (endless)** —
+victory conditions switch off and the world carries on; a defeat offers the
+full chronicle and Play again.
+
+**Defeat by the Town Hall** is unchanged: it ends the match on any setting.
+Elimination (any nation's) still kills the faction's units and cancels its
+routes, and its buildings are **annexed** by whoever felled its Town Hall
+(`conqueredBy` → `annexBuildings`) — Wonders included, with their effects.
+
+## Wonders — Deep
+
+`js/wonders.js`. Seven Wonders of the world (`WONDERS`), each a 2×2 building
+with three tiles of art, a big cost and a long build (the table's figures ×1.6
+cost and ×2 time), up to six builders at once (`type.maxBuilders`), an Age
+requirement, and a lasting effect folded into `f.mods` by `applyWonderMods`
+(called from `recomputeMods`):
+
+| Wonder | Age | Effect |
+|---|---|---|
+| Great Library | Feudal | +2 knowledge/s, +10% knowledge |
+| Grand Bazaar | Feudal | trade income +50%, +1.5 gold/s |
+| Royal Gardens | Kingdom | +10 happiness, +2 citizens per House |
+| Great Cathedral | Kingdom | +8 happiness, Churches study twice as hard, troops heal +50% |
+| Great Wall | Kingdom | walls/gates/towers +100% HP, invaders march 15% slower in your land |
+| Imperial Palace | Imperial | all production +15%, taxes +10%, vassal tribute +50% |
+| Grand Observatory | Imperial | +25% knowledge, +3 knowledge/s |
+
+**One of each, in the whole world** (`WonderRegister`): several nations can race
+for the same one, and the first to finish it wins — every rival site for it is
+abandoned with half its delivered materials salvaged (`onWonderCompleted`). A
+Wonder can be seized in a conquest (it changes owners, effects and all —
+`onWonderCaptured`) and it can be burned or demolished, after which it is **lost
+to history** for everyone (`onWonderLost`). Completing one is announced with a
+title card and remembered by Builder-agenda leaders; losing one costs your
+people happiness. The AI raises them as an investment candidate
+(`aiScoreWonder`, tastes by ambition in `AI_WONDER_TASTE`, weighted up by a
+Culture push or a Builder agenda, one site at a time, marked urgent so builders
+come). The art (`bakeWonders`) is drawn in code at 32×48 — a columned library
+with a gold dome, striped bazaar awnings round a minaret, planted terraces with
+a fountain, a twin-spired cathedral with a rose window, a gatehouse between
+towers, a palace of three golden domes, a round observatory with its telescope —
+with the owner's colour in banners and glass; `buildingSprite` draws any
+taller-than-wide canvas rising above its footprint.
 
 ## Dev mode — Basic
 
@@ -1002,6 +1660,43 @@ testing, player-only:
   reload/new game, since it's a debug aid, not a game setting.
 
 ## Desktop UI/HUD — Deep
+
+**The Royal Steward** (`js/ui-advisor.js`). Counsel for a player finding
+their way through the systems, spoken in the message log (gilt edge, italic
+serif, a quill) and left up for 16 s rather than 9: research left idle, empty
+granaries, full houses, war declared (and what the keeps will and won't do), no
+Castle, no Library, idle hands, the first foreign court, the Feudal Age, the
+first building levels, autumn's harvest, a rival halfway to a victory, damage
+waiting for repair, no Market, and the first fog, storm and snow. Each is said
+once a match, a few (hunger, crowding, idle hands, war, rivals, autumn) again
+after a long quiet, and never more than one every 40 s of game time
+(`ADVISOR_GAP`). On a touch screen it names the menu rather than a key
+("Tap the knowledge readout", "Open Menu → The Courts"). It reads the game and
+changes nothing. **Advisor: ON/OFF** in
+the pause menu turns it off, remembered in the browser's local storage.
+
+**A medieval theme.** Every panel, bar, button and screen wears walnut, bronze
+and parchment rather than the old slate blue: the palette in `index.html`'s
+stylesheet was remapped colour for colour (so every rule kept its structure),
+and a theme block at the end adds the texture — a gilt hairline and depth
+shadow on each `.hud` panel, carved bronze gradients on the buttons with a gold
+edge on hover, serif (Palatino/Book Antiqua/Georgia) headings, top-bar
+numbers and build-button names, bronze scrollbars. It changes no size, padding
+or border width, and the serif numerals happen to be narrower: at 1024 px the
+top bar now fits one row where it used to wrap to two. The Ledger's chart moved
+to a walnut surface with it, and its four series colours were re-validated
+against the new surface (all checks pass: lightness band, chroma, CVD
+separation, normal-vision floor, contrast). **The top bar shows the weather**
+over your capital beside the season ("Day 9 ☀ · Autumn · Rain"), and its tooltip
+says what the weather does.
+
+**The build bar is tabbed** (`BUILD_TABS`, `UI.setBuildTab`): Economy, Society,
+Military and Wonders, as a 2×2 grid of small tabs beside the buttons (no taller
+than one row of buttons, so a phone keeps its play area); **B** cycles tabs.
+Twenty-four buildings no longer fit one row, and the number keys are kept free
+for army control groups. **Hotkeys** added with the new screens: **T** Research,
+**L** the Courts (diplomacy), **V** the Ledger (victory/legacy), **J** the
+Chronicle; Esc closes the innermost open screen first.
 
 `js/ui.js`, `index.html`. Canvas renderer (pixelated, 4 zoom steps, wheel-zoom
 to cursor, WASD/arrow pan with Shift boost, camera clamp), y-sorted units,
@@ -1115,6 +1810,54 @@ non-empty frames (idle/walk/attack/hurt/death) plus the opaque bounds of the
 figure inside its frame (`top`/`bottom`, used to place unit overlays and the
 selection ring), projectile sheet, pixel-art icon CSS sprites replacing emoji
 throughout the HUD.
+
+**The living world** (`js/fx.js`). Everything the renderer adds that the
+simulation never reads — nothing in the file touches `game.rng` or writes sim
+state, and its randomness is a private xorshift (`fxRand`), so a match replays
+identically whether or not anyone is watching it.
+
+- **Seasonal art** (`SeasonArt`). At load the atlas is re-baked into five
+  looks (`bakeSeasonLook`) — spring (fresher turf, wildflowers in the meadow
+  decor tiles, blossom on two of the three trees), summer (the art as drawn),
+  autumn (straw-gold turf; orange, maple-red and yellow woods, their soft outer
+  leaves browned as fallen ones), winter (snow over the turf keeping its
+  shading as drifts, evergreens under snow caps on every upward face, boulders
+  keeping their stone under a cap, the sea greyer with ice along the shore) and
+  the tropics' dry season (straw turf, dull olive woods). Farm fields have the
+  same five (`bakeFieldLook`: shoots, green crop, gold harvest, snowed-under
+  furrows, a thin dry crop). The last quarter of each season blends toward the
+  next in five steps. `SeasonArt.current()` builds, once per step of the year,
+  one sheet per climate shade (nine, blended between the pure climates), and the
+  terrain pass sets `ui.sheet` per tile from `map.climateShade` — so the seasons
+  cost the frame one lookup per tile. Winter also lays **snow on roofs and
+  wall-walks**: `SeasonArt.cap` bakes, once per sprite, a white line along every
+  upward edge, drawn over buildings (`buildingSprite`'s `snow` weight) and
+  rampart pieces; the minimap whitens the same land.
+- **Weather** (`WeatherFX`), in screen space over the scene, following the
+  weather at the camera: rain streaks (one path per frame) with splashes and a
+  grey wash, storms heavier with lightning flashes, snowfall in three depths,
+  drifting fog banks, autumn leaves on the wind, and fireflies on summer
+  nights. Particles are carried with the camera so a pan moves the ground
+  under the weather, and a change eases in and out over a few seconds.
+- **Particles and decals** (`FX`): dust, sparks, blood, smoke, embers, debris,
+  splashes and snow puffs in world space, sized in art pixels; blood and scorch
+  marks on the ground that fade. Fed by hooks the sim calls and that only read
+  what they are handed: `fxHit` (a blow on a unit — sparks off armour, blood,
+  a death's dust and stain; splashes and planking for a ship), `fxHitBuilding`
+  (chips and dust), `fxRaze` (a collapse: dust, debris, smoke, a scorch mark,
+  a small screen shake), `fxImpact` (arrows kick dust; a mage's fireball
+  bursts; a catapult stone craters and shakes the screen), `fxCharge` (a
+  cavalry charge landing). All are no-ops off screen, so a headless run
+  collects nothing.
+- **Fire.** A building below half strength burns — one flame, two, three as it
+  falls — each throwing smoke and embers, with firelight added over the night
+  overlay. Houses and the Town Hall keep a **chimney** smoking (thicker on
+  winter nights), horsemen kick up **dust** (snow in winter), and open water
+  **glints** in the sun (drawn inline in the terrain pass: one branch per
+  water tile when there is nothing to draw).
+
+Measured: a frame at zoom 1 costs the same with all of it running (≈32 ms,
+BUGS #38's number) and 5-7 ms at zoom 3.
 
 **Civilians have their own art, and pick it per job.** Five sheets
 (`assets/units/Civ*.png`: farmer, woodcutter, miner, builder, plain townsfolk)

@@ -172,9 +172,16 @@ function aiPlanDemand(f) {
     for (const k in cost) if (k in d) d[k] += cost[k];
   }
   const up = CASTLE_UPGRADES[f.castleTier + 1];
-  if (up && (arch.upgradesEagerly || n.pop > 22)) {
+  if (up && (!up.era || f.era >= up.era) && (arch.upgradesEagerly || n.pop > 22)) {
     for (const k in up.cost) if (k in d) d[k] += up.cost[k];
   }
+  // the next Age, once its technologies are nearly in hand
+  const nextEra = ERAS[f.era + 1];
+  if (nextEra && techsOfEra(f, f.era) >= nextEra.needTechs - 1) {
+    for (const k in nextEra.cost) if (k in d) d[k] += nextEra.cost[k];
+  }
+  // fill the granaries through autumn for the winter (js/seasons.js)
+  d.food += winterFoodReserve(f);
   const short = Math.max(0, f.brain.utility.armyTarget() - f.armyUnits().length);
   if (short > 0) { d.food += short * 25; d.gold += short * 12; }
   if (arch.pursuesGrand && n.pop >= 40) {
@@ -205,6 +212,27 @@ function aiWorstShortage(f) {
   if (!worst) return null;
   const income = f.brain.perception.self().income[worst];
   return { resource: worst, utility: wv, local: income > 0.02 };
+}
+
+// The share of the population a nation keeps at its books.
+function aiScholarShare(f) {
+  const doctrine = f.ai ? f.ai.doctrine : 'turtle';
+  let share = { merchant: 0.2, hegemon: 0.22, turtle: 0.14, aggressor: 0.1, raider: 0.08 }[doctrine] || 0.12;
+  if (game.factions.some(o => o !== f && !o.eliminated && o.era > f.era)) share += 0.05;
+  if (typeof aiVictoryPush === 'function') share += aiVictoryPush(f, 'science') * 0.1;
+  return share;
+}
+
+// How much this nation wants more scholars: the bookish ambitions a lot, and
+// everyone more once their research has stalled for want of knowledge.
+function aiKnowledgeAppetite(f) {
+  const doctrine = f.ai ? f.ai.doctrine : 'turtle';
+  let a = { merchant: 1.2, hegemon: 1.4, turtle: 0.8, aggressor: 0.55, raider: 0.45 }[doctrine] || 0.8;
+  if (f.knowledgeRate < 0.3) a += 0.6;
+  // a rival standing in a later Age is a public embarrassment, and a spur
+  const ahead = game.factions.some(o => o !== f && !o.eliminated && o.era > f.era);
+  if (ahead) a += 0.5;
+  return a;
 }
 
 // Perception-based replacement for maxThreatAgainst: threat is what we believe
@@ -266,8 +294,24 @@ class AIUtilityEngine {
   armyTarget() {
     const f = this.faction, arch = this.archetype();
     const threat = aiMaxThreat(f);
-    return Math.min(arch.armyMax,
-      Math.round((arch.armyBase + threat * 0.12 + f.nation.pop * arch.armyPerPop) * game.diff.armyMul));
+    // a nation pursuing a Domination victory keeps a bigger army than its
+    // ambition alone would (js/victory.js)
+    const dom = 1 + aiVictoryPush(f, 'domination') * 0.6;
+    const want = Math.min(Math.round(arch.armyMax * dom),
+      Math.round((arch.armyBase + threat * 0.12 + f.nation.pop * arch.armyPerPop) * game.diff.armyMul * dom));
+    // An army has to be paid (js/army.js): never keep more soldiers than about
+    // two thirds of the gold income can carry — a nation at war dips into its
+    // treasury, so it allows itself a margin on what it has banked.
+    const income = estimateIncome(f, 'gold') + f.nation.taxIncome() + (f.mods ? f.mods.goldFlat : 0);
+    const banked = game.diplomacy.atWarAny(f.id) ? f.nation.total('gold') / 600 : 0;
+    const payable = Math.floor((income * 0.65 + banked) / UPKEEP_GOLD) + 4;
+    // …and fed by the people left at home. Every soldier is a citizen taken off
+    // the fields, so an army is capped by manpower too: without it aggressors
+    // marched 26 soldiers out of a nation of 12, fell an Age behind, and never
+    // recovered. A nation at war stretches it by a quarter.
+    const war = game.diplomacy.atWarAny(f.id) ? 1.25 : 1;
+    const manpower = Math.round((4 + f.nation.pop * (0.5 + arch.armyPerPop)) * war);
+    return Math.max(3, Math.min(want, payable, manpower));
   }
 
   // Every building in the game costs wood — including the Market, the only way
@@ -310,6 +354,7 @@ class AIUtilityEngine {
     if (this.slot % 3 === 0) brain.combat.tickScouting();
     if (this.slot % 4 === 1) brain.trade.tick();
     if (this.slot % 8 === 3) brain.combat.tickEngineering();
+    if (this.slot % 3 === 2) aiChooseResearch(f);
     brain.combat.tickWar();
     this.slot++;
   }
@@ -322,22 +367,66 @@ class AIUtilityEngine {
     const f = this.faction, n = f.nation;
     const foodRate = estimateFoodRate(f);
     const shortfall = Math.max(0, this.armyTarget() - f.armyUnits().length);
+    // ships need crews too (js/naval.js), and training always keeps one
+    // citizen back — so a reserve of exactly the shortfall left one short and a
+    // single missing recruit (or hull) could never be raised
+    const crew = aiNavalCrewWanted(f);
+    const need = shortfall + crew;
     // guns versus butter: never idle more than a third of the population
-    const reserve = foodRate < 0 ? 0 : Math.min(shortfall, Math.floor(n.pop * 0.35));
-    const order = foodRate < 0
-      ? [...f.buildings].sort((a, b) => (b.type.key === 'farm' ? 1 : 0) - (a.type.key === 'farm' ? 1 : 0))
-      : f.buildings;
-    for (const b of order) {
-      if (!b.done || !b.type.slots) continue;
+    const reserve = foodRate < 0 ? 0 : Math.min(need ? need + 1 : 0, Math.floor(n.pop * 0.35));
+    // Scholars are staffed to a quota ahead of the gathering trades — a Library
+    // built last in the list would otherwise only ever get whoever is left over,
+    // which in a busy town is nobody, and the nation would never leave the
+    // Tribal Age.
+    const scholars = f.buildings.filter(b => b.done && b.type.produces === 'knowledge');
+    const scholarWant = foodRate < 0 ? 0 : Math.round(n.pop * aiScholarShare(f));
+    const staffed = () => scholars.reduce((s, b) => s + b.workers, 0);
+    const fill = (b, cap = b.type.slots) => {
+      while (b.workers < cap && n.idleWorkers() > reserve) b.workers++;
+    };
+    const ok = b => b.done && b.type.slots
+      && !(b.type.key === 'lumber' && !lumberHasForest(game.map, b));
+    for (const b of f.buildings) {
       // don't staff a lumber camp whose forest is gone — those workers are idle
       // in all but name, and the vacancy is what surfaces the shortage
-      if (b.type.key === 'lumber' && !lumberHasForest(game.map, b)) { b.workers = 0; continue; }
-      while (b.workers < b.type.slots && n.idleWorkers() > reserve) b.workers++;
+      if (b.type.key === 'lumber' && b.done && !lumberHasForest(game.map, b)) b.workers = 0;
+    }
+    // builders first (nothing gets built without them), farms first when hungry
+    for (const b of f.buildings) if (ok(b) && b.type.builders) fill(b);
+    if (foodRate < 0) for (const b of f.buildings) if (ok(b) && b.type.key === 'farm') fill(b);
+    for (const b of scholars) {
+      if (staffed() >= scholarWant) break;
+      fill(b, Math.min(b.type.slots, b.workers + scholarWant - staffed()));
+    }
+    for (const b of f.buildings) if (ok(b) && b.type.produces !== 'knowledge') fill(b);
+    for (const b of scholars) fill(b);
+    // The navy wants a crew and every hand is busy: waiting for the next dawn's
+    // births can mean waiting five minutes for one sailor, so release a worker
+    // from the best-staffed trade that isn't feeding anyone or short of goods.
+    if (crew > 0 && foodRate >= 0 && n.idleWorkers() <= 1) {
+      let donor = null;
+      for (const b of f.buildings) {
+        if (!b.done || !b.workers || b.type.builders || b.type.key === 'farm') continue;
+        if (b.type.produces && b.type.produces !== 'knowledge' && aiStarvedOf(f, b.type.produces)) continue;
+        if (!donor || b.workers > donor.workers) donor = b;
+      }
+      if (donor) donor.workers--;
     }
     if (foodRate < 0 && n.idleWorkers() === 0) {
-      const donor = f.buildings.find(b => b.workers > 0 && b.type.key !== 'farm');
+      const donor = f.buildings.find(b => b.workers > 0 && b.type.key !== 'farm' && !b.type.builders);
       const field = f.buildings.find(b => b.done && b.type.key === 'farm' && b.workers < b.type.slots);
       if (donor && field) { donor.workers--; field.workers++; }
+    } else if (staffed() < scholarWant && n.idleWorkers() <= reserve) {
+      // the quota is short and nobody is free: reassign one hand from the
+      // best-staffed trade whose resource is not scarce
+      const room = scholars.find(b => b.workers < b.type.slots);
+      let donor = null;
+      for (const b of f.buildings) {
+        if (!b.done || !b.workers || b.type.builders || b.type.key === 'farm' || b.type.produces === 'knowledge') continue;
+        if (b.type.produces && aiStarvedOf(f, b.type.produces)) continue;
+        if (!donor || b.workers > donor.workers) donor = b;
+      }
+      if (room && donor) { donor.workers--; room.workers++; }
     }
   }
 
@@ -350,6 +439,9 @@ class AIUtilityEngine {
       this.scoreUpgrade(),
       this.scoreExpansion(),
       this.scoreGrandCastle(),
+      aiScoreEraAdvance(this.faction),
+      aiScoreWonder(this.faction),
+      aiScoreBuildingUpgrade(this.faction),
     ].filter(c => c && c.score > 0);
     if (!cands.length) return;
     // small bonus for continuing what we were already doing, so the nation
@@ -378,7 +470,8 @@ class AIUtilityEngine {
       const t = BUILDING_TYPES[k];
       let s = deficitScore * arch.w.economy;
       // a building is worth more when it makes what we are short of
-      if (t.produces) s *= 1 + calculateMarginalUtility(f, t.produces);
+      if (t.produces === 'knowledge') s *= 1 + aiKnowledgeAppetite(f);
+      else if (t.produces) s *= 1 + calculateMarginalUtility(f, t.produces);
       if (t.storage) s *= 1 + 0.6 * this.storagePressure();
       if (t.housing && n.pop >= n.housingCap() - 2) s *= 1.8;
       if (k === 'market' && mustBuy) s *= 4;
@@ -410,6 +503,7 @@ class AIUtilityEngine {
     if (!up) return null;
     const castle = f.buildings.find(b => b.type.key === 'castle' && b.done && b.hp > 0);
     if (!castle || castle.upgrading || !n.canAfford(up.cost)) return null;
+    if (up.era && f.era < up.era) return null;
     const threat = aiMaxThreat(f);
     let s = arch.w.military * (arch.upgradesEagerly ? 1.6 : 0.7);
     s *= 1 + clamp(threat / Math.max(20, f.strength()), 0, 2);
@@ -436,6 +530,11 @@ class AIUtilityEngine {
     const f = this.faction, arch = this.archetype(), n = f.nation;
     if (!arch.pursuesGrand) return null;
     if (n.pop < 50 || n.happiness < 70 || !n.canAfford(GRAND_CASTLE_COST)) return null;
-    return { id: 'grand', score: 100, run: () => { aiPursueGrand(f); return true; } };
+    // One monument per nation. Without this the candidate kept scoring 100 after
+    // the Grand Castle was finished, and `run` reported success while doing
+    // nothing — so it won the arbitration every tick and the nation never
+    // invested in anything again (BUGS #46).
+    if (f.buildings.some(b => b.type.key === 'castle' && (b.grand || b.grandProgress > 0))) return null;
+    return { id: 'grand', score: 100, run: () => aiPursueGrand(f) };
   }
 }

@@ -24,8 +24,16 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
    array of unit keys, front first). A type not in the list sorts to the back.
    `Array.prototype.sort` is stable, so units of the same type keep their
    relative order between identical commands. The default order is the old
-   hardcoded rule spelled out as data — melee, then ranged, tankiest first:
-   `sword, spear, halberd, cavalier, king, archer, mage, bandit, prince`.
+   hardcoded rule spelled out as data — melee, then ranged, tankiest first,
+   with the research units slotted where they belong (the Shieldman takes the
+   point as the arrow wall; the Catapult rides at the back behind the casters):
+   `shield, sword, spear, halberd, cavalier, king, archer, crossbow, mage,
+   archmage, catapult, bandit, prince`. A saved doctrine from before the
+   research units existed is extended automatically — `sanitizeFormations`
+   appends any key it has never seen to the end of the saved order.
+   The pace cap uses `unitSpeed(u)` rather than `type.speed`, so Horseback
+   Riding and Navigation are honoured, and a formation with a Catapult in it
+   marches at the Catapult's 1.2.
 4. Asks `formationSlots(n, shape)` for `n` `[depth, lateral]` offsets in
    formation space (`-depth` = ranks back from the point, `lateral` = across),
    then rotates each by the travel angle so the formation always faces where
@@ -58,6 +66,17 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
    the same reason — new recruits should muster on open ground.
 
 Single-unit selections skip all of this and just call `orderMove` directly.
+
+**Player orders ride on top of the formation** (`UI.commandMove`, js/ui.js).
+The right-click no longer calls `formationMove` directly: `commandMove` does,
+and then stamps each mover's `u.order` — `{kind: 'move'}` (march through; no
+auto-acquire and no fight-back while the path is non-empty),
+`{kind: 'attackmove', x, y}` (acquire as usual, and `nextOrderLeg` re-paths to
+the slot after every fight), or `{kind: 'patrol', a, b, leg}`. Each unit's
+destination for the order is its own formation slot (`u.dest` after
+`formationMove`), so an attack-move re-forms on arrival rather than collapsing
+onto one tile. Shift queues `u.waypoints` instead. AI armies never get an
+`order`; `formationMove` is unchanged for them.
 
 **`separateUnits(dt)`**, called every tick from `Game.tick()` in `main.js`,
 is the physical no-overlap constraint — it runs regardless of whether units
@@ -227,18 +246,26 @@ detached node — it caught the test harness before it caught a user.
 
 ## Castle-tier troop unlocks — `js/buildings.js`, `js/factions.js`, `js/ui.js`
 
-Simple gated-progression system, not a tech tree — there are only two
-upgrade tiers above the base castle.
+A gated-progression system that now sits *alongside* the tech tree
+(`js/tech.js`) rather than instead of one: there are still only two upgrade
+tiers above the base castle, but each needs an Age, and four more units are
+unlocked by research rather than by the castle.
 
 - `UNIT_TIERS` (`js/units.js`, near the top) maps unit key → tier. Anything
   not listed defaults to tier 1 (always available): sword, spear, archer,
-  bandit, prince. Tier 2: halberd, cavalier. Tier 3: mage, king. (The roster
-  is nine units now — shield, crossbow, archmage and horseman were cut, and
-  cavalier dropped from tier 3 to tier 2 to keep the Garrison worth buying.)
+  bandit, prince — and the research units shield, crossbow and catapult, which
+  are gated by `type.tech` instead. Tier 2: halberd, cavalier. Tier 3: mage,
+  king, archmage (which also needs Arcane Mastery). The roster is thirteen:
+  the Shieldman, Crossbowman and Archmage sheets that were cut from the nine
+  came back as research unlocks with jobs of their own, and the Catapult is new.
 - `CASTLE_UPGRADES` (`js/buildings.js`, right after `BUILD_MENU`) is keyed by
-  the tier it unlocks (`2`, `3`), each entry `{ name, cost, time, desc }`.
-  Tier 2 = "Garrison" (100 wood / 80 stone / 60 gold, 20s). Tier 3 = "Royal
-  Academy" (150/150/150, 30s).
+  the tier it unlocks (`2`, `3`), each entry `{ name, cost, time, era, desc }`.
+  Tier 2 = "Garrison" (100 wood / 80 stone / 60 gold, 20s, Feudal Age). Tier 3
+  = "Royal Academy" (150/150/150, 30s, Age of Kingdoms).
+- `Faction.trainUnit` also rejects a unit whose `type.tech` is not researched
+  (`Locked — research <name>`), and `startCastleUpgrade` rejects an upgrade
+  whose `era` the nation has not reached; both are strings, like every other
+  `trainUnit` failure.
 - `Faction.castleTier` starts at 1. `Faction.trainUnit(typeKey)` rejects with
   a locked-message string (`Locked — requires the <name> castle upgrade`)
   when `type.tier > this.castleTier` — check this return value the same way
@@ -412,6 +439,15 @@ Both full-screen overlays (`#difficulty`, `#gameover`) are
 `justify-content: safe center` with `overflow-y: auto`. Plain `center`
 overflows in *both* directions and the part above the viewport cannot be
 scrolled to, which clipped the first difficulty card on a 375px-tall phone.
+
+**The medieval theme changed colours only.** It remapped the stylesheet's
+palette in place and appended one theme block (gradients, gilt hairlines,
+serif type) that sets no size, padding or border width — so none of the rules
+above moved. The serif top-bar numerals are narrower than the sans ones: the
+top bar measured 36px (one row) at 1024×600 after the change against 61px (two
+rows) before, and 42px against 66px at 852×393; 667×375 is unchanged at 66px.
+The weather word in the top bar ("· Storm") did not wrap it at any of the five
+audit viewports.
 
 ## Fortification rendering & drag-build placement — `js/assets.js`, `js/ui.js`
 
@@ -654,7 +690,33 @@ const result = await page.evaluate(() => { /* poke game/ui, run game.tick(0.1) i
 
 Note `game`/`ui` are `let`-scoped in `main.js`, not attached to `window` —
 `waitForFunction` must check `typeof game !== 'undefined'`, not
-`window.game`. A verification suite for the AI rework lives in that same pattern — it boots
+`window.game`.
+
+**Freeze the real-time loop before driving the sim yourself.** The page's own
+`requestAnimationFrame` loop keeps ticking `game` at wall-clock speed whenever
+the evaluate yields (an `await new Promise(r => setTimeout(r, 0))` between
+chunks, which a long soak needs to stay responsive). Those extra ticks are
+invisible and non-deterministic: two runs of one seed came out different, with
+`game.time` 0.1s apart, purely from this. Set `ui.paused = true` right after
+boot — the frame loop then renders but never ticks, and only your
+`game.tick(0.1)` calls move the world. With that, two 15-minute runs of a seed
+hash identically on every difficulty (checked after the research batch).
+
+**Put the player's nation on autopilot for long soaks.** An idle player is
+conquered inside 15 minutes on most settings, which ends the match and makes a
+two-hour soak of the AI (victory races, Ages, Wonders) impossible. Wrap the
+tick so the player's faction runs on the same AI brain:
+
+```js
+const f0 = game.factions[0], orig = game.tick.bind(game);
+game.tick = dt => { orig(dt); if (!game.over && !f0.eliminated) aiTick(f0, dt); };
+```
+
+It is a harness trick, not a mode: `leaderInitiative` returns early for the
+player (so no court petitions itself), cards to the player simply expire
+unless the harness answers them (`resolveEvent(game.events[0], 0)` answers
+with the first option), and the autopilot keeps none of its promises — which
+is useful, since it exercises the broken-promise path. A verification suite for the AI rework lives in that same pattern — it boots
 `?seed=N&difficulty=…`, drives `game.tick(0.1)` loops, and asserts: no war
 inside the opening ~150s across four seeds; the archetype line-up differs by
 seed; war does not fire on the first tick of an advantage but does once fresh
@@ -912,3 +974,30 @@ clock, so a tight 20-iteration timing loop can land on exactly one whole-world
 rebuild and report a number that has nothing to do with a real frame. Time
 `renderMinimapBase` on its own, and time `render` over enough iterations that
 the periodic work is amortised the way it is in the game.
+
+## Seasons, weather and effects — verification notes
+
+The seasonal art, the weather and the particle effects (`js/fx.js`) all run in
+the render loop on real time, so a headless shot has to let frames pass:
+
+- **Force a season** by setting `game.dayCount` (1-2 spring, 3-4 summer, 5-6
+  autumn, 7-8 winter); nothing else needs to move. `SeasonArt.current()` rebuilds
+  its sheets on the next frame.
+- **Force the weather** by writing the cache `weatherNow` reads:
+  `game.weatherStamp = game.dayCount * 2 + (game.isDay ? 0 : 1); game.weather = WEATHER.snow`.
+  It holds until the half-day turns. Then wait ~6 s of real time before the
+  screenshot — the weather eases in over five seconds (`WeatherFX.level`).
+- **Fire** needs a finished building under half HP on screen; **combat effects**
+  need blows landing on screen (they are no-ops off it). Staging a skirmish
+  beside the capital with `new Unit(key, fid, x, y)` pushed into two factions at
+  war, then unpausing for a few seconds, shows all of it.
+- A player capital's climate varies a lot by seed: seed 42 Small World sits at
+  temperature 0.79 (hot — dry season, no snow) and seed 7 at 0.63 (temperate).
+  Check `climateAt(th.cx, th.cy)` before expecting snow at home.
+- Render cost: time 30 `ui.render()` calls at zoom 1 and 3 with the weather
+  forced to rain and snow; with all of it on the numbers matched the pre-effects
+  build (≈32 ms at zoom 1 on seed 42, 5-7 ms at zoom 3).
+- Determinism is unaffected by construction (nothing in `js/fx.js` touches
+  sim state or `game.rng`), but the weather *mechanics* are sim — keep running
+  the two-run hash comparison after any change to `js/seasons.js`.
+

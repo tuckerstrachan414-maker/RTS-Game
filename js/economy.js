@@ -13,6 +13,10 @@ const RES_KEYS = ['food', 'wood', 'stone', 'gold'];
 const TAX_MAX = 0.4;
 const TAX_HAPPINESS_COST = 55;
 const HAPPY_GROWTH_GATE = 50;   // growForNewDay needs happiness strictly above this
+// Crowding (Nation.crowding): happiness lost per citizen beyond the first
+// CROWDING_FREE. At 0.3, a nation of 100 has −21 and one of 200 has −51.
+const CROWDING_FREE = 30;
+const CROWDING_PER_CITIZEN = 0.3;
 
 class Nation {
   constructor(factionId) {
@@ -48,7 +52,7 @@ class Nation {
   }
   capacityFor(r) {
     let c = 0;
-    for (const b of this.storageBuildings()) c += b.type.storage[r] || 0;
+    for (const b of this.storageBuildings()) c += storageCap(b, r);
     return c;
   }
   setResource(r, value) {
@@ -64,7 +68,7 @@ class Nation {
     const stores = this.storageBuildings().sort(
       (a, b) => (a.type.key === 'townhall' ? 1 : 0) - (b.type.key === 'townhall' ? 1 : 0));
     for (const b of stores) {
-      const room = (b.type.storage[r] || 0) - (b.store[r] || 0);
+      const room = storageCap(b, r) - (b.store[r] || 0);
       if (room <= 0) continue;
       const add = Math.min(room, remaining);
       b.store[r] += add; remaining -= add;
@@ -99,10 +103,11 @@ class Nation {
 
   housingCap() {
     let cap = 10; // townhall base
+    const extra = this.faction.mods ? this.faction.mods.housing : 0;
     for (const b of this.faction.buildings) {
-      if (b.done && b.type.housing) cap += b.type.housing;
+      if (b.done && b.type.housing) cap += (b.type.housing + extra) * levelYieldMul(b);
     }
-    return cap;
+    return Math.floor(cap);
   }
 
   canAfford(cost) {
@@ -139,10 +144,18 @@ class Nation {
     // and what used to be `progress += dt / buildTime` is a builder standing on
     // the site with the materials already delivered.
     syncCivilians(this.faction, dt);
+    const mods = this.faction.mods;
     // taxes
-    this.deposit('gold', this.pop * this.tax * 0.06 * dt);
-    // eating
+    this.deposit('gold', this.taxIncome() * dt);
+    // the Grand Bazaar's standing income
+    if (mods && mods.goldFlat) this.deposit('gold', mods.goldFlat * dt);
+    // banking: the treasury earns interest, capped so a hoard cannot run away
+    if (mods && mods.interest > 0) {
+      this.deposit('gold', Math.min(3, this.total('gold') * mods.interest / 60) * dt);
+    }
+    // eating — the citizens, and the army's rations and pay (js/army.js)
     this.withdraw('food', this.pop * EAT_RATE * dt);
+    payUpkeep(this.faction, dt);
     this.starving = this.total('food') <= 0.0001;
 
     // happiness — the tax-free part is factored out (happinessTargetWithoutTax)
@@ -165,7 +178,15 @@ class Nation {
 
     // war weariness
     const atWar = game.diplomacy.atWarAny(this.factionId);
-    this.warWeariness = Math.max(0, Math.min(25, this.warWeariness + (atWar ? dt * 0.25 : -dt * 0.5)));
+    const wear = mods ? 1 - mods.weariness : 1;
+    this.warWeariness = Math.max(0, Math.min(25, this.warWeariness + (atWar ? dt * 0.25 * wear : -dt * 0.5)));
+  }
+
+  // Gold per second from taxes. One formula shared by the tick, the HUD and the
+  // AI's reasoning about what its people are worth.
+  taxIncome() {
+    const mods = this.faction.mods;
+    return this.pop * this.tax * 0.06 * (1 + (mods ? mods.tax : 0));
   }
 
   // Called once at dawn each day (see Game.tick). Population grows by DAY_GROWTH_FRACTION
@@ -176,9 +197,21 @@ class Nation {
     if (this.starving || this.pop >= cap || this.happiness <= HAPPY_GROWTH_GATE) return 0;
     if (this.total('food') <= this.pop * 2) return 0;
     const before = this.pop;
-    this.pop = Math.min(cap, this.pop + Math.round(cap * DAY_GROWTH_FRACTION));
+    // A town grows by a share of its housing, but a people can only raise so
+    // many children in a day: at most a quarter of its number (never fewer than
+    // five, so a young nation is not starved of growth). Without the second
+    // term, growth was a fraction of a cap the AI raises as fast as it grows —
+    // an exponential that reached 800 citizens a nation by the hour (BUGS #44).
+    const births = Math.min(Math.round(cap * DAY_GROWTH_FRACTION), Math.max(5, Math.round(this.pop * 0.25)));
+    this.pop = Math.min(cap, this.pop + births);
     return this.pop - before;
   }
+
+  // Crowding: every citizen past the first few dozen makes the nation a little
+  // harder to keep content. It is the real ceiling on size — a nation grows
+  // past it only by building churches, wells and markets and by studying the
+  // civic arts, which is the Civilization answer to "tall or wide".
+  crowding() { return Math.max(0, (this.pop - CROWDING_FREE) * CROWDING_PER_CITIZEN); }
 
   // Happiness this nation would drift toward at zero tax. Solving
   // (this - Hmin) / TAX_HAPPINESS_COST gives the highest tax rate that still
@@ -189,7 +222,13 @@ class Nation {
     target += this.pop <= this.housingCap() ? 8 : -18;
     target += Math.min(20, this.auraScore());
     target -= this.warWeariness;
+    target -= this.crowding();
     if (this.faction.kingAlive === false) target -= 12;
+    const mods = this.faction.mods;
+    if (mods) target += mods.happiness;
+    if (typeof seasonHappiness === 'function') target += seasonHappiness();
+    // leaders' opinions, grievances and triumphs of the nation (js/leaders.js)
+    if (typeof nationMoodBonus === 'function') target += nationMoodBonus(this.faction);
     return target;
   }
 
@@ -241,3 +280,12 @@ function estimateIncome(f, res) {
 
 // Has this Lumber Camp any forest left in reach? (js/ai-utility.js staffs on it.)
 function lumberHasForest(map, b) { return !!findWorkTile(map, b); }
+
+// What one storage building holds of resource `r`: its type, its level, and
+// the owner's Stonemasonry. Gold is effectively uncapped everywhere.
+function storageCap(b, r) {
+  const base = (b.type.storage && b.type.storage[r]) || 0;
+  if (r === 'gold' || base >= 1e8) return base;
+  const m = b.faction >= 0 ? factionMods(b.faction) : null;
+  return base * (1 + (m ? m.storage : 0)) * levelYieldMul(b);
+}

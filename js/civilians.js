@@ -183,9 +183,10 @@ function assignJob(u, b) {
 // A citizen changing trade, not a new person: same body, different kit and
 // carrying capacity. Wounds carry across proportionally.
 function retypeCivilian(u, key) {
-  const frac = u.hp / u.type.hp;
+  const frac = u.hp / u.maxHp;
   u.type = UNIT_TYPES[key];
-  u.hp = Math.max(1, Math.round(u.type.hp * frac));
+  u.maxHp = unitMaxHp(u);
+  u.hp = Math.max(1, Math.round(u.maxHp * frac));
   u.carryCap = u.type.carry;
   u.setAnim('idle', true);
 }
@@ -302,6 +303,7 @@ function gatherWorkTime(b, atTile) {
 
 function tickGatherer(u, dt) {
   const b = u.job.b;
+  if (b.type.produces === 'knowledge') return tickScholar(u, dt, b);
   if (u.phase === 'home') return gatherDeliver(u, dt);
   if (u.carryTotal() >= u.carryCap - 1e-6) { u.phase = 'home'; u.path = []; return; }
   if (u.phase === 'work') return gatherWork(u, dt, b);
@@ -379,6 +381,25 @@ function gatherDeliver(u, dt) {
   walkTo(u, dt, Math.floor(home.cx), Math.floor(home.cy));
 }
 
+// Scholars. Knowledge is not a load to be carried: a scholar walks to the
+// Library once and then sits and reads, and what they learn goes straight into
+// the nation's research (js/tech.js). Kill the scholar, or burn the Library,
+// and the learning stops.
+function tickScholar(u, dt, b) {
+  if (!u.spot) u.spot = findWorkTile(game.map, b);
+  if (!u.spot) { u.setAnim('idle'); return; }
+  const [tx, ty] = u.spot;
+  if (u.phase !== 'work') {
+    if (wdist(u.x, u.y, tx + 0.5, ty + 0.5) <= 1.2) { u.phase = 'work'; u.path = []; return; }
+    u.phase = 'out';
+    return walkTo(u, dt, tx, ty, () => { u.spot = null; });
+  }
+  u.setAnim('idle');
+  const amount = workerYieldRate(game.map, b, u.spot) * dt;
+  creditKnowledge(u.faction, amount);
+  recordYield(b, amount);
+}
+
 // Everything this building's workers have ever banked. `sampleYields` turns it
 // into a rate; this only has to be a faithful running total.
 function recordYield(b, banked) {
@@ -418,14 +439,24 @@ function sampleYields(f) {
 function tickBuilder(u, dt) {
   const f = game.factions[u.faction];
   if (u.site && !siteWorkable(f, u.site)) { u.site = null; u.fetch = null; }
+  // Between jobs, and empty-handed: a builder already mending keeps at it, and
+  // one more takes up a repair while the repair crew is short-handed — a burned
+  // granary shouldn't wait on the tenth length of wall (js/upgrades.js).
+  if (!u.site && u.carryTotal() <= 0.5) {
+    if (u.repair && builderRepair(u, dt, u.repair)) return;
+    u.repair = null;
+    if (repairHandsOpen(f) && builderTryRepair(u, dt, f)) return;
+  }
   if (!u.site) u.site = claimSite(u, f);
   if (!u.site) {
-    // no work: bank anything still on our back, then loiter like anyone else
+    // no work: bank anything still on our back, then mend what the fighting
+    // broke, and only then loiter like anyone else
     if (u.carryTotal() > 0.5) return builderReturnLoad(u, dt);
+    if (builderTryRepair(u, dt, f)) return;
     return tickIdler(u, dt);
   }
-  if (u.carryTotal() > 0.5) return builderDeliver(u, dt, u.site);
-  if (siteReady(u.site)) return builderRaise(u, dt, u.site);
+  if (u.carryTotal() > 0.5) { u.repair = null; return builderDeliver(u, dt, u.site); }
+  if (siteReady(u.site)) { u.repair = null; return builderRaise(u, dt, u.site); }
   // Everything this site still needs is already on somebody else's back: there
   // is nothing for a third pair of hands to do but wait, so go and be useful
   // somewhere else instead. (Three builders idling at one gate while a dozen
@@ -434,10 +465,45 @@ function tickBuilder(u, dt) {
     const held = u.site;
     u.site = null; u.fetch = null;
     const next = claimSite(u, f);
-    if (!next || next === held) { u.site = held; u.setAnim('idle'); return; }
+    if (!next || next === held) {
+      u.site = held;
+      if (builderTryRepair(u, dt, f)) return;    // mend something while we wait
+      u.setAnim('idle');
+      return;
+    }
     u.site = next;
   }
+  u.repair = null;
   return builderFetch(u, dt, u.site);
+}
+
+// Keep at (or look for, at most every 4 s) a repair; false when there is none.
+function builderTryRepair(u, dt, f) {
+  if (!u.repair && (u.repairT || 0) <= game.time) {
+    u.repair = findRepair(u, f);
+    u.repairT = game.time + 4;
+    if (u.repair) f.repairHands = (f.repairHands || 0) + 1;
+  }
+  if (u.repair && builderRepair(u, dt, u.repair)) return true;
+  u.repair = null;
+  return false;
+}
+
+// Up to a third of a nation's builders (at least one) may leave construction
+// to mend damage. Counted once per tick, bumped as builders sign on.
+function repairHandsOpen(f) {
+  if (f.repairHandsAt !== game.time) {
+    let hands = 0, builders = 0;
+    for (const u of f.units) {
+      if (!u.job || u.job.kind !== 'build') continue;
+      builders++;
+      if (u.repair) hands++;
+    }
+    f.repairHandsAt = game.time;
+    f.repairHands = hands;
+    f.repairQuota = Math.max(1, Math.floor(builders / 3));
+  }
+  return f.repairHands < f.repairQuota;
 }
 
 // Is there anything a free builder could actually pick up for this site? A site
@@ -450,7 +516,7 @@ function siteHasWork(sb, fid) {
 }
 
 function siteWorkable(f, b) {
-  return b && !b.done && b.hp > 0 && b.faction === f.id && f.buildings.includes(b);
+  return b && (!b.done || (b.site && b.site.upgrade)) && b.hp > 0 && b.faction === f.id && f.buildings.includes(b);
 }
 
 // A site nobody can stand next to cannot be built. Bridges are the case that
@@ -471,9 +537,9 @@ function claimSite(u, f) {
   }
   let best = null, bd = Infinity;
   for (const b of f.buildings) {
-    if (!b.site || b.done || b.hp <= 0) continue;
+    if (!b.site || (b.done && !b.site.upgrade) || b.hp <= 0) continue;
     if (b.site.wait > game.time) continue;              // recently unreachable
-    if ((counts.get(b) || 0) >= MAX_BUILDERS_PER_SITE) continue;
+    if ((counts.get(b) || 0) >= (b.type.maxBuilders || MAX_BUILDERS_PER_SITE)) continue;
     if (!siteReachable(b)) continue;
     // ready sites need hands; unready ones need hands only if there is still
     // something to carry that nobody else has already picked up
@@ -555,7 +621,11 @@ function builderRaise(u, dt, sb) {
     // Each builder on the site is worth one build-time's worth of pace, and a
     // site takes at most MAX_BUILDERS_PER_SITE of them, so a crowd finishes a
     // wall faster but never instantly.
-    advanceConstruction(sb, dt / sb.type.buildTime);
+    // Engineering and Architecture speed every builder up
+    const m = game.factions[u.faction].mods;
+    const pace = 1 + (m ? m.buildSpeed : 0);
+    if (sb.site && sb.site.upgrade) advanceUpgrade(sb, dt / upgradeTime(sb) * pace);
+    else advanceConstruction(sb, dt / sb.type.buildTime * pace);
     return;
   }
   walkTo(u, dt, Math.floor(sb.cx), Math.floor(sb.cy), () => blockSite(sb));
@@ -602,9 +672,15 @@ function blockSite(sb) {
 // that could actually cost something.
 function walkTo(u, dt, tx, ty, onFail) {
   if (u.path.length === 0 || u.repathT <= 0) {
+    // After a failed search, wait before searching again. An empty path used to
+    // mean "search now", so a worker whose destination was sealed off ran a
+    // full A* every tick — one walled-in town cost 90% of the sim's time in a
+    // soak (BUGS #50).
+    if (u.path.length === 0 && u.pathFailT > game.time) { u.setAnim('idle'); return; }
     u.path = findPath(game.map, u.tileX, u.tileY, tx, ty, u.faction);
     u.repathT = 3 + game.rng() * 2;
     if (u.path.length === 0) {
+      u.pathFailT = game.time + 1.5;
       u.stuck = (u.stuck || 0) + 1;
       u.setAnim('idle');
       if (u.stuck >= 3 && onFail) { u.stuck = 0; onFail(); }

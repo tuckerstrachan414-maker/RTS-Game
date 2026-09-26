@@ -88,6 +88,24 @@ daylight, 2.5 of night — with the light gradually shifting between them
 rather than snapping. The top bar shows the day count and whether it's day
 ☀ or night 🌙; at night, your Houses' windows glow.
 
+**The year turns.** Every two days the season changes — Spring, Summer,
+Autumn, Winter — a forty-minute year. Harvests swell through the year (Autumn's
+is the biggest) and collapse in Winter, so fill your granaries in the autumn.
+Winter chills your people, slows any army marching in foreign land, and wears
+down an army camped in enemy territory. Pick your campaigns accordingly.
+
+**And you can see it turn.** Meadows flower and orchards blossom in spring; the
+woods go gold and red in autumn and the harvest turns the fields gold; winter
+buries the land, the trees and the rooftops in snow and leaves the fields
+bare. The tropics have no snow — their winter is a dry season, when the grass
+bleaches to straw — and the far north is white from autumn on.
+
+**Watch the weather.** Every half-day brings its own: rain and storms in spring
+and autumn, fog, snow in winter. It shows in the top bar beside the season, and
+it matters: rain makes arrows and bolts hit 15% softer (a storm 25%, and slows
+ships), snow slows marching troops, and fog shortens every lookout's sight —
+the enemy's included, which makes a foggy morning a good time to move.
+
 **Every resource comes from a real tile:**
 
 | Resource | Comes from | Via |
@@ -96,12 +114,16 @@ rather than snapping. The top bar shows the day count and whether it's day
 | 🪵 Wood | tree tiles within 25 tiles of the camp (they deplete!) | Lumberjacks, hauled to your stores |
 | 🪨 Stone | rock tiles within 4 tiles of the quarry | Stonecutters, hauled to your stores |
 | 🪙 Gold | cave tiles, taxes, trade, plunder | Diggers and traders, plus taxes |
+| 📖 Knowledge | Libraries, Universities, Churches, the Town Hall | Scholars studying — not stored, not robbable; feeds research |
 
 Click a finished building and use **+/−** to assign idle citizens to its worker
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
 happiness, the Castle trains units, the Dock builds ships, Walls/Gates/Bridges
 shape the battlefield, and
-the Town Hall is your nation's heart — lose it and you lose the game. Outgrew a
+the Town Hall is your nation's heart — lose it and you lose the game. It is a
+fortified keep: its archers shoot any enemy in range, and swords and arrows do
+only a third of their damage to it — breaking one takes catapults, or a long
+siege. Your Castle is built the same way. Outgrew a
 building? **Demolish** it from its panel and reclaim 75% of its cost.
 
 **Your people are on the map.** Every citizen you have is a person walking
@@ -138,6 +160,26 @@ calling one off returns everything already carried there.
 > Town Hall's builder slots are empty and you have no Builder House, the game
 > tells you so the first time you place something.
 
+**Buildings grow.** Research **Heavy Plough** and your Farms, Lumber Camps,
+Quarries, Gold Mines, Markets, Libraries, Universities, Houses, Storehouses,
+Churches, Watchtowers and Builder Houses can be raised to **level 2**; **Guilds**
+opens **level 3**. Each level is +40% output (or housing, or storage) and +35%
+hit points. Press **Upgrade** on the building's panel: builders haul the
+materials there and raise the new storey while the building keeps working. A
+gold stud in the corner of a building marks each level above the first.
+
+**Builders mend what the fighting breaks.** Ten seconds after a building last
+took a hit, builders come to repair it — up to a third of your crew breaks off
+construction for it, and every idle builder helps. A repair costs a share of
+the building's price in timber and stone as it goes.
+
+**Where you build matters.** Farms beside farms make a field system (+5% each,
+up to +15%). A Market among houses has customers (+8% for each House within
+three tiles, up to +40%). A Library or University near a Church, another
+Library or a University reads better (+15% each, up to +30%). While you place a
+building, the ghost shows what its neighbours would add on that spot, and its
+panel shows what they add once it's built.
+
 **Everything on the map looks like what it is.** A Farm is a field — ploughed
 soil while it is being cleared, standing crop once it is finished — a
 Storehouse is a barn with sacks stacked outside, a Quarry is a worked rock face,
@@ -149,6 +191,13 @@ colour, including yours, so you can read who owns a town at a glance. Trees,
 troops and buildings overlap each other by how near they are to you, so a
 soldier walking behind a keep goes behind it and a wood in front of a farm
 hides its front row.
+
+**And it is alive.** Chimneys smoke (more on a cold night), cavalry kick up
+dust, sunlight glints on the sea, and fireflies come out on summer nights. A
+fight throws sparks off armour and leaves blood on the ground; a building below
+half its strength catches fire and burns brighter as it falls, lighting up the
+night; a building that comes down collapses in a cloud of dust and leaves a
+scorch mark, and a catapult stone shakes the screen.
 
 **Box-select works on buildings too.** Drag a selection box like you would over
 an army; if it catches no units, it grabs every building inside instead (troops
@@ -214,6 +263,123 @@ The happiness tooltip breaks down exactly what's pleasing (or angering) your peo
 to hold more) and, crucially, **lootable**. Select any storehouse to see exactly
 what's inside it.
 
+## Knowledge, research and the Ages
+
+**Your nation grows up.** Every match begins in the **Tribal Age**, and the
+great arc of a game is climbing through the **Feudal Age** and the **Age of
+Kingdoms** to the **Imperial Age** — each one a real transformation: new
+technologies, new buildings, new troops, and new castle upgrades.
+
+**Knowledge** is the resource that drives it. Your Town Hall produces a trickle
+on its own, every **Church** adds a little (monks copy scripture), but the real
+engine is the **Library** (40🪵 25🪨): staff it with up to three **scholars**
+and they sit and read, pouring knowledge into whatever you are studying.
+Scholars are citizens like any other, so every one of them is a farmhand or a
+lumberjack you are not employing — the classic guns, butter *or books* choice.
+Later, **Education** unlocks the **University**: four scholars, each worth
+nearly two in a Library. **War disrupts scholarship**: every war you are
+fighting costs 15% of your knowledge (up to 45%) — the Research screen shows it.
+
+**Research (press T, or click the knowledge readout on the top bar)** opens the
+tree: 30 technologies in three branches — **Economy**, **Military** and
+**Civic** — laid out by Age. Click one to study it; click one further down the
+tree and the whole path to it is queued for you. Knowledge you earn while
+studying nothing is banked (up to a cap) and spent the moment you pick
+something. A few examples of what's in there:
+
+| Age | Technologies (a sample) |
+|---|---|
+| Tribal | Crop Rotation, Woodcraft, **Masonry** (unlocks the Watchtower), Bronze Working, Fletching, Writing, Mysticism, Horseback Riding |
+| Feudal | **Iron Working** (Shieldman), **Crossbows** (Crossbowman), Feudalism, Heavy Plough, Deep Mining, Currency, Stonemasonry, Code of Laws |
+| Kingdom | **Engineering** (Catapult), Chivalry, Guilds, Banking (treasury interest), **Education** (University), Theology, Fortification, Navigation |
+| Imperial | **Arcane Mastery** (Archmage), Standing Army, Printing Press, Mercantilism, Architecture, **The Enlightenment** |
+
+**Advancing an Age** takes a set number of the current Age's technologies (3,
+then 4, then 5), a knowledge project, and a payment in goods — then the whole
+nation steps forward, with a banner across the screen to mark it. The Age you
+stand in gates the castle upgrades: the **Garrison** needs the Feudal Age and
+the **Royal Academy** the Age of Kingdoms. The **Enlightenment** is the last
+and greatest study of all.
+
+**Your rivals research too**, each by its own lights — a warlord drills iron
+and chivalry, a merchant prince chases currency and banking, a walled-up
+homebody studies masonry and fortification. Their Age is public (you'll hear
+when a rival enters a new one, and see it in Diplomacy); their technologies are
+not.
+
+**Watchtowers** (Masonry, 20🪵 40🪨) are stone towers whose archers shoot any
+enemy in range on their own. Walls, gates and towers are **fortifications**,
+and your Town Hall and Castle are **keeps** that shoot too: ordinary troops do
+only a third of their damage to any of them, so breaking a fortified town takes
+siege engines — or a long siege while its defenders gather.
+
+## The rulers of the world
+
+**Every rival nation is ruled by someone.** Each match rolls a new cast: a
+Norse chieftain in Crimson, a Byzantine lord in Violeta, an Iberian king in
+Aurelia — each with a **pixel portrait**, a name, an age, **two traits**
+(Warmonger, Merchant Prince, Covetous, Paranoid, Honorable, Schemer, Zealot,
+Scholar), a **hidden agenda** (Warlord, Trade Baron, Seeker of Wisdom,
+Territorial, Peacemaker, Builder, Tribute Seeker) and a voice of their own.
+Their titles rise with their Age — Chieftain, Lord, King, Emperor — and they
+earn epithets from what they do: *the Bold*, *the Builder*, *the Faithless*…
+
+**You have to meet them first.** A court introduces itself the first time its
+scouts or ships find your people — greet them as friends, send a welcome gift,
+or tell them to stay out of your way. First impressions last. Until then, a
+nation across the sea is an unknown court.
+
+**They remember.** A leader's opinion of you is not one number, it is a
+ledger: *"+14 Kept their word"*, *"−30 Declared war on us"*, *"+8 Trading
+partners"*, *"−10 Despises your weak army"*, each with its own weight and its
+own memory — a gift fades in minutes, a betrayal lasts an hour. Their traits
+decide how hard things land (an Honorable ruler never forgets a broken
+promise; a Zealot takes every rebuff as an insult) and their agenda decides
+what they care about. Hold an **Audience** to see every line of it.
+
+**They ask you things.** Leaders come to you with questions, requests,
+demands and offers, in their own words:
+- *"Why do your soldiers gather at our border?"* — withdraw (a promise), pay an
+  apology, or tell them your soldiers go where they please.
+- *"You build too close to our lands."* — promise to build no closer, or not.
+- *"Our children go hungry."* — send food, or don't.
+- *"Which of our neighbours do you trust least?"* — your answer poisons their
+  view of whoever you name.
+- *"If Violeta attacks us, will you stand with us?"* — give your word, and be
+  held to it.
+- Friendship, research pacts, resource trades, joint wars, pleas for aid,
+  ultimatums, peace offers, surrender…
+
+**Your word is tracked.** Promise to withdraw and have soldiers at their border
+45 seconds later, promise to build no closer and finish a farm by their fields,
+promise to defend them and sit out the war — they will know, and word gets
+around the other honorable courts.
+
+**The Audience screen** (Diplomacy → Audience, or the button on any card)
+shows the leader, their traits and agenda, how they stand with every other
+nation, why they feel as they do about you, and what you have promised them —
+and lets you act: gifts, **declare friendship** (public — war on a friend is a
+betrayal the whole world remembers), a **research pact** (+15% knowledge for
+both, 10 minutes), trade pacts and alliances by envoy, **denounce** them,
+**demand tribute** (only if they fear you), embargo, war, peace, **demand
+surrender** — plus a **deal builder** to trade any goods for any goods (they
+price it by what they actually need, and drive a harder bargain if they
+dislike you) and questions: *"What do you think of Crimson?"*, *"What do you
+want from us?"*
+
+**Wars can end in vassalage.** A nation that has truly lost a war — its
+capital battered or its towns burning, facing an army it knows it cannot beat
+— will offer you its fealty: a vassal pays you a fifth of its treasury every
+minute and marches in your wars. It works the other way too: an enemy
+crushing you may demand your submission, which ends the war at the price of
+your gold and your freedom to fight them — until you declare independence.
+Vassals rebel when they think they can win.
+
+**Size has a price.** Every citizen past thirty makes your people a little
+harder to keep content (**crowding**, shown in the happiness breakdown). A
+nation grows large by building churches, wells and markets and studying the
+civic arts — or it stops growing.
+
 ## Trade & the market
 
 Select your **Market** to open the commodity exchange:
@@ -248,6 +414,14 @@ At war, you don't just burn buildings — you rob them.
 
 ## The sea
 
+**Trade and diplomacy cross the ocean.** A trade pact with a nation on another
+continent sails: once both of you have a **Dock**, **merchant ships** in your
+colours ply the lane between the two harbours, paying both nations each voyage
+— more for a longer crossing. A burned Dock closes the lane until you raise
+another, and a war galley at war will sink them. Envoys to a court across the
+sea take ship from your Dock and come home the same way.
+
+
 **Your neighbours are across the water.** On every world but Duel Island each
 nation starts on its own continent, so an army that cannot embark is an army
 that can never meet another nation.
@@ -272,31 +446,62 @@ be shot by them. **If the hull goes down, everyone aboard goes with it.** A
 Galley can shell troops on a beach and archers on a beach can shoot back at a
 hull, but neither will go chasing the other across the waterline.
 
-The AI nations do all of this too. They build shipyards, send a galley off to
-chart the oceans and find out who else is out there, and when they decide on a
-war across water they assemble a fleet, load an army onto it, and land it on
-your coast.
+The AI nations do all of this too. They build shipyards and keep galleys at
+sea to chart the oceans — and to **watch their rivals' coasts**: a foreign war
+galley working along your shoreline is somebody finding out how strong you are.
+When they decide on a war across water they assemble a fleet, load an army onto
+it, and land it on your coast. And they defend: an enemy landing on their land
+is met by the nearest of their soldiers, in greater numbers.
 
 ## Your army
 
-**Nine troops, and each one does a job no other does.**
+**Thirteen troops, and each one does a job no other does.**
 
-| Tier | Troop | What it's for |
+| Unlocked by | Troop | What it's for |
 |---|---|---|
-| 1 | **Swordsman** | Cheap line infantry — the body of any army |
-| 1 | **Spearman** | Just as cheap, and hits Cavaliers for ×2.2 |
-| 1 | **Archer** | Ranged, pierce damage, dies fast if anything reaches it |
-| 1 | **Bandit** | Fast raider — **the only troop that can carry plunder** |
-| 1 | **Prince** | Envoy, not a fighter; carries proposals to other nations |
-| 2 | **Halberdier** | Armoured tank — blades and arrows glance off, magic doesn't |
-| 2 | **Cavalier** | Fast, heavy shock cavalry. Spearmen are its answer |
-| 3 | **Mage** | Ranged magic with splash, and armour doesn't stop it |
-| 3 | **King** | One per nation. +15% damage to troops near him |
+| Castle | **Swordsman** | Cheap line infantry — the body of any army |
+| Castle | **Spearman** | Just as cheap, and hits Cavaliers for ×2.2 |
+| Castle | **Archer** | Ranged, pierce damage, dies fast if anything reaches it |
+| Castle | **Bandit** | Fast raider — **the only troop that can carry plunder** |
+| Castle | **Prince** | Envoy, not a fighter; carries proposals to other nations |
+| Iron Working | **Shieldman** | Slow, armoured, and halves arrow damage — the wall your archers hide behind |
+| Crossbows | **Crossbowman** | Slow reload, but the bolt ignores 3 points of armour |
+| Garrison | **Halberdier** | Armoured tank — blades and arrows glance off, magic doesn't |
+| Garrison | **Cavalier** | Fast, heavy shock cavalry. Spearmen are its answer |
+| Engineering | **Catapult** | Siege engine: smashes walls, towers and buildings from 7.5 tiles. Can't fire point-blank and does little to troops — escort it |
+| Royal Academy | **Mage** | Ranged magic with splash, and armour doesn't stop it |
+| Royal Academy + Arcane Mastery | **Archmage** | Heavier fire, wider splash |
+| Royal Academy | **King** | One per nation. +15% damage to troops near him |
 
-**Castle upgrades unlock troops.** A fresh Castle trains the whole of tier 1.
-Buy the **Garrison** upgrade to unlock the Halberdier and Cavalier, then the
-**Royal Academy** for the Mage and the King. Locked troops show a 🔒 with what
-unlocks them — and AI nations climb the same tiers.
+**Soldiers grow.** Every soldier earns experience in battle and rises from
+Recruit to **Veteran**, **Elite** and finally **Legend** — each rank hits
+harder and lasts longer (gold chevrons over their heads). Legends get a name —
+*Aldric the Bold* — and steady the troops around them.
+
+**Morale decides battles.** Wounds, friends falling nearby, being outnumbered
+and a cavalry charge wear a soldier's nerve down; home ground, rest, the King
+and Legends build it back. A soldier whose nerve breaks **routs** — drops
+everything and runs home (you'll see a white rag), and panic spreads to those
+beside it — then rallies once it has recovered. Veterans hold longer. Lose your
+King in battle and your whole army is shaken.
+
+**Cavalry charges.** A horseman who rides a few tiles into the fight lands his
+first blow half again as hard and shakes the man he hits — unless that man has
+a spear, a halberd or a shield.
+
+**Armies heal at home, and cost money.** Wounded soldiers recover out of the
+fight on your land, fast near a Town Hall, Castle or Church. Soldiers eat and
+draw pay; ships and siege engines cost gold. An army you can't pay loses heart.
+In winter, an army deep in enemy land wears down.
+
+**Castle upgrades and research unlock troops.** A fresh Castle trains the basic
+five. The **Garrison** upgrade (Feudal Age) unlocks the Halberdier and Cavalier,
+the **Royal Academy** (Age of Kingdoms) the Mage and the King, and research
+unlocks the rest. Locked troops show a lock with what unlocks them — and AI
+nations climb the same tiers and study the same tree. Military technologies
+make your whole army better too: Bronze and Iron Working sharpen blades,
+Fletching and Crossbows harden arrows, Chivalry armours your horse, Standing
+Army toughens every soldier.
 
 **Armies march in formation.** Group move orders arrange your troops into ranks
 facing the direction of travel, and units physically push apart so they never
@@ -307,7 +512,7 @@ shield wall.
 **You decide how they march (Menu → Formations).**
 - **Shape:** a **Diamond** (a point that widens and narrows again — covers the
   flanks) or a **Rectangle** (a solid block, up to six wide).
-- **Marching order:** drag the nine troop types into the order you want them to
+- **Marching order:** drag the thirteen troop types into the order you want them to
   hold the line. Whoever is at the top takes the point; whoever is at the bottom
   brings up the rear. Put Halberdiers first to soak the charge, or Archers first
   if you want them shooting before your infantry closes.
@@ -344,7 +549,8 @@ new selection, ready for their own role and targeting priority — so you can
 leave half your army home on **Defensive** and march the other half out on
 **Offensive** in a few taps.
 
-**Diplomacy (Menu → Diplomacy):** relations run −100…+100 per nation.
+**Diplomacy (Menu → The Courts, or press L):** each ruler's opinion of you runs
+−100…+100, with every reason listed on their Audience screen.
 - 🎁 **Gifts** buy goodwill.
 - 🐎 **Trade pacts** need a Market on both sides and a **Prince** envoy (trained at
   the Castle) who physically rides to their Town Hall with the offer. Accepted pacts
@@ -385,12 +591,53 @@ sparks disputes that can be talked out or fought over. Watch for rumors in the
 event log ("soldiers drilling…", "masons quarrying…") and for armies massing
 at your border: ambitions are never announced outright, but they always show.
 
-**There is no way to win.** No score to chase, no crown that ends the match —
-you play to keep your nation standing for as long as you want to. Build a
-Grand Castle (👑 300🪙 200🪵 200🪨 at your Castle, once you have 50 population
-and 70% happiness) if you want the prestige of it; conquer every rival if you
-want the whole continent; ally with everyone if you'd rather keep the peace.
-None of it ends the game — it's just what kind of nation you choose to build.
+**How a match ends is your choice.** On the setup screen, beside the world
+and the difficulty, pick **Victory conditions** or **Endless**, and a **Pace**
+(Quick ≈ an hour, Standard ≈ two, Epic an evening).
+
+With victory conditions on, five races run for **every** nation at once, and
+the first to finish one wins the match — if that isn't you, you lose:
+
+| Victory | How |
+|---|---|
+| ⚔ **Domination** | Every rival conquered or sworn to you as a vassal |
+| 📖 **Science** | Complete *The Enlightenment*, the last study of the Imperial Age |
+| 🏛 **Culture** | Bank culture — mostly from standing Wonders — with three of them standing |
+| 🪙 **Economic** | Earn a fortune from caravans and merchant ships *and* hold a great treasury, for three minutes |
+| 🤝 **Diplomatic** | Every surviving nation your ally or vassal, in the Age of Kingdoms, for three minutes |
+
+Rivals pick their own race by temperament and change course as the world
+does. Everyone is warned as a nation closes in (75%, 90%, and a countdown
+when a held condition starts), and past 75% the leader becomes **everyone's
+target** — even peaceful courts go to war to stop it, and traders embargo a
+would-be trading empire. Press **V** for the Ledger: every race, every
+nation's progress, the legacy chart and the milestones.
+
+**Endless** plays as the game always has: no victory, and only your Town Hall
+falling ends it. Either way every nation earns **legacy** — its Age and
+learning, Wonders, culture, people, land, trade, conquests and vassals, the
+**milestones** it reached first (first into each Age, first Wonder, first
+conquest…), and whether its word could be trusted.
+
+**The Chronicle (J)** writes the history of the match as it happens — every
+war and peace, Age, Wonder, conquest, betrayal and broken promise, by day.
+When the match ends (in victory, defeat, or a rival's victory), the end screen
+shows how history will remember you — *the Conqueror*, *the Builder*, *the
+Enlightened*, *the Merchant*, *the Faithless*… — a chart of every nation's
+legacy over the match, the final standings and the chronicle's great moments.
+After a victory you can **rule on** in endless mode.
+
+**Wonders of the world.** Seven Wonders — the Great Library, Grand Bazaar,
+Royal Gardens, Great Cathedral, Great Wall, Imperial Palace and Grand
+Observatory — each worth a lasting bonus (see the Wonders tab of the build
+bar). There is only one of each in the whole world: several nations can race
+for the same one, and whoever finishes first wins it; everyone else's site is
+abandoned. A Wonder can be captured with its nation — or burned, and then it
+is lost to history for everyone. They take six builders at once and a great
+deal of stone and gold, and they are what Culture is made of.
+
+**Peace comes with a truce.** Every war that ends leaves a five-minute truce:
+the AI never breaks one, and if you do, every court remembers it.
 
 **Conquest means annexation.** Destroy a nation's Town Hall and its surviving
 farms, mines, markets and storehouses — goods and all — become **yours**, at
@@ -398,23 +645,39 @@ reduced health and unstaffed until you assign workers. Walls and the ruined Town
 Hall come down. This cuts both ways: a rival that overruns you inherits your
 whole economy, and the continent consolidates into real empires.
 
-**Losing:** your Town Hall falls. That's the only way the game ends — a
-rival's Grand Castle, a rival's conquest of the rest of the map, none of it
-touches you. Prosperous AI nations still race to raise their own Grand Castle
+**Losing:** your Town Hall falls — on any setting — or, with victory
+conditions on, a rival wins one of the five races first. Prosperous AI nations still race to raise their own Grand Castle
 (you'll be warned when construction starts, purely as news), and conquerors
 can still swallow the rest of the map if nobody stops them — AI nations fight,
 bridge rivers to reach each other, and eliminate one another, so the continent
-you face in the late game may not be the one you started on. But it's only
-*your* Town Hall that can end your run.
+you face in the late game may not be the one you started on.
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
-while it's up. From there: Diplomacy, Select Army (grabs your whole standing
-army), Formations, game **Speed** (1x/2x/3x), Hide UI, **Dev Mode**, and New Game.
+while it's up. From there: Diplomacy, Research, Victory & Legacy, the Chronicle,
+Select Army (grabs your whole standing army), Formations, game **Speed**
+(1x/2x/3x), Hide UI, **Advisor** on/off, **Dev Mode**, and New Game.
+
+**The Royal Steward advises you.** Now and then a line in the message log with a
+gold edge and a quill is your Steward's counsel — research left idle, granaries
+emptying, full houses, a war declared on you, a rival closing on victory, the
+first fog or snow — each said when it matters and rarely twice. Seasoned
+rulers can dismiss the Steward from the pause menu (Advisor: OFF); the choice is
+remembered.
 
 **Dev Mode** (Menu → Dev Mode) is a cheat for testing: your resources never run
 out and training is never blocked by cost or population. A red **DEV** badge
 stays on the topbar the whole time it's on so it's never left running by
 accident, and it resets to off on a new game.
+
+**Commanding an army (desktop):** right-click **moves** (the group marches
+through without stopping to fight) or attacks what you clicked · **F** then
+click, or **Ctrl+right-click**: **attack-move** (fight your way there) · **P**
+then click: **patrol** · **Z**: **hold** position · **X**: **stop** ·
+**Shift+right-click** queues waypoints · **Ctrl+1-9** makes a control group,
+**1-9** selects it (twice jumps to it) · **double-click** a soldier selects all
+of that type on screen · **I** selects idle soldiers · **Space** jumps to the
+latest attack alert (alerts also ping the minimap). On touch, the same orders
+are buttons on the army panel; double-tap then gives the target.
 
 **Controls (desktop):** WASD/arrows pan (Shift = faster) · wheel zooms ·
 left-click/drag selects an army, or buildings if the box has no units in it ·
@@ -423,7 +686,9 @@ enemy storehouse; sets rally with a Castle selected · click-and-hold then drag
 to lay a wall/gate/bridge run, shown as a preview until you release · Shift+click
 places multiple buildings · R rotates a bridge while placing · Ctrl+C copies
 selected building(s) (then click Paste, or press it again, to stamp another) ·
-Delete/Backspace removes selected building(s) for a 75% refund · Esc cancels
+Delete/Backspace removes selected building(s) for a 75% refund · **T** opens
+Research · **L** opens the Courts (diplomacy) · **V** the Ledger (victory &
+legacy) · **J** the Chronicle · **B** cycles the build tabs · Esc cancels
 placement or a pending paste / clears selection / closes menus.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
@@ -464,8 +729,14 @@ Plain `<script>` modules, no build step:
 - `js/units.js` — unit stats, movement, combat, projectiles, robbing & hauling loot
 - `js/civilians.js` — the citizenry: workers, builders, wanderers, gathering trips
   and construction sites
+- `js/army.js` — veterancy and Legends, morale and the rout, healing,
+  attrition, upkeep, and attack alerts
+- `js/seasons.js` — the four seasons and what they do to harvests, people and armies
 - `js/naval.js` — docks, ships, boarding and landings, and the AI's navy
 - `js/globe.js` — the orbit view: world texture, sphere projection, starfield
+- `js/tech.js` — knowledge, the technology tree, the Ages, tech modifiers
+  (`f.mods`) and the AI's research choices
+- `js/icons.js` — extra HUD icons drawn from pixel grids at load
 - `js/factions.js` — faction state, rolled personalities, the AI tick dispatcher
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
 - `js/ai.js` — ambitions, proactive diplomacy, war waves, expansion, bridge and
@@ -476,8 +747,17 @@ Plain `<script>` modules, no build step:
 - `js/ai-combat.js` — AI scouting, army sizing, defence, war declarations
 - `js/events.js` — the event-card queue (AI-initiated choices for the player)
 - `js/territory.js` — per-tile influence/ownership, borders, border disputes
+- `js/leaders.js` — the rulers: portraits, traits, agendas, the opinion ledger,
+  promises, their questions and requests, friendships, deals and vassals
+- `js/ui-leaders.js` — the Courts list and the Audience screen
 - `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, difficulty
   select, game loop
+- `js/ui-research.js` — the Research screen, the Age banner, the knowledge readout
+- `js/wonders.js` — the seven Wonders: the race, their effects, their art, the AI
+- `js/upgrades.js` — building levels, builder repair, neighbour (adjacency) bonuses
+- `js/fx.js` — the living world: seasonal art, weather, fire, smoke, dust, blood and glints
+- `js/victory.js` — the five victories, the AI's race, legacy, milestones, the chronicle
+- `js/ui-victory.js` — the Ledger, the legacy chart, the end screen
 
 ## More documentation
 

@@ -24,9 +24,10 @@ const MINE_RADIUS = 3;
 const BUILDING_TYPES = {
   townhall: {
     key: 'townhall', name: 'Town Hall', art: null, size: 2,
-    cost: {}, hp: 900, buildTime: 0, slots: 2, builders: true, solid: true,
+    cost: {}, hp: 2000, buildTime: 0, slots: 2, builders: true, solid: true, keep: true,
+    dmg: 8, dmgType: 'pierce', range: 6, cooldown: 1.4, projectile: 'arrow',
     storage: { food: 300, wood: 300, stone: 300, gold: 1e9 },
-    desc: 'Heart of your nation. Stores resources, and quarters two builders. Lose it and your nation falls.',
+    desc: 'Heart of your nation: a fortified keep whose archers shoot any enemy in range, and which only siege engines breach quickly. Stores resources, and quarters two builders. Lose it and your nation falls.',
   },
   storehouse: {
     key: 'storehouse', name: 'Storehouse', art: null, size: 1,
@@ -93,17 +94,38 @@ const BUILDING_TYPES = {
   },
   castle: {
     key: 'castle', name: 'Castle', art: null, size: 2,
-    cost: { wood: 40, stone: 60 }, hp: 600, buildTime: 16, slots: 0, solid: true,
-    desc: 'Trains your army and envoys. Upgrade to a Grand Castle — a monument to your prosperity.',
+    cost: { wood: 40, stone: 60 }, hp: 1200, buildTime: 16, slots: 0, solid: true, keep: true,
+    dmg: 6, dmgType: 'pierce', range: 6, cooldown: 1.6, projectile: 'arrow',
+    desc: 'Trains your army and envoys, and its archers shoot any enemy in range; only siege engines breach it quickly. Upgrade to a Grand Castle — a monument to your prosperity.',
+  },
+  // Knowledge. Scholars sit in the Library and read; nothing is hauled — what
+  // they learn goes straight into the nation's research (js/tech.js).
+  library: {
+    key: 'library', name: 'Library', art: null, size: 1,
+    cost: { wood: 40, stone: 25 }, hp: 200, buildTime: 12, slots: 3,
+    produces: 'knowledge', rate: 0.1,
+    desc: 'Scholars study here, producing Knowledge for research. Knowledge advances your nation through the Ages.',
+  },
+  university: {
+    key: 'university', name: 'University', art: null, size: 2,
+    cost: { wood: 80, stone: 120, gold: 80 }, hp: 450, buildTime: 24, slots: 4,
+    produces: 'knowledge', rate: 0.18, happyAura: 4, requires: { tech: 'education' },
+    desc: 'A great seat of learning: four scholars, each worth nearly two in a Library. Requires Education.',
+  },
+  watchtower: {
+    key: 'watchtower', name: 'Watchtower', art: null, size: 1,
+    cost: { wood: 20, stone: 40 }, hp: 350, buildTime: 10, slots: 0, solid: true, fortification: true,
+    dmg: 6, dmgType: 'pierce', range: 5.5, cooldown: 1.5, projectile: 'arrow', requires: { tech: 'masonry' },
+    desc: 'A stone tower whose archers shoot any enemy in range. Only siege engines breach it quickly. Requires Masonry.',
   },
   wall: {
     key: 'wall', name: 'Wall', art: null, size: 1,
-    cost: { stone: 5 }, hp: 300, buildTime: 2, slots: 0, solid: true, line: true,
+    cost: { stone: 5 }, hp: 300, buildTime: 2, slots: 0, solid: true, line: true, fortification: true,
     desc: 'Stone wall. Segments join up into a solid barrier. Keeps enemies out.',
   },
   gate: {
     key: 'gate', name: 'Gate', art: null, size: 1,
-    cost: { stone: 15 }, hp: 250, buildTime: 3, slots: 0, line: true,
+    cost: { stone: 15 }, hp: 250, buildTime: 3, slots: 0, line: true, fortification: true,
     desc: 'A wall your own people (and allies) can pass through. Joins onto walls.',
   },
   bridge: {
@@ -115,7 +137,29 @@ const BUILDING_TYPES = {
   },
 };
 
-const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'builderhouse', 'market', 'church', 'well', 'castle', 'wall', 'gate', 'bridge'];
+const BUILD_MENU = ['house', 'farm', 'lumber', 'quarry', 'mine', 'storehouse', 'builderhouse', 'market', 'library', 'church', 'well', 'castle', 'watchtower', 'university', 'wall', 'gate', 'bridge'];
+
+// The build bar's categories (js/ui.js buildHud). Wonders are appended by
+// js/wonders.js.
+const BUILD_TABS = [
+  { key: 'economy', label: 'Economy', icon: 'wood', keys: ['farm', 'lumber', 'quarry', 'mine', 'storehouse', 'builderhouse', 'market', 'dock'] },
+  { key: 'society', label: 'Society', icon: 'pop', keys: ['house', 'well', 'church', 'library', 'university'] },
+  { key: 'military', label: 'Military', icon: 'shield', keys: ['castle', 'watchtower', 'wall', 'gate', 'bridge'] },
+  { key: 'wonders', label: 'Wonders', icon: 'pillar', keys: [] },
+];
+
+// Whether a nation may build this at all yet. Technology and Age gates live on
+// the type (`requires: {tech, era}`); a Wonder adds its own world-wide rule
+// (js/wonders.js). Returns null when allowed, else the reason.
+function buildingBlocker(f, key) {
+  const t = BUILDING_TYPES[key];
+  if (!t) return 'Unknown building';
+  const req = t.requires;
+  if (req && req.tech && !hasTech(f, req.tech)) return `Requires ${TECHS[req.tech].name}`;
+  if (req && req.era != null && (f.era || 0) < req.era) return `Requires the ${ERAS[req.era].name}`;
+  if (t.wonder && typeof wonderBlocker === 'function') return wonderBlocker(f, key);
+  return null;
+}
 
 // Grand Castle: a prestige monument, not a win condition — the game does not end.
 // Any nation (player or AI) can raise one once it clears the gate below.
@@ -124,10 +168,10 @@ const GRAND_CASTLE_COST = { gold: 300, wood: 200, stone: 200 };
 
 // Castle upgrade tiers: each unlocks new troops at every castle of that nation.
 const CASTLE_UPGRADES = {
-  2: { name: 'Garrison', cost: { wood: 100, stone: 80, gold: 60 }, time: 20,
-       desc: 'Unlocks Shieldman, Halberdier, Crossbowman and Horseman.' },
-  3: { name: 'Royal Academy', cost: { wood: 150, stone: 150, gold: 150 }, time: 30,
-       desc: 'Unlocks Mage, Archmage, Cavalier and the King.' },
+  2: { name: 'Garrison', cost: { wood: 100, stone: 80, gold: 60 }, time: 20, era: 1,
+       desc: 'Unlocks the Halberdier and the Cavalier. Requires the Feudal Age.' },
+  3: { name: 'Royal Academy', cost: { wood: 150, stone: 150, gold: 150 }, time: 30, era: 2,
+       desc: 'Unlocks the Mage and the King. Requires the Age of Kingdoms.' },
 };
 
 let nextBuildingId = 1;
@@ -138,7 +182,8 @@ class Building {
     this.type = BUILDING_TYPES[typeKey];
     this.faction = factionId;
     this.x = x; this.y = y;                  // top-left tile
-    this.hp = this.type.hp;
+    this.level = 1;                // raised by building upgrades (js/wonders.js)
+    this.hp = buildingMaxHp(this);
     this.workers = 0;              // slots the owner wants filled; civilians follow it
     this.progress = this.type.buildTime === 0 ? 1 : 0;   // construction 0..1
     // Construction site ledger, set by startConstruction: what the site still
@@ -164,6 +209,7 @@ class Building {
     this.store = { food: 0, wood: 0, stone: 0, gold: 0 };  // physical goods held (storage buildings)
   }
   get done() { return this.progress >= 1; }
+  get maxHp() { return buildingMaxHp(this); }
   get cx() { return this.x + this.type.size / 2; }   // center in tile coords
   get cy() { return this.y + this.type.size / 2; }
 
@@ -350,13 +396,23 @@ function captureBuilding(game, b, newFid) {
     const at = from.buildings.indexOf(b);
     if (at >= 0) from.buildings.splice(at, 1);
   }
+  // An upgrade under way dies with the old owner: its ledger counts loads on
+  // the backs of builders who will never arrive, so it could never finish.
+  // What was already carried there spills for whoever wants it; the levels the
+  // building already has are the conqueror's to keep.
+  if (b.done && b.site) {
+    const mats = siteMaterials(b);
+    if (mats) game.loot.push({ x: b.cx, y: b.cy, res: mats, t: 0 });
+    b.site = null;
+  }
   b.faction = newFid;
   b.workers = 0;
   b.trainQueue = [];
   b.upgrading = null;
   b.rally = null;
-  b.hp = Math.max(1, Math.min(b.hp, Math.round(b.type.hp * CAPTURE_HP_FRACTION)));
+  b.hp = Math.max(1, Math.min(b.hp, Math.round(b.maxHp * CAPTURE_HP_FRACTION)));
   game.factions[newFid].buildings.push(b);
+  if (b.type.wonder && b.done) onWonderCaptured(b, from ? from.id : -1);
   return b;
 }
 
@@ -390,7 +446,11 @@ function demolishBuilding(game, b) {
     return refund;
   }
   for (const [r, v] of Object.entries(b.type.cost || {})) refund[r] = Math.ceil(v * 0.75);
+  // an upgrade under way hands back whatever was carried to it
+  const upg = b.site ? siteMaterials(b) : null;
+  if (upg) for (const r of RES_KEYS) if (upg[r] > 0.5) refund[r] = (refund[r] || 0) + Math.floor(upg[r]);
   removeBuilding(game, b);
+  if (b.type.wonder) onWonderLost(b, null);   // a demolished Wonder is as gone as a burned one
   if (b.faction >= 0) {
     const n = game.factions[b.faction].nation;
     for (const r in refund) n.res[r] += refund[r];
@@ -418,10 +478,19 @@ function workerYieldRate(map, b, atTile = null) {
       if (nearBuilding(map, tx, ty, 2, 'well')) { bonus += 0.25; break; }
     }
     rate *= bonus;
+    if (typeof seasonFarmMul === 'function') rate *= seasonFarmMul();   // js/seasons.js
   }
   if (type.key === 'lumber' && !atTile && !findWorkTile(map, b)) return 0;
+  // the nation's technology, the building's own level, and its neighbours
+  const m = factionMods(b.faction);
+  if (m) rate *= 1 + (m.yield[type.produces] || 0);
+  rate *= levelYieldMul(b);
+  if (typeof adjacencyBonus === 'function' && game) rate *= 1 + adjacencyBonus(b).v;
   return rate;
 }
+
+// Upgraded buildings work better: +40% per level above the first.
+function levelYieldMul(b) { return 1 + ((b.level || 1) - 1) * 0.4; }
 
 // The tile a worker of this building physically walks to and works at. Forest is
 // consumed as it is cut, so a Lumber Camp searches its whole reach every time and
@@ -429,7 +498,7 @@ function workerYieldRate(map, b, atTile = null) {
 // never run out. Farm hands work their own crop field, traders their own Market.
 function findWorkTile(map, b) {
   const key = b.type.key;
-  if (key === 'farm' || key === 'market') {
+  if (key === 'farm' || key === 'market' || BUILDING_TYPES[key].produces === 'knowledge') {
     const tiles = b.footprint();
     return tiles[Math.floor(tiles.length / 2)];
   }
@@ -458,4 +527,80 @@ function nearBuilding(map, x, y, radius, typeKey) {
       if (b && b.type.key === typeKey && b.done) return b;
     }
   return null;
+}
+
+// ---------- watchtowers ----------
+// A tower is a building with a bow: it picks the nearest hostile soldier in
+// range and looses at it on its own cooldown. The Projectile's source is the
+// tower itself, so a soldier who is shot turns on the tower (Unit.takeDamage),
+// and a kill is credited to its owner like any other.
+function tickTowers(f, dt) {
+  for (const b of f.buildings) {
+    if (!b.type.dmg || !b.done || b.hp <= 0) continue;
+    b.cool = (b.cool || 0) - dt;
+    if (b.cool > 0) continue;
+    const range = b.type.range;
+    let t = b.target;
+    if (t && (targetDead(t) || !game.diplomacy.hostile(f.id, targetFaction(t))
+        || (t.aboard) || wdist(b.cx, b.cy, ...targetCenter(t)) > range + 0.5)) t = null;
+    if (!t) t = towerTarget(b, range);
+    b.target = t;
+    if (!t) { b.cool = 0.4; continue; }
+    b.cool = b.type.cooldown;
+    game.projectiles.push(new Projectile(b, t));
+  }
+}
+
+function towerTarget(b, range) {
+  let best = null, bd = range;
+  for (const o of game.factions) {
+    if (!game.diplomacy.hostile(b.faction, o.id)) continue;
+    for (const u of o.units) {
+      if (!u.alive || u.aboard || u.type.civilian) continue;
+      const d = wdist(b.cx, b.cy, u.x, u.y);
+      if (d < bd) { bd = d; best = u; }
+    }
+  }
+  return best;
+}
+
+// Would a SOLID building here cut the ground around it in two? A keep, a castle
+// or a watchtower dropped into the gap between two other solid buildings can
+// seal a town's lanes, and then every worker on the wrong side re-paths forever
+// (it did: an AI turtle ringed its Town Hall with towers and walled its own
+// lumberjacks out). The check is local and cheap: every walkable tile touching
+// the footprint must still reach every other through a small box around it,
+// with the footprint treated as already built.
+function solidPlacementSafe(map, key, x, y, fid) {
+  const type = BUILDING_TYPES[key];
+  if (!type || !type.solid || type.line) return true;
+  const n = type.size;
+  const inFoot = (tx, ty) => tx >= x && tx < x + n && ty >= y && ty < y + n;
+  const R = 6;
+  const x0 = x - R, y0 = y - R, W = n + 2 * R;
+  const open = (tx, ty) => !inFoot(tx, ty) && map.passable(tx, ty, fid);
+  const ring = [];
+  for (let ty = y - 1; ty <= y + n; ty++) {
+    for (let tx = x - 1; tx <= x + n; tx++) {
+      if (inFoot(tx, ty) || !map.inBounds(tx, ty)) continue;
+      if (open(tx, ty)) ring.push([tx, ty]);
+    }
+  }
+  if (ring.length <= 1) return ring.length === 1;   // an enclosed pocket is not worth walling further
+  const seen = new Uint8Array(W * W);
+  const idx = (tx, ty) => (ty - y0) * W + (tx - x0);
+  const q = [ring[0]];
+  seen[idx(ring[0][0], ring[0][1])] = 1;
+  while (q.length) {
+    const [cx, cy] = q.pop();
+    for (const [dx, dy] of ORTH) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < x0 || ny < y0 || nx >= x0 + W || ny >= y0 + W || !map.inBounds(nx, ny)) continue;
+      const k = idx(nx, ny);
+      if (seen[k] || !open(nx, ny)) continue;
+      seen[k] = 1;
+      q.push([nx, ny]);
+    }
+  }
+  return ring.every(([tx, ty]) => seen[idx(tx, ty)]);
 }

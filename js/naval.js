@@ -37,6 +37,15 @@ const SHIP_TYPES = {
     desc: 'Fighting ship. Escorts transports and rakes anything that comes near the shore.',
   },
 };
+// Merchant ships are not built: a sea trade route puts them in the water and
+// they sail its lane back and forth (js/diplomacy.js). Unarmed; a war galley
+// can sink them, which is how a war strangles overseas trade.
+SHIP_TYPES.merchant = {
+  key: 'merchant', name: 'Merchant Ship', naval: true, capacity: 0, noTrain: true,
+  cost: {}, hp: 90, dmg: 0, dmgType: 'melee', range: 0.9,
+  speed: 2.6, cooldown: 1, trainTime: 0, scale: 1.1,
+  desc: 'Carries goods between two nations with a trade pact across the sea.',
+};
 for (const k in SHIP_TYPES) {
   const t = SHIP_TYPES[k];
   t.carry = 0; t.tier = 1;
@@ -105,13 +114,19 @@ function tickBoard(u, dt) {
   if (!ship || ship.dead || shipLoad(ship) >= ship.type.capacity) {
     u.mission = null; u.aggressive = true; return;
   }
-  if (wdist(u.x, u.y, ship.x, ship.y) <= BOARD_RANGE) return embark(u, ship);
-  if (u.path.length === 0 || u.repathT <= 0) {
-    // Aim at the shore beside the hull rather than the hull itself — the goal
-    // tile is water, and the land pathfinder is allowed to stop adjacent to an
-    // impassable goal, which is exactly the quay we want.
-    u.path = unitPathTo(u, Math.floor(ship.x), Math.floor(ship.y));
-    u.repathT = 1.2;
+  const d = wdist(u.x, u.y, ship.x, ship.y);
+  if (d <= BOARD_RANGE) return embark(u, ship);
+  // Aim at the shore beside the hull rather than the hull itself — the goal
+  // tile is water, and the land pathfinder is allowed to stop adjacent to an
+  // impassable goal, which is exactly the quay we want.
+  u.replan(Math.floor(ship.x), Math.floor(ship.y));
+  if (u.planFailed) {
+    // as close as the shore allows: a boat rows the last stretch out to a
+    // hull lying off the beach, and a hull the unit cannot reach at all is
+    // given up on rather than searched for every tick
+    if (d <= BOARD_RANGE * 2.5) return embark(u, ship);
+    if (u.planFails >= 4) { u.mission = null; u.aggressive = true; u.planFails = 0; }
+    return;
   }
   u.followPath(dt);
 }
@@ -400,17 +415,46 @@ function aiHasCoast(f) {
 // ---------- exploration ----------
 // A nation on its own continent cannot scout its way to knowing anybody, and an
 // AI that knows nobody never does anything. So the navy's first job is not war
-// but discovery: one hull kept at sea, working outward through water it has
-// never seen, until the coastlines of the world are on its map. Everything it
-// learns it learns by looking — the ship observes exactly like any other unit
-// (js/ai-perception.js gatherObservers), so no rule about reading rival state
-// is bent to make this work.
+// but discovery — and then keeping watch. Everything it learns it learns by
+// looking — the ship observes exactly like any other unit
+// (js/ai-perception.js gatherObservers; a hull's masthead sees a little
+// further), so no rule about reading rival state is bent to make this work.
+//
+// Two jobs, in order:
+//   * SURVEY. An overseas rival whose picture has gone stale (confidence under
+//     SEA_SURVEY_CONF — nothing seen for about a minute and a half) or whose
+//     capital we have never found gets a visit: a scout sails for the coast
+//     nearest their drawn claim — the borders are public knowledge, the same
+//     hint `aiEnemyAnchor` falls back to — and patrols along it. The claim is
+//     re-sampled every 20 s, so successive voyages work around their coast.
+//   * CHART. With nobody to survey but capitals still unfound, the old job: the
+//     nearest water we have never laid eyes on, biased outward.
+// Without the survey (BUGS #39) a sea scout charted open water, never saw a
+// town — capitals sit inland — and every AI's confidence in every overseas
+// rival stayed at zero, which `considerWar` reads as "we know nothing about
+// them": on a world of continents nobody ever went to war.
+const SEA_SURVEY_CONF = 0.5;
+const SEA_SCOUTS_MAX = 2;          // hulls a nation keeps looking, at most
+const SEA_VOYAGE_ITER = 40000;     // A* budget for a crossing, as a landing uses
+
 function aiNavalExplore(f) {
   const ai = f.ai;
   if (ai.invasion) return;                               // the fleet has a war to fight
+  const th = f.townhall();
+  if (!th) return;
+  const per = f.brain.perception;
+  const home = game.map.continentAt(Math.floor(th.cx), Math.floor(th.cy));
   const rivals = game.factions.filter(o => !o.eliminated && o.id !== f.id);
-  const unknown = rivals.filter(o => !f.brain.perception.knownTownhall(o.id));
-  if (!unknown.length) return;                           // the world is charted
+  const overseas = o => {
+    const at = aiTerritoryAnchor(o.id);
+    return !!at && game.map.continentAt(at[0], at[1]) !== home;
+  };
+  const survey = rivals.filter(o => overseas(o)
+    && (per.confidence(o.id) < SEA_SURVEY_CONF || !per.knownTownhall(o.id)));
+  const uncharted = rivals.some(o => !per.knownTownhall(o.id));
+  // how many hulls this wants at sea — staffWorkers keeps their crews free
+  ai.seaScoutWant = survey.length || uncharted ? Math.min(SEA_SCOUTS_MAX, Math.max(1, survey.length)) : 0;
+  if (!ai.seaScoutWant) return;                          // the world is charted and watched
   const docks = f.buildings.filter(b => b.type.key === 'dock' && b.done && b.hp > 0);
   if (!docks.length) {
     if (f.buildings.some(b => b.type.key === 'dock')) return;   // one is already rising
@@ -420,18 +464,78 @@ function aiNavalExplore(f) {
     if (spot) startConstruction(game, 'dock', spot[0], spot[1], f.id);
     return;
   }
-  let scout = ai.seaScout && ai.seaScout.alive ? ai.seaScout : null;
-  if (!scout) {
-    scout = factionShips(f).find(s => s.type.key === 'galley' && !shipLoad(s));
-    if (!scout) {
+  ai.seaScouts = (ai.seaScouts || []).filter(s => s.alive && !s.dead);
+  while (ai.seaScouts.length < ai.seaScoutWant) {
+    const free = factionShips(f).find(s => s.type.key === 'galley' && !shipLoad(s) && !ai.seaScouts.includes(s));
+    if (!free) {
       if (docks[0].trainQueue.length === 0) trainShip(f, 'galley');
-      return;
+      break;
     }
-    ai.seaScout = scout;
+    ai.seaScouts.push(free);
   }
-  if (scout.path.length > 0 || scout.target) return;     // already on its way somewhere
-  const goal = aiSeaScoutTarget(f, scout);
-  if (goal) scout.orderMove(goal[0], goal[1]);
+  ai.seaScouts.forEach((scout, i) => {
+    if (scout.path.length > 0 || scout.target) return;   // already on its way somewhere
+    const o = survey.length ? survey[i % survey.length] : null;
+    const goal = (o && aiSurveyPoint(f, o, scout)) || aiSeaScoutTarget(f, scout);
+    if (!goal) return;
+    scout.orderMove(goal[0], goal[1]);
+    // a crossing can be far longer than a soldier's repath budget allows
+    if (!scout.path.length) scout.path = scout.pathTo(goal[0], goal[1], SEA_VOYAGE_ITER);
+  });
+}
+
+// Citizens the navy needs kept free, right now, to crew hulls it is about to
+// lay down: sea scouts it is short of, and the transports and escort an
+// invasion in its 'fleet' stage is waiting on. `staffWorkers`
+// (js/ai-utility.js) holds these back from the trades exactly as it holds back
+// army recruits. Without it a busy town put every hand to work, `trainShip`
+// never found a crew, and no AI in a long soak ever launched a single hull —
+// so nobody surveyed, invaded or went to war across water.
+function aiNavalCrewWanted(f) {
+  const ai = f.ai;
+  if (!ai) return 0;
+  const dock = f.buildings.find(b => b.type.key === 'dock' && b.done && b.hp > 0);
+  if (!dock) return 0;
+  const ships = factionShips(f);
+  let want = Math.max(0, (ai.seaScoutWant || 0) - (ai.seaScouts || []).filter(s => s.alive).length);
+  const inv = ai.invasion;
+  if (inv && inv.state === 'fleet') {
+    const army = f.armyUnits().filter(u => u.alive && !u.aboard && !isNaval(u));
+    const hulls = army.length >= TRANSPORT_CAPACITY * 2 ? 2 : 1;
+    want += Math.max(0, hulls - ships.filter(s => s.type.key === 'transport').length);
+    if (!ships.some(s => s.type.key === 'galley')) want++;
+  }
+  // a hull already on the slipway took its crew when it was queued
+  return Math.max(0, Math.min(3, want) - dock.trainQueue.length);
+}
+
+// Where to look at a rival's coast from. Far off, the water nearest a tile of
+// their drawn claim; already there, a stretch of water along that same shore —
+// water touching ground they claim — so a scout on station walks the coastline
+// instead of sitting on one berth.
+function aiSurveyPoint(f, o, scout) {
+  const at = aiTerritoryAnchor(o.id);
+  if (!at) return null;
+  const berth = nearestBerth(at[0], at[1]);
+  if (!berth) return null;
+  if (wdist(scout.x, scout.y, berth[0] + 0.5, berth[1] + 0.5) > 14) return berth;
+  const t = game.territory;
+  let best = null, bd = -1;
+  for (let tries = 0; tries < 80; tries++) {
+    const x = wrapX(Math.floor(scout.x + (game.rng() - 0.5) * 36));
+    const y = Math.floor(scout.y + (game.rng() - 0.5) * 36);
+    if (!game.map.inBounds(x, y) || !game.map.navigable(x, y)) continue;
+    let shore = false;
+    for (const [dx, dy] of ORTH) {
+      const nx = wrapX(x + dx), ny = y + dy;
+      if (game.map.inBounds(nx, ny) && t.ownerAt(nx, ny) === o.id
+          && game.map.terrain[game.map.idx(nx, ny)] !== T_WATER) { shore = true; break; }
+    }
+    if (!shore) continue;
+    const d = wdist(scout.x, scout.y, x + 0.5, y + 0.5);
+    if (d > bd) { bd = d; best = [x, y]; }
+  }
+  return best || berth;
 }
 
 // The nearest stretch of water we have never laid eyes on, biased outward so the
@@ -521,6 +625,10 @@ function aiRunInvasionStage(f, inv) {
       inv.fleetMark = ships.length;
       inv.deadline = game.time + INVASION_STAGE_TIME;
     }
+    // The shipyard can be razed mid-campaign; the campaign goes back to
+    // building one rather than reading the queue of a dock that is not there
+    // (BUGS #48).
+    if (!docks.length) { aiInvasionStep(inv, 'building'); return; }
     if (docks[0].trainQueue.length >= 2) return;
     trainShip(f, transports.length < want ? 'transport' : 'galley');
     return;

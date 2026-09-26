@@ -39,13 +39,19 @@ const DEV_RESOURCE_FLOOR = 9999;
 let game = null;
 
 class Game {
-  constructor(seed, diffKey = 'ramped') {
+  // opts: { pace: 'quick'|'standard'|'epic', victory: bool } — set on the
+  // pre-game screen and round-tripped through the URL like the seed.
+  constructor(seed, diffKey = 'ramped', opts = {}) {
     this.diffKey = DIFFICULTIES[diffKey] ? diffKey : 'ramped';
     this.diff = DIFFICULTIES[this.diffKey];
+    this.paceKey = PACES[opts.pace] ? opts.pace : 'standard';
+    this.pace = PACES[this.paceKey];
+    this.victoryOn = opts.victory !== false;
     // The world must be configured before anything sizes an array off MAP_W.
     // boot() normally does it from the URL; this is the safety net for a Game
     // constructed some other way (a headless verification script, say).
     if (!WORLD) configureWorld({});
+    this.seed = seed | 0;   // the weather is rolled off it (js/seasons.js)
     this.devMode = false;   // cheat toggle: infinite resources + free/unlimited training for the player
     this.map = new GameMap(seed);
     this.factions = [];
@@ -69,6 +75,14 @@ class Game {
     }
     this.diplomacy = new Diplomacy(4);
     this.territory = new Territory(4);
+    // the people behind the nations: names, faces, memories (js/leaders.js)
+    this.court = new LeaderCourt(4);
+    rollLeaders(this);
+    // the world's Wonders, the victory races, and the history of the match
+    this.wonders = new WonderRegister();
+    this.victory = new VictoryState(4);
+    this.chronicle = [];
+    this.endInfo = null;
     // Marching doctrine: shape of the ranks and which unit types take the front.
     // Player-set (Menu → Formations) and remembered across games.
     this.formations = loadFormations(this.factions[0].name);
@@ -91,19 +105,26 @@ class Game {
     });
   }
 
-  log(text, cls = '') {
+  // `ms` is how long the line stays up; the Steward's counsel (js/ui-advisor.js)
+  // stays longer than news, and wears a quill.
+  log(text, cls = '', ms = 9000) {
     this.msgs.push({ text, cls, t: this.time });
     if (this.msgs.length > 60) this.msgs.shift();
     const el = document.getElementById('log');
     const div = document.createElement('div');
     div.className = 'msg ' + cls;
-    div.textContent = text;
+    if (cls === 'advice') {
+      const q = document.createElement('span');
+      q.className = 'icon icon-quill';
+      div.appendChild(q);
+      div.appendChild(document.createTextNode(' ' + text));
+    } else div.textContent = text;
     el.appendChild(div);
     // A landscape phone is ~390px tall; seven stacked messages ate a quarter of it and
     // ran into the build panel. Keep fewer lines when there is less room for them.
     const maxLines = window.innerHeight < 460 ? 3 : window.innerHeight < 620 ? 5 : 7;
     while (el.children.length > maxLines) el.removeChild(el.firstChild);
-    setTimeout(() => { div.classList.add('fade'); setTimeout(() => div.remove(), 1200); }, 9000);
+    setTimeout(() => { div.classList.add('fade'); setTimeout(() => div.remove(), 1200); }, ms);
   }
 
   // 1 at midday (brightest), 0 at midnight (darkest). A single cosine over the whole
@@ -127,26 +148,32 @@ class Game {
         if (f.id === 0) grown = f.nation.pop - before;
       }
       if (grown > 0) this.log(`Dawn breaks — ${grown} new citizen${grown > 1 ? 's' : ''} joined your nation.`, 'good');
+      onNewDaySeason();
     }
     this.isDay = isDayNow;
     for (const f of this.factions) {
       if (f.eliminated) continue;
       f.nation.tick(dt);
       if (this.devMode && f.isPlayer) this.devTopOff(f.nation);
+      tickResearch(f, dt);
       f.tickTraining(dt);
+      tickTowers(f, dt);
       if (!f.isPlayer) aiTick(f, dt);
       for (const u of f.units) u.tick(dt);
       f.units = f.units.filter(u => !u.dead || u.deathT < 8);
     }
     separateUnits(dt);
+    tickArmy(dt);
     for (const p of this.projectiles) p.tick(dt);
     this.projectiles = this.projectiles.filter(p => !p.done);
     this.market.tick(dt);
     this.tickLoot(dt);
     this.diplomacy.tick(dt);
     this.territory.tick(dt);
+    tickLeaders(dt);
     tickEvents();
     this.checkDefeat();
+    tickVictory(dt);
   }
 
   // Plunder dropped on the ground: units scoop it up when they reach it, and
@@ -203,7 +230,11 @@ class Game {
         // and full storehouses pass to whoever felled its Town Hall
         const victorFid = f.conqueredBy;
         const taken = annexBuildings(this, f, victorFid);
+        if (victorFid != null && this.factions[victorFid] && !this.factions[victorFid].eliminated) leaderOnConquest(victorFid, f.id);
+        else leaderOnConquest(-1, f.id);
         this.log(`The nation of ${f.name} has fallen!`, f.isPlayer ? 'bad' : '');
+        chronicle(victorFid != null && this.factions[victorFid]
+          ? `${f.name} fell to ${this.factions[victorFid].name}.` : `${f.name} fell.`, victorFid != null ? victorFid : f.id, 'major');
         if (taken > 0) {
           const victor = this.factions[victorFid];
           this.log(`${victor.name} annexes ${taken} of ${f.name}'s buildings.`,
@@ -234,15 +265,30 @@ class Game {
     return this.devMode;
   }
 
-  // Freeze the sim and show the end screen. There is only one road here — the
-  // player's nation has fallen — so there is no win branch and no way back in.
+  // The player's Town Hall has fallen.
   end(text) {
+    chronicle(`Azuria fell. ${text}`, 0, 'major');
+    this.endGame('defeat', 'Defeat', text);
+  }
+
+  // Freeze the sim and show the end screen (js/ui-victory.js). `kind` is
+  // 'victory' or 'defeat'. A victory can be played on past, in which case the
+  // match simply becomes endless; a defeat cannot.
+  endGame(kind, title, text) {
     if (this.over) return;
     this.over = true;
-    const el = document.getElementById('gameover');
-    el.style.display = 'flex';
-    el.querySelector('h1').innerHTML = '<span class="icon icon-skull"></span> Defeat';
-    el.querySelector('p').textContent = text;
+    this.endInfo = { kind, title, text, t: this.time };
+    sampleStats();
+    if (typeof ui !== 'undefined' && ui) ui.showEndScreen(this.endInfo);
+  }
+
+  // After a victory, the player may keep ruling: victory conditions switch off
+  // and the world carries on.
+  continueAfterVictory() {
+    this.over = false;
+    this.victoryOn = false;
+    this.endInfo = null;
+    chronicle('Azuria chose to rule on beyond its victory.', 0, 'minor');
   }
 }
 
@@ -297,9 +343,16 @@ function onUnitDeath(unit, attacker) {
   }
   // a killed civilian is a citizen the nation no longer has
   if (unit.type.civilian) onCivilianDeath(unit);
+  // comrades falling around a soldier shake it; a King falling shakes an army
+  if (!unit.type.civilian && !unit.type.naval) {
+    forEachSoldierNear(unit.x, unit.y, 5, v => { if (v !== unit && v.faction === unit.faction) hitMorale(v, 8); });
+  }
   if (unit.type.key === 'king') {
+    for (const v of f.units) hitMorale(v, 35);
     f.kingAlive = false;
     game.log(`The King of ${f.name} has fallen in battle!`, unit.faction === 0 ? 'bad' : '');
+    chronicle(`The King of ${f.name} fell in battle${attacker && attacker.faction !== undefined ? ' against ' + game.factions[attacker.faction].name : ''}.`, unit.faction, 'major');
+    addMood(f, 'king_dead', 'Mourning the King', -6, 300);
     aiPoke(unit.faction, true);
   }
   // a slain envoy takes its undelivered proposal to the grave
@@ -334,11 +387,12 @@ function dropLoot(b) {
 }
 
 function onBuildingDestroyed(b, attacker) {
+  if (typeof fxRaze === 'function') fxRaze(b);
   // razing a storehouse scatters its goods on the ground to be carried off
   if (b.type.storage) dropLoot(b);
   // so does knocking over a half-built site: the materials the builders carried
   // there are lying on the ground, and anyone with a sack can take them
-  if (!b.done && b.site) {
+  if (b.site) {
     const mats = siteMaterials(b);
     if (mats) game.loot.push({ x: b.cx, y: b.cy, res: mats, t: 0 });
   }
@@ -353,9 +407,11 @@ function onBuildingDestroyed(b, attacker) {
     }
   } else {
     removeBuilding(game, b);
+    if (b.type.wonder) onWonderLost(b, attacker);
     if (b.faction === 0) game.log(`Your ${b.type.name} was destroyed!`, 'bad');
   }
   if (attacker) {
+    if (attacker.faction !== b.faction) leaderOnRaze(b.faction, attacker.faction);
     game.diplomacy.addRel(b.faction, attacker.faction, -8);
     game.diplomacy.lastBlood[b.faction][attacker.faction] = game.time;
     game.diplomacy.lastBlood[attacker.faction][b.faction] = game.time;
@@ -406,17 +462,55 @@ async function boot() {
   worldFromQuery(params);
   const seed = parseInt(params.get('seed')) || (Math.random() * 1e9 | 0);
   const diffKey = params.get('difficulty');
-  if (DIFFICULTIES[diffKey]) return startGame(seed, diffKey);
+  // match options: pace and victory conditions, round-tripped in the URL
+  const opts = {
+    pace: PACES[params.get('pace')] ? params.get('pace') : 'standard',
+    victory: params.get('victory') !== '0',
+  };
+  if (DIFFICULTIES[diffKey]) return startGame(seed, diffKey, opts);
   // no difficulty chosen yet: show the pre-game screen; the sim does not start
   // (and `game` stays null) until a mode is picked
   const overlay = document.getElementById('difficulty');
   buildWorldPicker(overlay);
+  buildMatchOptions(overlay, opts);
   overlay.querySelectorAll('button[data-diff]').forEach(btn => {
     const d = DIFFICULTIES[btn.dataset.diff];
     btn.querySelector('.diff-desc').textContent = d.desc;
-    btn.onclick = () => { overlay.style.display = 'none'; startGame(seed, btn.dataset.diff); };
+    btn.onclick = () => { overlay.style.display = 'none'; startGame(seed, btn.dataset.diff, opts); };
   });
   overlay.style.display = 'flex';
+}
+
+// Victory conditions on/off and the pace — the two choices that decide how long
+// and how final a match is. Same thin pattern as the world picker: buttons that
+// set a value, a line that describes the current choice.
+function buildMatchOptions(overlay, opts) {
+  const vic = overlay.querySelector('.victory-row'), vdesc = overlay.querySelector('.victory-desc');
+  const pace = overlay.querySelector('.pace-row'), pdesc = overlay.querySelector('.pace-desc');
+  if (!vic || !pace) return;
+  const paint = () => {
+    vic.querySelectorAll('button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === opts.victory));
+    vdesc.textContent = opts.victory
+      ? 'Five races — Domination, Science, Culture, Economic, Diplomatic — for every nation. The first to finish one wins the match; if it is not you, you lose.'
+      : 'Endless: no victory, only your legacy. The match ends when you stop playing — or when your Town Hall falls.';
+    pace.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.pace === opts.pace));
+    pdesc.textContent = PACES[opts.pace].desc;
+  };
+  vic.innerHTML = '';
+  for (const [v, label] of [['1', 'Victory conditions'], ['0', 'Endless']]) {
+    const b = document.createElement('button');
+    b.dataset.v = v; b.textContent = label;
+    b.onclick = () => { opts.victory = v === '1'; paint(); };
+    vic.appendChild(b);
+  }
+  pace.innerHTML = '';
+  for (const [k, p] of Object.entries(PACES)) {
+    const b = document.createElement('button');
+    b.dataset.pace = k; b.textContent = p.label;
+    b.onclick = () => { opts.pace = k; paint(); };
+    pace.appendChild(b);
+  }
+  paint();
 }
 
 // The world picker on the pre-game screen. Deliberately thin: it re-runs
@@ -442,16 +536,20 @@ function buildWorldPicker(overlay) {
   paint();
 }
 
-function startGame(seed, diffKey) {
-  // the URL round-trips both seed and difficulty, so replays reproduce the game
+function startGame(seed, diffKey, opts = {}) {
+  // the URL round-trips seed, difficulty, world and options, so replays reproduce the game
   try {
     const w = WORLD.preset === 'standard' ? '' : `&world=${WORLD.preset}`;
-    history.replaceState(null, '', `?seed=${seed}&difficulty=${diffKey}${w}`);
+    const p = opts.pace && opts.pace !== 'standard' ? `&pace=${opts.pace}` : '';
+    const v = opts.victory === false ? '&victory=0' : '';
+    history.replaceState(null, '', `?seed=${seed}&difficulty=${diffKey}${w}${p}${v}`);
   } catch (e) {}
-  game = new Game(seed, diffKey);
+  game = new Game(seed, diffKey, opts);
   ui = new UI(document.getElementById('game'));
   ui.centerOn(game.map.startZones[0].x, game.map.startZones[0].y);
   game.log('Welcome to your nation! Feed your people, house them, and choose: trade or war.', 'good');
+  if (game.victoryOn) game.log('Victory conditions are ON — press V to see the five races. Every nation is running them.', 'good');
+  chronicle(`Azuria was founded${game.victoryOn ? ', and the race for the world began' : ''}.`, 0, 'minor');
   if (ui.isTouch) {
     game.log('Build farms and houses first. Drag to pan, pinch to zoom, tap to select.');
     game.log('Double-tap (or two-finger tap) to move/attack/set rally. Hold and drag to box-select.');
@@ -475,7 +573,7 @@ function startGame(seed, diffKey) {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); ui.refreshResearch(); ui.refreshLeader(); ui.refreshLedger(); ui.tickAdvisor(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

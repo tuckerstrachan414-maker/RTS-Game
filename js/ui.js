@@ -159,14 +159,40 @@ class UI {
       if (e.key === 'Escape') {
         // innermost overlay first: Formations sits on top of the pause menu
         if (document.getElementById('formation-panel').classList.contains('open')) { this.closeFormations(); return; }
+        if (this.leaderOpen()) { this.closeLeader(); return; }
+        if (this.ledgerOpen()) { this.closeLedger(); return; }
+        if (this.researchOpen()) { this.closeResearch(); return; }
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
         if (this.placing) { this.placing = null; return; }
+        if (this.orderMode) { this.orderMode = null; return; }
         this.clearSelection(); this.closeDiplomacy();
       }
+      const typing = document.activeElement && document.activeElement.tagName === 'INPUT'
+        && document.activeElement.type !== 'range';
       if (e.key.toLowerCase() === 'r' && this.placing) this.rotatePlacing();
-      if (e.key.toLowerCase() === 'h') document.body.classList.toggle('ui-hidden');
-      const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+      if (e.key.toLowerCase() === 'h' && !typing) document.body.classList.toggle('ui-hidden');
+      if (e.key.toLowerCase() === 't' && !typing && !this.paused) this.toggleResearch();
+      if (e.key.toLowerCase() === 'l' && !typing && !this.paused) this.toggleDiplomacy();
+      if (e.key.toLowerCase() === 'v' && !typing && !this.paused) this.toggleLedger(game.victoryOn ? 'victory' : 'legacy');
+      if (e.key.toLowerCase() === 'j' && !typing && !this.paused) this.toggleLedger('chronicle');
+      if (!typing && !this.paused && /^[1-9]$/.test(e.key)) {
+        if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.assignGroup(+e.key); }
+        else this.recallGroup(+e.key);
+      }
+      if (!typing && !this.paused && !e.ctrlKey && !e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'f') this.armOrder('attackmove');
+        else if (k === 'p') this.armOrder('patrol');
+        else if (k === 'x') this.stopSelected();
+        else if (k === 'z') this.holdSelected();
+        else if (k === 'i') this.selectIdleArmy();
+        else if (e.key === ' ') { e.preventDefault(); this.jumpToAlert(); }
+      }
+      if (e.key.toLowerCase() === 'b' && !typing && !this.paused && !e.ctrlKey && !e.metaKey) {
+        const i = BUILD_TABS.findIndex(t => t.key === this.buildTab);
+        this.setBuildTab(BUILD_TABS[(i + 1) % BUILD_TABS.length].key);
+      }
       if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'
           && (this.selection.buildings.length || (this.selection.building && this.selection.building.faction === 0))) {
         e.preventDefault();
@@ -247,7 +273,10 @@ class UI {
       this.mouse.down = false;
       const [sx, sy] = this.mouse.dragStart;
       const dx = Math.abs(e.offsetX - sx), dy = Math.abs(e.offsetY - sy);
-      if (dx < 6 && dy < 6) this.clickSelect(e.offsetX, e.offsetY);
+      if (dx < 6 && dy < 6) {
+        if (this.orderMode) this.rightClick(e.offsetX, e.offsetY);   // F / P then click
+        else this.clickSelect(e.offsetX, e.offsetY);
+      }
       else this.boxSelect(sx, sy, e.offsetX, e.offsetY);
       this.mouse.dragStart = null;
     });
@@ -553,7 +582,18 @@ class UI {
       const d = wdist(wx, wy - 0.3, u.x, u.y);
       if (d < bestD) { best = u; bestD = d; }
     }
-    if (best) { this.selection.units = [best]; this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); return; }
+    if (best) {
+      const now = performance.now();
+      const dbl = this.lastUnitClick && now - this.lastUnitClick.t < 380 && this.lastUnitClick.key === best.type.key;
+      this.lastUnitClick = { t: now, key: best.type.key };
+      if (dbl && !best.type.civilian) {
+        // double-click: every one of that type on screen
+        const same = game.factions[0].units.filter(u => u.alive && !u.aboard && !u.mission
+          && u.type.key === best.type.key && this.onScreen(u.x, u.y, 0));
+        this.selection.units = same.length ? same : [best];
+      } else this.selection.units = [best];
+      this.selection.building = null; this.selection.buildings = []; this.refreshPanel(); return;
+    }
     const [tx, ty] = [Math.floor(wx), Math.floor(wy)];
     const b = game.map.inBounds(tx, ty) ? game.map.buildingAt[game.map.idx(tx, ty)] : null;
     if (b) { this.selection.building = b; this.selection.units = []; this.selection.buildings = []; this.refreshPanel(); return; }
@@ -633,20 +673,114 @@ class UI {
         else { u.orderAttack(target); razed++; }
       }
       if (robbed && robbable) game.log(`${robbed} bandit${robbed > 1 ? 's' : ''} moving to rob the ${target.type.name}.`);
+      this.orderMode = null;
     } else {
-      // march in formation: ranks facing the destination, melee up front
-      formationMove(this.selection.units, tx, ty);
+      const mode = this.orderMode || (this.keys['control'] || this.keys['meta'] ? 'attackmove' : null);
+      this.orderMode = null;
+      this.commandMove(this.selection.units, tx, ty, mode, !!this.keys['shift']);
+    }
+  }
+
+  // The one place a player's move-type order is given. `mode`: null (a plain
+  // move — march through, don't stop to fight), 'attackmove' (fight your way
+  // there), 'patrol' (back and forth between here and there, attack-moving).
+  // `queue` (Shift) appends a waypoint instead of replacing the order.
+  commandMove(units, tx, ty, mode = null, queue = false) {
+    const us = units.filter(u => u.alive && !u.type.civilian && !u.type.envoy && !u.mission);
+    if (!us.length) return;
+    if (queue && us.some(u => u.path.length || u.target || u.waypoints.length)) {
+      for (const u of us) {
+        if (u.path.length || u.target || u.waypoints.length) u.waypoints.push([tx, ty]);
+        else { u.orderMove(tx, ty); u.order = { kind: mode === 'attackmove' ? 'attackmove' : 'move', x: tx, y: ty }; }
+      }
+      this.markOrder(tx, ty, 'queue');
+      return;
+    }
+    // march in formation: ranks facing the destination, melee up front
+    formationMove(us, tx, ty);
+    for (const u of us) {
+      u.waypoints = [];
+      const [dx, dy] = u.dest || [tx, ty];
+      if (mode === 'patrol') u.order = { kind: 'patrol', a: [u.tileX, u.tileY], b: [dx, dy], leg: 1 };
+      else if (mode === 'attackmove') u.order = { kind: 'attackmove', x: dx, y: dy };
+      else u.order = { kind: 'move' };
       // Ordering a defensive group to move means "defend there instead", not
       // "go there and then walk all the way back" — so the post moves with it.
-      for (const u of this.selection.units) {
-        if (u.groupRole === 'defensive') u.defensivePost = u.dest ? [u.dest[0], u.dest[1]] : [tx, ty];
-      }
+      if (u.groupRole === 'defensive') u.defensivePost = [dx, dy];
     }
+    this.markOrder(tx, ty, mode || 'move');
+  }
+
+  // A brief marker where an order was given, so a click has visible effect.
+  markOrder(tx, ty, kind) { this.orderMark = { x: tx + 0.5, y: ty + 0.5, t: performance.now(), kind }; }
+
+  stopSelected() {
+    for (const u of this.selection.units) {
+      if (!u.alive || u.type.civilian) continue;
+      u.path = []; u.dest = null; u.target = null; u.order = null; u.waypoints = [];
+    }
+  }
+  holdSelected() {
+    for (const u of this.selection.units) {
+      if (!u.alive || u.type.civilian || u.type.envoy) continue;
+      u.path = []; u.dest = null; u.target = null; u.waypoints = [];
+      u.order = { kind: 'hold', x: u.tileX, y: u.tileY };
+    }
+    game.log('Holding position.');
+  }
+  armOrder(mode) {
+    if (!this.selection.units.some(u => !u.type.civilian)) return;
+    this.orderMode = mode;
+    game.log(mode === 'attackmove'
+      ? (this.isTouch ? 'Attack-move: double-tap where to fight your way to.' : 'Attack-move: right-click where to fight your way to.')
+      : (this.isTouch ? 'Patrol: double-tap the far end of the patrol.' : 'Patrol: right-click the far end of the patrol.'));
+  }
+
+  // ---------- control groups ----------
+  assignGroup(n) {
+    const us = this.selection.units.filter(u => u.alive && !u.type.civilian);
+    if (!us.length) return;
+    this.groups = this.groups || {};
+    this.groups[n] = us.map(u => u.id);
+    game.log(`Group ${n}: ${us.length} unit${us.length > 1 ? 's' : ''}.`);
+  }
+  recallGroup(n) {
+    const ids = this.groups && this.groups[n];
+    if (!ids) return;
+    const set = new Set(ids);
+    const us = game.factions[0].units.filter(u => u.alive && !u.aboard && set.has(u.id));
+    this.groups[n] = us.map(u => u.id);
+    if (!us.length) return;
+    const now = performance.now();
+    // pressing the number twice jumps the camera to the group
+    if (this.lastGroupKey && this.lastGroupKey.n === n && now - this.lastGroupKey.t < 400) {
+      const cx = us.reduce((a, u) => a + u.x, 0) / us.length, cy = us.reduce((a, u) => a + u.y, 0) / us.length;
+      this.centerOn(cx, cy);
+    }
+    this.lastGroupKey = { n, t: now };
+    this.selection.units = us; this.selection.building = null; this.selection.buildings = [];
+    this.splitMode = null;
+    this.refreshPanel();
+  }
+  selectIdleArmy() {
+    const us = game.factions[0].units.filter(u => u.alive && !u.aboard && !u.type.civilian && !u.type.envoy
+      && !u.mission && !u.target && !u.path.length && !u.order && !u.garrisoned() && !u.type.naval);
+    if (!us.length) return game.log('No idle soldiers.');
+    this.selection.units = us; this.selection.building = null; this.selection.buildings = [];
+    this.centerOn(us[0].x, us[0].y);
+    this.refreshPanel();
+  }
+  jumpToAlert() {
+    const a = latestAlert();
+    if (!a) return;
+    this.centerOn(a.x, a.y);
   }
 
   tryPlace() {
     const key = this.placing;
     const type = BUILDING_TYPES[key];
+    const why = buildingBlocker(game.factions[0], key);
+    if (why) { game.log(`${type.name}: ${why}.`, 'bad'); this.placing = null; return; }
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
     const nation = game.factions[0].nation;
     const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
@@ -674,10 +808,15 @@ class UI {
     if (u.threat) doing = 'Fleeing for cover!';
     else if (!u.job) doing = 'No work — idling in town. Assign them to a building.';
     else if (u.job.kind === 'build') {
-      doing = !u.site ? 'Waiting for something to build'
+      doing = u.repair ? `Repairing the ${u.repair.type.name}`
+        : u.site && u.site.site && u.site.site.upgrade ? (siteReady(u.site) ? `Upgrading the ${u.site.type.name} (${Math.round(u.site.site.progress * 100)}%)` : `Hauling materials to upgrade the ${u.site.type.name}`)
+        : !u.site ? 'Waiting for something to build'
         : u.carryTotal() > 0.5 ? `Hauling materials to the ${u.site.type.name} site`
         : siteReady(u.site) ? `Raising the ${u.site.type.name} (${Math.round(u.site.progress * 100)}%)`
         : `Fetching materials for the ${u.site.type.name} site`;
+    } else if (u.job.b.type.produces === 'knowledge') {
+      doing = u.phase === 'work' ? `Studying at the ${u.job.b.type.name} — every hour of reading feeds your research`
+        : `Walking to the ${u.job.b.type.name}`;
     } else {
       const what = u.job.b.type.produces || 'goods';
       doing = u.phase === 'work' ? `Working — gathering ${what}`
@@ -685,7 +824,7 @@ class UI {
         : `Walking out to work for the ${u.job.b.type.name}`;
     }
     return `<h3><span class="dot" style="background:${game.factions[u.faction].color.css}"></span> ${u.type.name}</h3>`
-      + `<div>HP ${Math.max(0, Math.ceil(u.hp))}/${u.type.hp}</div>`
+      + `<div>HP ${Math.max(0, Math.ceil(u.hp))}/${Math.round(u.maxHp)}</div>`
       + `<div class="desc">${doing}</div>`
       + (load ? `<div class="good">Carrying ${load}</div>` : '')
       + (u.job ? `<div class="dim">Employed at your ${u.job.b.type.name}.</div>` : '')
@@ -895,6 +1034,7 @@ class UI {
       const type = BUILDING_TYPES[part.key];
       const x = cx + part.dx, y = cy + part.dy;
       if (!canPlace(game.map, part.key, x, y, 0)) continue;
+      if (buildingBlocker(game.factions[0], part.key)) continue;   // e.g. a Wonder already standing
       if (!nation.canStart(type.cost)) continue;
       startConstruction(game, part.key, x, y, 0);
       placed++;
@@ -912,15 +1052,37 @@ class UI {
     buildToggle.title = 'Hide build menu';
     buildToggle.textContent = '▾';
     bar.appendChild(buildToggle);
+    // Twenty-four buildings do not fit one row on a phone, so the bar is split
+    // into categories: a tab strip, then the current category's buttons. B
+    // cycles the tabs on desktop (the number keys belong to control groups).
+    const tabs = document.createElement('div');
+    tabs.className = 'btabs';
+    BUILD_TABS.forEach((tab, i) => {
+      const b = document.createElement('button');
+      b.className = 'btab' + (i === 0 ? ' on' : '');
+      b.dataset.tab = tab.key;
+      b.innerHTML = `${icon(tab.icon)}<span>${tab.label}</span>`;
+      b.title = `${tab.label} (B cycles)`;
+      b.onclick = () => this.setBuildTab(tab.key);
+      tabs.appendChild(b);
+    });
+    bar.appendChild(tabs);
     for (const key of BUILD_MENU) {
       const t = BUILDING_TYPES[key];
       const btn = document.createElement('button');
       btn.className = 'bbtn';
+      btn.dataset.key = key;
+      btn.dataset.tab = (BUILD_TABS.find(tb => tb.keys.includes(key)) || BUILD_TABS[0]).key;
       btn.innerHTML = `<b>${t.name}</b><span>${costText(t.cost)}</span>`;
       btn.title = t.desc + (t.reqText ? ` (${t.reqText})` : '');
-      btn.onclick = () => { this.placing = key; this.copyBuffer = null; this.clearSelection(); };
+      btn.onclick = () => {
+        const why = buildingBlocker(game.factions[0], key);
+        if (why) return game.log(`${t.name}: ${why}.`, 'bad');
+        this.placing = key; this.copyBuffer = null; this.clearSelection();
+      };
       bar.appendChild(btn);
     }
+    this.setBuildTab(BUILD_TABS[0].key);
     document.getElementById('cancel-place').onclick = () => { this.placing = null; this.copyBuffer = null; };
     document.getElementById('rotate-place').onclick = () => this.rotatePlacing();
     document.getElementById('paste-place').onclick = () => this.pasteBuffer();
@@ -928,12 +1090,22 @@ class UI {
     document.querySelectorAll('#topbar .stat[data-tip]').forEach(el => {
       el.onclick = () => this.toggleTooltip(el.dataset.tip);
     });
+    // the knowledge readout and the Age chip both open the Research screen
+    document.querySelectorAll('#topbar .stat[data-open="research"]').forEach(el => {
+      el.onclick = () => this.toggleResearch();
+    });
     // Menu button opens the pause menu; the pause menu holds the game actions.
     document.getElementById('menu-btn').onclick = () => this.openPause();
     document.getElementById('pause-menu').onclick = e => { if (e.target.id === 'pause-menu') this.closePause(); };
     document.getElementById('resume-btn').onclick = () => this.closePause();
     document.getElementById('pm-diplo').onclick = () => { this.closePause(); this.toggleDiplomacy(); };
     document.getElementById('pm-army').onclick = () => { this.closePause(); this.selectArmy(); };
+    document.getElementById('pm-research').onclick = () => { this.closePause(); this.toggleResearch(); };
+    document.getElementById('research').onclick = e => { if (e.target.id === 'research') this.closeResearch(); };
+    document.getElementById('leader').onclick = e => { if (e.target.id === 'leader') this.closeLeader(); };
+    document.getElementById('ledger').onclick = e => { if (e.target.id === 'ledger') this.closeLedger(); };
+    document.getElementById('pm-ledger').onclick = () => { this.closePause(); this.toggleLedger(game.victoryOn ? 'victory' : 'legacy'); };
+    document.getElementById('pm-chronicle').onclick = () => { this.closePause(); this.toggleLedger('chronicle'); };
     document.getElementById('pm-formations').onclick = () => this.openFormations();
     document.getElementById('formation-panel').onclick = e => { if (e.target.id === 'formation-panel') this.closeFormations(); };
     document.getElementById('form-close').onclick = () => this.closeFormations();
@@ -942,6 +1114,8 @@ class UI {
       this.commitFormations();
     };
     document.getElementById('pm-hide').onclick = () => { this.closePause(); document.body.classList.add('ui-hidden'); };
+    document.getElementById('advisor-val').textContent = advisorStored() ? 'ON' : 'OFF';
+    document.getElementById('pm-advisor').onclick = () => this.toggleAdvisor();
     document.getElementById('pm-devmode').onclick = () => {
       const on = game.toggleDevMode();
       document.getElementById('devmode-val').textContent = on ? 'ON' : 'OFF';
@@ -964,6 +1138,12 @@ class UI {
       btn.onclick = () => btn.closest('.collapsible').classList.toggle('collapsed');
     });
     this.watchLayout();
+  }
+
+  setBuildTab(key) {
+    this.buildTab = key;
+    document.querySelectorAll('#buildbar .btab').forEach(b => b.classList.toggle('on', b.dataset.tab === key));
+    document.querySelectorAll('#buildbar .bbtn').forEach(b => { b.style.display = b.dataset.tab === key ? '' : 'none'; });
   }
 
   // Keeps --topbar-h / --sidebar-w / --buildbar-h in sync with actual rendered sizes so other
@@ -998,7 +1178,14 @@ class UI {
     el('r-happy').innerHTML = hap + '%' + (n.starving ? ' ' + icon('wilted') : hap >= 70 ? ' ' + icon('happy') : hap >= 40 ? ' ' + icon('neutral') : ' ' + icon('angry'));
     el('r-happy').className = hap >= 70 ? 'good' : hap >= 40 ? '' : 'bad';
     el('r-food').className = n.starving ? 'bad' : '';
-    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'}`;
+    // the sky over your own capital, with its climate's say (js/seasons.js)
+    const home = game.factions[0].townhall();
+    const sky = home ? weatherAt(home.cx, home.cy) : weatherNow();
+    el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'} · ${season().name}${sky.key === 'clear' ? '' : ' · ' + sky.name}`;
+    el('r-daynight').parentElement.title = `${season().name} of Year ${yearOf()} — the season turns in ${fmtDuration(secondsToNextSeason())}. Farms ×${season().farm}; winter slows and wears down armies in enemy land.`
+      + `\nWeather: ${sky.name}. ${sky.desc} It changes every half-day.`;
+    this.refreshKnowledgeStat();
+    this.refreshBuildLocks();
   }
 
   refreshPanel() {
@@ -1036,7 +1223,7 @@ class UI {
     if (b) {
       const own = b.faction === 0;
       let html = `<h3><span class="dot" style="background:${game.factions[b.faction].color.css}"></span> ${b.type.name}${own ? '' : ' — ' + game.factions[b.faction].name}</h3>`;
-      html += `<div>HP ${Math.max(0, Math.ceil(b.hp))}/${b.type.hp}${b.done ? '' : ` — building ${Math.round(b.progress * 100)}%`}</div>`;
+      html += `<div>HP ${Math.max(0, Math.ceil(b.hp))}/${Math.round(b.maxHp)}${b.done ? '' : ` — building ${Math.round(b.progress * 100)}%`}</div>`;
       html += `<div class="desc">${b.type.desc}</div>`;
       // A site's materials ledger: what its builders have carried here so far,
       // and what they still owe it. Until it is full nobody starts hammering.
@@ -1050,6 +1237,26 @@ class UI {
             ? `${crew} builder${crew === 1 ? '' : 's'} working`
             : `${crew} builder${crew === 1 ? '' : 's'} hauling materials (15 per trip)`}</div>`;
         }
+      }
+      if (b.done && UPGRADEABLE.includes(b.type.key)) {
+        html += `<div class="lvl">Level <b>${b.level || 1}</b>/${MAX_LEVEL}`
+          + ((b.level || 1) > 1 ? ` <span class="dim">(+${Math.round(((b.level || 1) - 1) * 40)}% output, housing & storage)</span>` : '') + `</div>`;
+        if (b.site && b.site.upgrade) {
+          const rows = Object.entries(b.site.needs).filter(([, v]) => v > 0).map(([r, v]) =>
+            `${icon(r)}${Math.floor(b.site.delivered[r])}/${v}`).join(' ');
+          html += `<div class="${siteReady(b) ? 'good' : 'dim'}">Upgrading to level ${b.site.to}: ${siteReady(b) ? Math.round(b.site.progress * 100) + '%' : 'materials ' + rows}</div>`;
+        } else if (own && (b.level || 1) < MAX_LEVEL) {
+          const why = upgradeBlocker(b);
+          html += `<button id="bupgrade" ${why ? 'class="locked"' : ''} title="${why || 'Builders will carry the materials and raise the new storey; the building keeps working meanwhile.'}">${icon('upgrade')} Upgrade to level ${(b.level || 1) + 1} (${costText(upgradeCost(b))})</button>`;
+          if (why) html += `<div class="dim">${why}</div>`;
+        }
+      }
+      if (b.done && b.type.produces) {
+        const adj = adjacencyBonus(b);
+        if (adj.why) html += `<div class="dim">Neighbours: ${adj.v > 0 ? `<span class="good">+${Math.round(adj.v * 100)}%</span> — ` : ''}${adj.why}</div>`;
+      }
+      if (b.done && b.hp < b.maxHp - 0.5 && own) {
+        html += `<div class="dim">${game.time - (b.lastHurtT || -99) < REPAIR_QUIET ? 'Damaged — builders will repair it once the fighting stops.' : 'Damaged — an idle builder will come to repair it.'}</div>`;
       }
       if (b.type.storage && b.done) {
         const s = b.store;
@@ -1075,6 +1282,13 @@ class UI {
         }
       }
       if (own && b.done && b.type.key === 'market') html += this.marketPanelHTML();
+      if (own && b.done && b.type.produces === 'knowledge') {
+        const rate = workerYieldRate(game.map, b) * b.workers;
+        html += `<div class="good">${icon('book')} ${rate.toFixed(2)} knowledge/s from ${b.workers} scholar${b.workers === 1 ? '' : 's'}</div>`;
+      }
+      if (own && b.done && b.type.dmg) {
+        html += `<div class="dim">Archers: ${b.type.dmg} pierce damage every ${b.type.cooldown}s at up to ${b.type.range} tiles.${b.target ? ' <b class="bad">Engaging!</b>' : ''}</div>`;
+      }
       if (own && b.done && b.type.key === 'castle') {
         const f0 = game.factions[0];
         const tierName = ['', 'Castle', 'Garrison', 'Royal Academy'][f0.castleTier];
@@ -1084,18 +1298,23 @@ class UI {
           if (t.tier > f0.castleTier) {
             return `<button class="tbtn locked" title="Locked — the ${CASTLE_UPGRADES[t.tier].name} upgrade unlocks the ${t.name}.">${icon('lock')} ${t.name}</button>`;
           }
-          return `<button class="tbtn" data-u="${k}" title="${t.desc}\n${costText(t.cost)} · ${t.trainTime}s">${t.name}</button>`;
+          if (t.tech && !hasTech(f0, t.tech)) {
+            return `<button class="tbtn locked" title="Locked — research ${TECHS[t.tech].name} (${ERAS[TECHS[t.tech].era].name}) to train the ${t.name}.">${icon('lock')} ${t.name}</button>`;
+          }
+          return `<button class="tbtn" data-u="${k}" title="${t.desc}\n${costText(t.cost)} · ${Math.round(trainTimeFor(f0, k))}s">${t.name}</button>`;
         }).join('') + `</div>`;
         if (b.upgrading) {
           const up = CASTLE_UPGRADES[b.upgrading.tier];
           html += `<div class="good">${icon('upgrade')} ${up.name} rising… ${Math.round(b.upgrading.t / up.time * 100)}%</div>`;
         } else if (CASTLE_UPGRADES[f0.castleTier + 1]) {
           const up = CASTLE_UPGRADES[f0.castleTier + 1];
-          html += `<button id="castle-up" title="${up.desc}\n${costText(up.cost)} · ${up.time}s">${icon('upgrade')} ${up.name} (${costText(up.cost)})</button>`;
+          const eraLock = up.era && f0.era < up.era;
+          html += `<button id="castle-up" ${eraLock ? 'class="locked"' : ''} title="${up.desc}\n${costText(up.cost)} · ${up.time}s">${icon(eraLock ? 'lock' : 'upgrade')} ${up.name} (${costText(up.cost)})</button>`;
+          if (eraLock) html += `<div class="dim">Requires the ${ERAS[up.era].name} — advance through Research (T).</div>`;
         }
         if (b.trainQueue.length) {
           const q = b.trainQueue[0];
-          html += `<div class="dim">Training ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / UNIT_TYPES[q.unitKey].trainTime * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
+          html += `<div class="dim">Training ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / trainTimeFor(f0, q.unitKey) * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
         }
         html += this.isTouch
           ? `<div class="dim">Double-tap the map to set a rally point.</div>`
@@ -1121,6 +1340,13 @@ class UI {
       if (cp) cp.onclick = () => this.copySelected();
       const dem = document.getElementById('demolish');
       if (dem) dem.onclick = () => this.demolishSelected();
+      const bup = document.getElementById('bupgrade');
+      if (bup) bup.onclick = () => {
+        const err = startUpgrade(b);
+        if (err) game.log(err, 'bad');
+        else { game.log(`Upgrade staked out — your builders will carry the materials to the ${b.type.name}.`, 'good'); this.warnNoBuilders(); }
+        this.refreshPanel();
+      };
       if (own && b.type.slots) {
         const n = game.factions[0].nation;
         const minus = document.getElementById('wminus'), plus = document.getElementById('wplus');
@@ -1199,15 +1425,33 @@ class UI {
       for (const u of us) { if (u.carryTotal() > 0) { hauling++; for (const r of RES_KEYS) carried[r] += u.carry[r]; } }
       if (hauling) html += `<div class="good">Hauling plunder: ${icon('food')}${Math.floor(carried.food)} ${icon('wood')}${Math.floor(carried.wood)} ${icon('stone')}${Math.floor(carried.stone)} ${icon('gold')}${Math.floor(carried.gold)}</div>`;
       if (us.some(u => u.type.robber)) html += `<div class="dim">Bandits: send onto an enemy Storehouse to rob it.</div>`;
+      html += this.armyStatusHTML(us);
       const fighters = us.filter(u => !u.type.envoy);
       if (fighters.length) html += this.targetPriorityHTML(fighters) + this.groupRoleHTML(fighters);
       if (fighters.length > 1) {
         html += `<div style="margin-top:8px"><button id="split-group" title="Peel some of these troops off into a group of their own, so the two halves can take different roles">Split Group</button></div>`;
       }
+      if (fighters.length) {
+        html += `<div class="orders">`
+          + `<button data-ord="attackmove" class="${this.orderMode === 'attackmove' ? 'on' : ''}" title="Fight your way to a spot (F, or Ctrl+right-click)">${icon('sword')} Attack-move</button>`
+          + `<button data-ord="patrol" class="${this.orderMode === 'patrol' ? 'on' : ''}" title="Walk back and forth, fighting anything met (P)">Patrol</button>`
+          + `<button data-ord="hold" title="Stand here; fight only what comes within reach (Z)">${icon('shield')} Hold</button>`
+          + `<button data-ord="stop" title="Drop every order (X)">Stop</button>`
+          + `</div>`;
+      }
       html += this.isTouch
-        ? `<div class="dim">Double-tap: move / attack. Hold + drag: box-select.</div>`
-        : `<div class="dim">Right-click: move / attack. Drag: box-select.</div>`;
+        ? `<div class="dim">Double-tap: move (marches through) / attack. Hold + drag: box-select.</div>`
+        : `<div class="dim">Right-click: move (marches through) · Ctrl+right-click: attack-move · Shift: queue waypoints · Ctrl+1-9: make a group, 1-9: select it.</div>`;
       p.innerHTML = html;
+      p.querySelectorAll('[data-ord]').forEach(b => {
+        b.onclick = () => {
+          const o = b.dataset.ord;
+          if (o === 'stop') this.stopSelected();
+          else if (o === 'hold') this.holdSelected();
+          else this.armOrder(o);
+          this.refreshPanel();
+        };
+      });
       // Wire type-based selection controls
       p.querySelectorAll('.ts-plus').forEach(btn => {
         btn.onclick = () => {
@@ -1268,6 +1512,36 @@ class UI {
       const split = document.getElementById('split-group');
       if (split) split.onclick = () => { this.splitMode = { picked: new Set() }; this.refreshPanel(); };
     }
+  }
+
+  // Rank, experience, morale and orders — for one soldier in detail, for a
+  // group in summary.
+  armyStatusHTML(us) {
+    const soldiers = us.filter(u => !u.type.civilian && !u.type.envoy);
+    if (!soldiers.length) return '';
+    const bar = (frac, col) => `<span class="mbar"><span style="width:${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%;background:${col}"></span></span>`;
+    const orderName = u => u.routing ? '<b class="bad">Routing!</b>'
+      : !u.order ? (u.target ? 'Fighting' : u.path.length ? 'Moving' : 'Idle')
+      : { move: 'Moving (no stopping)', attackmove: 'Attack-moving', hold: 'Holding position', patrol: 'Patrolling' }[u.order.kind];
+    if (soldiers.length === 1) {
+      const u = soldiers[0];
+      const next = RANKS[u.rank + 1];
+      const into = next ? (u.xp - RANKS[u.rank].xp) / (next.xp - RANKS[u.rank].xp) : 1;
+      return `<div class="astat">`
+        + (u.legendName ? `<div class="legend">${icon('star')} ${u.legendName}</div>` : '')
+        + `<div class="row"><span>${'⌃'.repeat(u.rank) || '·'} ${RANKS[u.rank].name}</span>${next ? bar(into, '#c9a64a') : '<span class="dim">max rank</span>'}</div>`
+        + `<div class="row"><span>Morale ${Math.round(u.morale)}</span>${bar(u.morale / 100, u.morale < 30 ? '#c95a4a' : '#6fb04a')}</div>`
+        + `<div class="row"><span>HP ${Math.ceil(u.hp)}/${Math.round(u.maxHp)}</span>${bar(u.hp / u.maxHp, '#5c5')}</div>`
+        + `<div class="dim">${orderName(u)}${u.waypoints.length ? ` · ${u.waypoints.length} waypoint${u.waypoints.length > 1 ? 's' : ''} queued` : ''}</div></div>`;
+    }
+    const avg = soldiers.reduce((a, u) => a + u.morale, 0) / soldiers.length;
+    const ranks = [0, 0, 0, 0];
+    for (const u of soldiers) ranks[u.rank]++;
+    const rankText = ranks.map((n, i) => n && i ? `${n} ${RANKS[i].name}${n > 1 ? 's' : ''}` : '').filter(Boolean).join(', ');
+    const routing = soldiers.filter(u => u.routing).length;
+    return `<div class="astat"><div class="row"><span>Morale ${Math.round(avg)}</span>${bar(avg / 100, avg < 30 ? '#c95a4a' : '#6fb04a')}</div>`
+      + (rankText ? `<div class="dim">${rankText}</div>` : '')
+      + (routing ? `<div class="bad">${routing} routing!</div>` : '') + `</div>`;
   }
 
   // The group's targeting priority. A selection whose members disagree shows a
@@ -1431,13 +1705,15 @@ class UI {
     const stock = r => `<div class="row"><span>In storage</span><b>${Math.floor(n.total(r))} / ${n.capacityFor(r) >= 1e8 ? '∞' : n.capacityFor(r)}</b></div>`;
     const count = k => f.buildings.filter(b => b.done && b.type.key === k).length;
     if (key === 'food') {
-      const inc = estimateIncome(f, 'food'), eat = n.pop * EAT_RATE;
+      const inc = estimateIncome(f, 'food'), eat = n.pop * EAT_RATE, rations = armyUpkeep(f).food;
       return head(icon('food'), 'Food')
         + `<div class="desc">Grown by Farm workers on crop fields — +50% next to water, +25% near a Well. Feeds your people; a surplus lets the nation grow.</div>`
         + stock('food')
         + `<div class="row"><span>From ${count('farm')} farm${count('farm') === 1 ? '' : 's'}</span><b class="good">+${inc.toFixed(1)}/s</b></div>`
         + `<div class="row"><span>Eaten by ${n.pop} citizens</span><b class="bad">−${eat.toFixed(1)}/s</b></div>`
-        + `<div class="row"><span>Net</span><b class="${inc - eat >= 0 ? 'good' : 'bad'}">${inc - eat >= 0 ? '+' : ''}${(inc - eat).toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Army rations</span><b class="bad">−${armyUpkeep(f).food.toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>${season().name} harvest</span><b>×${season().farm}</b></div>`
+        + `<div class="row"><span>Net</span><b class="${inc - eat - rations >= 0 ? 'good' : 'bad'}">${inc - eat - rations >= 0 ? '+' : ''}${(inc - eat - rations).toFixed(1)}/s</b></div>`
         + (n.starving ? `<div class="bad">Your people are STARVING — build farms now!</div>` : '');
     }
     if (key === 'wood') {
@@ -1454,12 +1730,13 @@ class UI {
         + `<div class="row"><span>From ${count('quarry')} quarr${count('quarry') === 1 ? 'y' : 'ies'}</span><b class="good">+${estimateIncome(f, 'stone').toFixed(1)}/s</b></div>`;
     }
     if (key === 'gold') {
-      const taxes = n.pop * n.tax * 0.06;
+      const taxes = n.taxIncome();
       return head(icon('gold'), 'Gold')
         + `<div class="desc">Dug from caves by Gold Mines, collected as taxes, and earned through trade, caravans and plunder.</div>`
         + stock('gold')
         + `<div class="row"><span>From ${count('mine')} mine${count('mine') === 1 ? '' : 's'} + ${count('market')} market${count('market') === 1 ? '' : 's'}</span><b class="good">+${estimateIncome(f, 'gold').toFixed(1)}/s</b></div>`
         + `<div class="row"><span>Taxes (${Math.round(n.tax * 100)}%)</span><b class="good">+${taxes.toFixed(1)}/s</b></div>`
+        + `<div class="row"><span>Army pay</span><b class="bad">−${armyUpkeep(f).gold.toFixed(2)}/s</b></div>`
         + `<div class="dim">Lifetime trade earnings: ${Math.floor(game.tradeGold)} gold.</div>`;
     }
     if (key === 'pop') {
@@ -1484,9 +1761,13 @@ class UI {
         [housed ? 'Housed' : 'Overcrowded', housed ? 8 : -18],
         ['Comforts (church/well/market)', Math.round(Math.min(20, n.auraScore()))],
         ['War weariness', -Math.round(n.warWeariness)],
+        [`Crowding (${n.pop} citizens)`, -Math.round(n.crowding())],
+        ['Technology', Math.round(f.mods.happiness)],
         [`Taxes (${Math.round(n.tax * 100)}%)`, -Math.round(n.tax * TAX_HAPPINESS_COST)],
       ];
       if (f.kingAlive === false) rows.push(['The King is dead', -12]);
+      if (seasonHappiness()) rows.push([season().name, seasonHappiness()]);
+      for (const m of (f.moods || [])) if (m.until > game.time) rows.push([m.label, Math.round(m.value)]);
       return head(icon('heart'), 'Happiness')
         + `<div class="desc">How content your people are. Above 50% the nation can grow; low happiness stalls it.</div>`
         + `<div class="row"><span>Current</span><b>${Math.round(n.happiness)}%</b></div>`
@@ -1541,60 +1822,12 @@ class UI {
     const d = document.getElementById('diplomacy');
     if (d.style.display === 'block') { d.style.display = 'none'; return; }
     d.style.display = 'block';
+    this.dipKey = null;
     this.refreshDiplomacy();
   }
   closeDiplomacy() { document.getElementById('diplomacy').style.display = 'none'; }
 
-  refreshDiplomacy() {
-    const d = document.getElementById('diplomacy');
-    if (d.style.display !== 'block') return;
-    const dip = game.diplomacy;
-    let html = `<h2>Diplomacy <button id="dip-close">✕</button></h2>`;
-    for (let i = 1; i < game.factions.length; i++) {
-      const f = game.factions[i];
-      const rel = Math.round(dip.relation(0, i));
-      const st = dip.status(0, i);
-      const stLabel = { war: icon('sword') + ' AT WAR', neutral: '· Neutral', trade: icon('horse') + ' Trade Pact', alliance: icon('handshake') + ' Alliance' }[st];
-      html += `<div class="nation ${f.eliminated ? 'dead' : ''}">
-        <div class="nhead"><span class="dot" style="background:${f.color.css}"></span> <b>${f.name}</b>
-        <span class="dim">(${f.personality.label})</span> — ${f.eliminated ? icon('skull') + ' fallen' : stLabel}</div>`;
-      if (!f.eliminated) {
-        const pct = (rel + 100) / 2;
-        html += `<div class="relbar"><div class="relfill" style="width:${pct}%;background:${rel >= 0 ? '#6a5' : '#a55'}"></div></div>
-          <div class="dim">Relations: ${rel}</div>
-          <div class="dipbtns">
-            <button data-act="gift" data-f="${i}" title="Send 50 gold. Improves relations.">${icon('gift')} Gift 50g</button>
-            <button data-act="trade" data-f="${i}" title="A Prince envoy carries the offer. Both markets earn gold from caravans.">${icon('horse')} Trade Pact</button>
-            <button data-act="ally" data-f="${i}" title="Requires strong relations. Allies defend each other.">${icon('handshake')} Alliance</button>
-            ${st === 'war'
-              ? `<button data-act="peace" data-f="${i}" title="Pay 100 gold in reparations.">${icon('dove')} Sue for Peace</button>`
-              : `<button data-act="war" data-f="${i}" title="No going back cheaply.">${icon('sword')} Declare War</button>`}
-            ${dip.embargoed(0, i)
-              ? `<button data-act="lift" data-f="${i}" title="Reopen trade with them.">${icon('noentry')} Lift Embargo</button>`
-              : `<button data-act="embargo" data-f="${i}" title="Cut them off from trade. Allies join; worsens their market prices.">${icon('noentry')} Embargo</button>`}
-          </div>`;
-      }
-      html += `</div>`;
-    }
-    html += `<div class="dim" style="margin-top:8px">Trade pacts need a Market on both sides and a Prince envoy to deliver the offer.<br>Allies join wars in each other's defense. Peace is always a path: gift, trade, ally.</div>`;
-    d.innerHTML = html;
-    document.getElementById('dip-close').onclick = () => this.closeDiplomacy();
-    d.querySelectorAll('button[data-act]').forEach(btn => {
-      btn.onclick = () => {
-        const fid = +btn.dataset.f, act = btn.dataset.act;
-        let err = null;
-        if (act === 'gift') err = game.diplomacy.sendGift(0, fid, 50);
-        else if (act === 'trade') err = game.diplomacy.propose(0, fid, 'trade');
-        else if (act === 'ally') err = game.diplomacy.propose(0, fid, 'alliance');
-        else if (act === 'war') game.diplomacy.declareWar(0, fid);
-        else if (act === 'peace') err = game.diplomacy.suePeace(0, fid);
-        else if (act === 'embargo') err = game.diplomacy.declareEmbargo(0, fid);
-        else if (act === 'lift') err = game.diplomacy.liftEmbargo(0, fid);
-        if (err) game.log(err, 'bad');
-        this.refreshDiplomacy();
-      };
-    });
-  }
+  // refreshDiplomacy lives in js/ui-leaders.js with the Audience screen.
 
   // ---------- event cards ----------
   // Shows the head of game.events with its response buttons and a draining
@@ -1607,15 +1840,21 @@ class UI {
     if (this.eventShownKey !== key) {
       this.eventShownKey = key;
       const f = game.factions[ev.from];
-      let html = `<div class="ehead"><span class="dot" style="background:${f.color.css}"></span> <b>${ev.title}</b>` +
-        (game.events.length > 1 ? ` <span class="dim">+${game.events.length - 1} more</span>` : '') + `</div>` +
-        `<div class="ebody">${ev.body}</div><div class="ebtns">`;
-      ev.options.forEach((o, i) => { html += `<button data-opt="${i}" class="${o.cls || ''}">${o.label}</button>`; });
+      const port = ev.portrait && f.leader && !f.leader.player ? portraitFor(f) : null;
+      let html = `<div class="ehead">${port ? `<img class="eport" src="${port}" alt="">` : `<span class="dot" style="background:${f.color.css}"></span>`}`
+        + `<div><b>${ev.title}</b>` + (game.events.length > 1 ? ` <span class="dim">+${game.events.length - 1} more</span>` : '')
+        + (port ? `<div class="dim">${leaderFullName(f)} · ${f.name}</div>` : '') + `</div></div>`
+        + (ev.quote ? `<div class="equote">“${ev.quote}”</div>` : '')
+        + `<div class="ebody">${ev.body}</div><div class="ebtns">`;
+      ev.options.forEach((o, i) => { html += `<button data-opt="${i}" class="${o.cls || ''}"${o.hint ? ` title="${o.hint}"` : ''}>${o.label}</button>`; });
+      if (port) html += `<button data-audience="${f.id}" class="aud" title="Open an audience with this leader">Audience…</button>`;
       html += `</div><div class="etimer"><div class="etfill"></div></div>`;
       el.innerHTML = html;
       el.querySelectorAll('button[data-opt]').forEach(btn => {
-        btn.onclick = () => { resolveEvent(ev, +btn.dataset.opt); this.refreshEventCard(); };
+        btn.onclick = () => { resolveEvent(ev, +btn.dataset.opt); this.refreshEventCard(); this.dipKey = null; this.leaderKey = null; };
       });
+      const aud = el.querySelector('button[data-audience]');
+      if (aud) aud.onclick = () => this.openLeader(+aud.dataset.audience);
     }
     el.style.display = 'block';
     const fill = el.querySelector('.etfill');
@@ -1815,6 +2054,19 @@ class UI {
     const s = TILE * this.cam.zoom;
     ctx.fillStyle = '#2a3038';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    // the living world (js/fx.js): this frame's clock, the season's art, and a
+    // catapult's shudder
+    FX.beginFrame();
+    FX.update();
+    const season = SeasonArt.current();
+    const plain = [Assets.tileset];
+    const sheets = season ? season.sheets : null;
+    this.season = season;
+    climateShadeAt(0, 0);                    // make sure map.climateShade exists
+    const climate = game.map.climateShade;
+    const glints = this.cam.zoom >= 1.5;
+    ctx.save();
+    if (FX.shake > 0) ctx.translate(Math.round((fxRand() - 0.5) * FX.shake * 3), Math.round((fxRand() - 0.5) * FX.shake * 3));
     // East-west the sweep is NOT clamped to the map: it runs past the seam and
     // each tile is wrapped as it is read, so a view straddling the edge of the
     // world draws continuous ground instead of stopping at a wall.
@@ -1830,6 +2082,7 @@ class UI {
         const x = wrapX(xi);
         const i = map.idx(x, y);
         const t = map.terrain[i];
+        this.sheet = sheets ? sheets[climate[i]] : plain[0];     // this tile's season
         // Plateau tops get their own darker turf as the base coat; the rim pieces
         // are transparent past the rock, so those still go over ordinary grass and
         // let the low ground they overlook show through underneath. A top tile
@@ -1860,6 +2113,7 @@ class UI {
             ctx.fillStyle = DEEP_SHADES[Math.min(DEEP_SHADES.length - 1, dp - 2)];
             ctx.fillRect(Math.floor(bx), Math.floor(by), Math.ceil(s), Math.ceil(s));
           }
+          if (glints && !map.bridge[i]) FX.waterGlint(this, x, y);
           // A planned span is drawn ghosted until the builders have finished it —
           // map.bridge (the flag that makes the water walkable) is only stamped
           // on completion, so this is the one thing that shows the work is coming.
@@ -1871,10 +2125,10 @@ class UI {
           // damaged span, one tile from collapse: show it same as any other
           // building — and an unfinished one shows how far along it is instead
           const br = map.bridgeAt[i];
-          if (br && (br.hp < br.type.hp || !br.done)) {
+          if (br && (br.hp < br.maxHp - 0.5 || !br.done)) {
             const [bsx, bsy] = this.worldToScreen(x, y);
             if (!br.done) this.bar(bsx, bsy - 5, s, br.progress, '#7ac');
-            else this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.type.hp), '#5c5');
+            else this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.maxHp), '#5c5');
           }
         } else if (t === T_TREE) {
           // canopy is drawn in the depth pass below so it can overlap neighbours
@@ -1916,12 +2170,15 @@ class UI {
         const x = wrapX(xi);
         const i = map.idx(x, y);
         if (map.terrain[i] !== T_ROCK) continue;
+        this.sheet = sheets ? sheets[climate[i]] : plain[0];
         const rnd = tileNoise(x, y);
         this.spriteAt(AT.ROCKS[map.decor[i] % 5],
           x + 0.5 + (rnd(0) - 0.5) * 0.34, y + 1 + (rnd(1) - 0.5) * 0.3,
           0.95 + rnd(2) * 0.35);
       }
     }
+
+    this.sheet = null;
 
     // flat structures painted onto the ground (crop fields): they are terrain as far as
     // the eye is concerned, so they belong under everything the depth pass sorts
@@ -1932,6 +2189,9 @@ class UI {
         this.drawBuildingGround(b);
       }
     }
+
+    // blood and scorch marks on the ground
+    FX.drawDecals(this);
 
     // territory borders: dashed lines where tile ownership changes hands
     this.drawBorders(x0, y0, x1, y1);
@@ -1954,11 +2214,17 @@ class UI {
       }
     }
 
-    // projectiles
+    // projectiles, then fire, smoke and everything else in the air
     for (const p of game.projectiles) this.drawProjectile(p);
+    const lit = FX.drawFires(this);
+    FX.drawParticles(this);
+    this.drawOrderMarks();
 
-    // day/night tint over the whole scene
+    // day/night tint over the whole scene; firelight and the weather over that
     this.drawDayNightOverlay();
+    FX.drawGlow(this, lit);
+    WeatherFX.draw(this);
+    ctx.restore();
 
     // placement ghost
     if (this.placing) this.drawGhost();
@@ -1975,6 +2241,41 @@ class UI {
     this.minimapT -= 1;
     if (this.minimapT <= 0) { this.minimapT = 20; this.renderMinimap(); }
     this.blitMinimap();
+  }
+
+  // Where an order was just given (a ring that shrinks away), the queued
+  // waypoints of the selected units, and a crosshair while an attack-move or a
+  // patrol is armed.
+  drawOrderMarks() {
+    const ctx = this.ctx, z = this.cam.zoom;
+    const m = this.orderMark;
+    if (m) {
+      const age = (performance.now() - m.t) / 600;
+      if (age >= 1) this.orderMark = null;
+      else {
+        const [sx, sy] = this.worldToScreen(m.x, m.y);
+        ctx.strokeStyle = m.kind === 'attackmove' ? `rgba(255,110,90,${1 - age})` : m.kind === 'patrol' ? `rgba(120,200,255,${1 - age})` : `rgba(140,255,140,${1 - age})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(sx, sy, (8 - age * 5) * z, (4 - age * 2.5) * z, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    const sel = this.selection.units.filter(u => u.alive && u.waypoints && u.waypoints.length);
+    if (sel.length) {
+      ctx.setLineDash([3 * z, 3 * z]);
+      ctx.strokeStyle = 'rgba(140,255,140,0.45)'; ctx.lineWidth = 1;
+      for (const u of sel.slice(0, 20)) {
+        let [px, py] = this.worldToScreen(u.x, u.y);
+        ctx.beginPath(); ctx.moveTo(px, py);
+        for (const [x, y] of u.waypoints) { const [qx, qy] = this.worldToScreen(x + 0.5, y + 0.5); ctx.lineTo(qx, qy); }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    if (this.orderMode && !this.isTouch) {
+      const x = this.mouse.x, y = this.mouse.y;
+      ctx.strokeStyle = this.orderMode === 'attackmove' ? '#ff7a64' : '#78c8ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.moveTo(x - 13, y); ctx.lineTo(x + 13, y); ctx.moveTo(x, y - 13); ctx.lineTo(x, y + 13); ctx.stroke();
+    }
   }
 
   // Subtle dashed frontier lines wherever territory ownership changes between
@@ -2040,7 +2341,7 @@ class UI {
   tile(at, x, y, sheet, scale = 1) {
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(x, y);
-    this.ctx.drawImage(sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s * scale), Math.ceil(s * scale));
+    this.ctx.drawImage(sheet || this.sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE, Math.floor(sx), Math.floor(sy), Math.ceil(s * scale), Math.ceil(s * scale));
   }
 
   // Draw one tileset sprite at an arbitrary world position, `scale` tiles across,
@@ -2049,7 +2350,7 @@ class UI {
     const s = TILE * this.cam.zoom;
     const [sx, sy] = this.worldToScreen(wx, wy);
     const d = Math.ceil(s * scale);
-    this.ctx.drawImage(Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE,
+    this.ctx.drawImage(this.sheet || Assets.tileset, at[0] * TILE, at[1] * TILE, TILE, TILE,
       Math.round(sx - d / 2), Math.round(sy - d), d, d);
   }
 
@@ -2120,6 +2421,8 @@ class UI {
     const ctx = this.ctx;
     const baseAlpha = ctx.globalAlpha;
     if (alpha < 1) ctx.globalAlpha = baseAlpha * alpha;
+    // the wood wears its season (js/fx.js)
+    if (this.season && map.climateShade) this.sheet = this.season.sheets[map.climateShade[map.idx(x, y)]];
     // undergrowth first, then the crown, so the big tree sits in front of its bush
     for (let k = 0; k < extras; k++) {
       const a = rnd(k * 3) * Math.PI * 2;
@@ -2133,6 +2436,7 @@ class UI {
     this.spriteAt(AT.TREES[variant % 3],
       x + 0.5 + (rnd(9) - 0.5) * 0.36, y + 1.12 + (rnd(10) - 0.5) * 0.34,
       TREE_CANOPY * (0.84 + rnd(11) * 0.34));
+    this.sheet = null;
     if (alpha < 1) ctx.globalAlpha = baseAlpha;
   }
 
@@ -2141,21 +2445,42 @@ class UI {
   // the types whose atlas cell was already right. A baked canvas is read at its own
   // size, not assumed to be 16x16: the Town Hall's is 32x32, so a 2x2 building can be
   // 2x2 tiles of actual art rather than one cell blown up.
-  buildingSprite(key, faction, dx, dy, size) {
+  // `snow` (0..1) lays winter on the roof: a cached cap of white along every
+  // upward edge of the sprite (SeasonArt.cap, js/fx.js).
+  buildingSprite(key, faction, dx, dy, size, snow = 0) {
     const baked = Assets.buildingArt[faction][key];
-    if (baked) { this.ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy, size, size); return; }
+    const ctx = this.ctx;
+    const a0 = ctx.globalAlpha;
+    if (baked) {
+      // A taller-than-wide canvas (a Wonder, drawn 2 tiles wide and 3 tall)
+      // stands on its footprint and rises above it.
+      const h = Math.round(size * baked.height / baked.width);
+      ctx.drawImage(baked, 0, 0, baked.width, baked.height, dx, dy - (h - size), size, h);
+      if (snow > 0) {
+        ctx.globalAlpha = a0 * snow;
+        ctx.drawImage(SeasonArt.cap(baked, 0, 0, baked.width, baked.height), dx, dy - (h - size), size, h);
+        ctx.globalAlpha = a0;
+      }
+      return;
+    }
     const type = BUILDING_TYPES[key];
     let art = type.art;
     if (type.pair) art = faction === 0 ? art[1] : art[0];
-    this.ctx.drawImage(Assets.factionTilesets[faction], art[0] * TILE, art[1] * TILE, TILE, TILE,
-      dx, dy, size, size);
+    const sheet = Assets.factionTilesets[faction];
+    ctx.drawImage(sheet, art[0] * TILE, art[1] * TILE, TILE, TILE, dx, dy, size, size);
+    if (snow > 0) {
+      ctx.globalAlpha = a0 * snow;
+      ctx.drawImage(SeasonArt.cap(sheet, art[0] * TILE, art[1] * TILE, TILE, TILE), dx, dy, size, size);
+      ctx.globalAlpha = a0;
+    }
   }
 
   // Ground-level art of a `flat` building — the farm's tilled field. Drawn with the
   // terrain rather than in the depth pass: soil is ground, and painting it later would
   // let a farm scrub out the bottom of a tree canopy standing in front of it.
   drawBuildingGround(b) {
-    const soil = b.done ? Assets.crop : Assets.tilled;
+    const fields = this.season && this.season.fields[climateShadeAt(b.x, b.y)];
+    const soil = fields ? (b.done ? fields.crop : fields.tilled) : b.done ? Assets.crop : Assets.tilled;
     for (const [tx, ty] of b.footprint()) this.drawTileCanvas(soil, tx, ty);
   }
 
@@ -2169,9 +2494,11 @@ class UI {
       this.spriteAt(AT.SIGN, b.x + 0.5, b.y + 1, 1);
     } else {
       ctx.globalAlpha = b.done ? 1 : 0.55;
+      const snow = b.done ? SeasonArt.snowWeight(climateShadeAt(b.x, b.y)) : 0;
       this.buildingSprite(b.type.key, b.faction, Math.floor(px), Math.floor(py),
-        Math.ceil(s * b.type.size));
+        Math.ceil(s * b.type.size), snow);
       ctx.globalAlpha = 1;
+      if (b.done && (b.type.key === 'house' || b.type.key === 'townhall')) FX.chimney(this, b);
       if (b.grand) {
         ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
         ctx.strokeRect(Math.floor(px) + 1, Math.floor(py) + 1, s * b.type.size - 2, s * b.type.size - 2);
@@ -2190,8 +2517,26 @@ class UI {
         this.bar(px, py - 10, s * b.type.size, need > 0 ? got / need : 1, '#d9a441');
       }
       this.bar(px, py - 5, s * b.type.size, b.progress, '#7ac');
-    } else if (b.hp < b.type.hp) {
-      this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.type.hp), '#5c5');
+    } else if (b.site && b.site.upgrade) {
+      // an upgrade under way: amber for materials, gold for the work
+      if (!siteReady(b)) {
+        let need = 0, got = 0;
+        for (const r of RES_KEYS) { need += b.site.needs[r] || 0; got += Math.min(b.site.delivered[r], b.site.needs[r] || 0); }
+        this.bar(px, py - 10, s * b.type.size, need > 0 ? got / need : 1, '#d9a441');
+      }
+      this.bar(px, py - 5, s * b.type.size, b.site.progress, '#e8c96a');
+    } else if (b.hp < b.maxHp - 0.5) {
+      this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.maxHp), '#5c5');
+    }
+    // level pips: small gold studs in the top-right corner
+    if ((b.level || 1) > 1 && b.done) {
+      const pip = Math.max(2, Math.round(s * 0.12));
+      for (let i = 0; i < b.level - 1; i++) {
+        ctx.fillStyle = '#5c4312';
+        ctx.fillRect(Math.floor(px + s * b.type.size - (i + 1) * (pip + 2) - 1), Math.floor(py + 1), pip + 2, pip + 2);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillRect(Math.floor(px + s * b.type.size - (i + 1) * (pip + 2)), Math.floor(py + 2), pip, pip);
+      }
     }
     // selection outline + faction tint corner
     if (this.selection.building === b || this.selection.buildings.includes(b)) {
@@ -2256,20 +2601,27 @@ class UI {
     };
     ctx.globalAlpha = b.done ? 1 : 0.5;
     let node = true;      // this tile is a tower or a gate — a landmark in the run
+    let piece;
     if (b.type.key === 'gate') {
       stubs();
-      this.drawTileCanvas(v > h ? art.gateV : art.gateH, b.x, b.y);
+      piece = v > h ? art.gateV : art.gateH;
     } else if (h === 2 && v === 0) {
-      this.drawTileCanvas(art.wallH, b.x, b.y); node = false;
+      piece = art.wallH; node = false;
     } else if (v === 2 && h === 0) {
-      this.drawTileCanvas(art.wallV, b.x, b.y); node = false;
+      piece = art.wallV; node = false;
     } else {
       stubs();
-      this.drawTileCanvas(art.tower, b.x, b.y);
+      piece = art.tower;
+    }
+    this.drawTileCanvas(piece, b.x, b.y);
+    const snow = b.done ? SeasonArt.snowWeight(climateShadeAt(b.x, b.y)) : 0;
+    if (snow > 0) {
+      ctx.globalAlpha = snow;
+      this.drawTileCanvas(SeasonArt.cap(piece, 0, 0, TILE, TILE), b.x, b.y);
     }
     ctx.globalAlpha = 1;
     if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
-    else if (b.hp < b.type.hp) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
+    else if (b.hp < b.maxHp - 0.5) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.maxHp), '#5c5');
     if (this.selection.building === b || this.selection.buildings.includes(b)) {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
@@ -2287,6 +2639,7 @@ class UI {
 
   drawUnit(u) {
     if (u.type.naval) return this.drawShip(u);
+    if (u.type.baked) return this.drawSiege(u);
     const ctx = this.ctx;
     const z = this.cam.zoom;
     const sheet = Assets.unitSheets[u.faction][u.spriteKey || u.type.spriteKey || u.type.key];
@@ -2331,6 +2684,7 @@ class UI {
     ctx.drawImage(sheet.canvas, frame * UF, anim.row * UF, UF, UF,
       Math.round(px - size / 2), drawY, size, size);
     ctx.restore();
+    if (u.type.mounted && u.anim === 'walk' && !u.dead) FX.hoof(this, u);
     // Overlays stack upward from the top of the figure. They used to hang off the top
     // edge of the 32px frame, which for a foot soldier (whose art starts 15 rows down)
     // parked them the better part of a tile above his head, adrift in the grass.
@@ -2341,7 +2695,7 @@ class UI {
       y -= fh;
       ctx.fillStyle = game.factions[u.faction].color.css;
       ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), fh);
-      if (u.hp < u.type.hp) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.type.hp, '#5c5'); }
+      if (u.hp < u.maxHp - 0.5) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.maxHp, '#5c5'); }
       const badge = (fill, hi) => {
         const w = Math.max(3, Math.round(3 * z));
         y -= gap + w;
@@ -2351,6 +2705,12 @@ class UI {
       if (u.mission && u.mission.kind === 'caravan') badge('#fd5');
       else if (u.mission && u.mission.kind === 'envoy') badge('#fff');
       if (u.carryTotal() > 0) badge('#a6763a', '#ffd24a');   // hauling plunder
+      if (u.rank) this.drawRank(u, px, y - gap);
+      if (u.routing) {                                     // a white rag on a stick
+        const w = Math.max(3, Math.round(3 * z));
+        ctx.fillStyle = '#6b4a2a'; ctx.fillRect(Math.round(px + 4 * z), Math.round(headY - 6 * z), Math.max(1, Math.round(z * 0.6)), Math.round(7 * z));
+        ctx.fillStyle = '#f0f0f0'; ctx.fillRect(Math.round(px + 4 * z), Math.round(headY - 6 * z), w, Math.round(2.2 * z));
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -2381,7 +2741,7 @@ class UI {
     let y = py - gap - Math.max(1, Math.round(1.5 * z));
     ctx.fillStyle = game.factions[u.faction].color.css;
     ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), Math.max(1, Math.round(1.5 * z)));
-    if (u.hp < u.type.hp) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.type.hp, '#5c5'); }
+    if (u.hp < u.maxHp - 0.5) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.maxHp, '#5c5'); }
     const load = u.cargo ? u.cargo.length : 0;
     if (load) {
       y -= gap + Math.max(2, Math.round(2 * z));
@@ -2390,6 +2750,51 @@ class UI {
         ctx.fillStyle = '#ffd24a';
         ctx.fillRect(Math.round(px - (load * (pip + 1)) / 2 + k * (pip + 1)), y, pip, pip);
       }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Veterancy chevrons: one per rank, gold, stacked; a Legend's are bright.
+  drawRank(u, px, y) {
+    const ctx = this.ctx, z = this.cam.zoom;
+    const w = Math.max(3, Math.round(2.5 * z)), h = Math.max(1, Math.round(z * 0.8));
+    for (let i = 0; i < u.rank; i++) {
+      const yy = Math.round(y - i * (h + Math.max(1, Math.round(z * 0.6))));
+      ctx.fillStyle = u.rank >= 3 ? '#fff3b0' : '#ffd24a';
+      ctx.fillRect(Math.round(px - w), yy, w, h);
+      ctx.fillRect(Math.round(px), yy, w, h);
+      ctx.fillStyle = '#5c4312';
+      ctx.fillRect(Math.round(px - w), yy + h, w * 2, Math.max(1, Math.round(z * 0.4)));
+    }
+  }
+
+  // Siege engines are single baked sprites (js/assets.js bakeSiege) that roll
+  // rather than walk: a small bob while moving, a recoil when the arm fires.
+  drawSiege(u) {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const art = Assets.siege[u.faction][u.type.key];
+    const [sx, sy] = this.worldToScreen(u.x, u.y);
+    const d = Math.ceil(TILE * z * (u.type.scale || 1));
+    const bob = u.anim === 'walk' ? Math.round(Math.sin(u.animT * 12) * z * 0.5) : 0;
+    const recoil = u.anim === 'attack' && u.animT < 0.3 ? Math.round((0.3 - u.animT) * 6 * z) : 0;
+    const px = Math.round(sx), py = Math.round(sy - d * 0.8) + bob;
+    if (u.dead) ctx.globalAlpha = Math.max(0, 1 - u.deathT / 3);
+    if (this.selection.units.includes(u)) {
+      ctx.strokeStyle = '#8f8'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(px, sy, d * 0.45, d * 0.18, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.save();
+    if (u.facing < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(art, 0, 0, TILE, TILE, Math.round(px - d / 2) - recoil, py, d, d);
+    ctx.restore();
+    if (!u.dead) {
+      const gap = Math.max(2, Math.round(z));
+      let y = py - gap - Math.max(1, Math.round(1.5 * z));
+      ctx.fillStyle = game.factions[u.faction].color.css;
+      ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), Math.max(1, Math.round(1.5 * z)));
+      if (u.hp < u.maxHp - 0.5) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.maxHp, '#5c5'); }
+      if (this.drawRank) this.drawRank(u, px, y - gap);
     }
     ctx.globalAlpha = 1;
   }
@@ -2411,6 +2816,7 @@ class UI {
   drawProjectile(p) {
     const ctx = this.ctx;
     const z = this.cam.zoom;
+    if (p.kind === 'boulder') return this.drawBoulder(p);
     const [sx, sy] = this.worldToScreen(p.x, p.y - 0.4);
     const P = Assets.projectiles;
     if (p.impactT >= 0) {
@@ -2426,6 +2832,33 @@ class UI {
     ctx.rotate(ang);
     ctx.drawImage(P, frame * TILE, row * TILE, TILE, TILE, -8 * z, -8 * z, TILE * z, TILE * z);
     ctx.restore();
+  }
+
+  // A catapult stone: a lobbed arc with its shadow racing along the ground under
+  // it, and a burst of grit where it lands.
+  drawBoulder(p) {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const [gx, gy] = this.worldToScreen(p.x, p.y);
+    if (p.impactT >= 0) {
+      const t = p.impactT / 0.4;
+      ctx.fillStyle = `rgba(150,130,100,${(1 - t) * 0.7})`;
+      for (let k = 0; k < 6; k++) {
+        const a = k * 1.047 + p.tx;
+        const r = (2 + t * 7) * z;
+        ctx.beginPath(); ctx.arc(gx + Math.cos(a) * r, gy + Math.sin(a) * r * 0.5, (2.5 - t * 1.5) * z, 0, Math.PI * 2); ctx.fill();
+      }
+      return;
+    }
+    const total = Math.max(0.01, wdist(p.sx, p.sy, p.tx, p.ty));
+    const done = Math.min(1, 1 - wdist(p.x, p.y, p.tx, p.ty) / total);
+    const h = Math.sin(done * Math.PI) * Math.min(3, total * 0.35) * TILE * z;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(gx, gy, 2.5 * z, 1.2 * z, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#8d8a84';
+    ctx.beginPath(); ctx.arc(gx, gy - h - 4 * z, 2.2 * z, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c9c6bd';
+    ctx.fillRect(Math.round(gx - z), Math.round(gy - h - 5 * z), Math.max(1, Math.round(z)), Math.max(1, Math.round(z)));
   }
 
   // Tile indices (map.idx) covered by the current placement ghost, or null if
@@ -2509,6 +2942,22 @@ class UI {
     const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
     const ok = canPlace(game.map, key, tx, ty, 0, orient) && nation.canStart(type.cost);
     this.drawGhostTile(key, tx, ty, ok, this.placeVertical);
+    // What the neighbours would add here — a farm by farms, a market among houses
+    const adj = computeAdjacency(game.map, key, tx, ty, 0, null);
+    if (adj.v > 0) {
+      const s = TILE * this.cam.zoom;
+      const [sx, sy] = this.worldToScreen(tx, ty);
+      const label = `+${Math.round(adj.v * 100)}% neighbours`;
+      const ctx = this.ctx;
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      const w = ctx.measureText(label).width + 8;
+      const lx = Math.round(sx + s * type.size / 2 - w / 2), ly = Math.round(sy - 16);
+      ctx.fillStyle = 'rgba(20,16,10,0.82)';
+      ctx.fillRect(lx, ly, w, 14);
+      ctx.fillStyle = '#9be27a';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx + 4, ly + 7.5);
+    }
   }
 
   // Copy/paste preview: locked to the centre of the current view (not the cursor) —
@@ -2595,6 +3044,10 @@ class UI {
     // million array allocations per rebuild, and it dominated the cost of the
     // whole minimap.
     const px = img.data;
+    const season = SeasonArt.current();
+    const snow = season && season.snow.some(v => v > 0) ? season.snow : null;
+    climateShadeAt(0, 0);
+    const shade = map.climateShade;
     const terr = new Float32Array(24);
     for (const k in colors) {
       terr[k * 3] = colors[k][0]; terr[k * 3 + 1] = colors[k][1]; terr[k * 3 + 2] = colors[k][2];
@@ -2621,6 +3074,11 @@ class UI {
       // deeper, so a mesa reads as one mass rather than as a ring of grey.
       if (map.high[i]) { r *= 0.72; g *= 0.78; b *= 0.66; }
       if (map.road[i]) { r = 200; g = 180; b = 120; }
+      // winter lies on the minimap as it does on the ground (js/fx.js)
+      if (snow && t !== T_WATER) {
+        const w = snow[shade[i]] * 0.72;
+        if (w > 0) { r += (236 - r) * w; g += (242 - g) * w; b += (248 - b) * w; }
+      }
       const own = game.territory ? game.territory.owner[i] : -1;
       if (own >= 0) {
         const oc = ownerCols[own], a = 0.28;
@@ -2632,6 +3090,21 @@ class UI {
     mctx.putImageData(img, 0, 0);
   }
 
+  // Recent alerts ping the minimap: a red ring that swells and fades.
+  drawMinimapPings(ctx, w, h) {
+    if (!game.alerts) return;
+    const now = game.time;
+    for (const a of game.alerts) {
+      const age = now - a.t;
+      if (age > 6) continue;
+      const x = a.x / MAP_W * w, y = a.y / MAP_H * h;
+      const r = 3 + (age % 1.5) * 6;
+      ctx.strokeStyle = `rgba(255,80,60,${Math.max(0, 1 - age / 6)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+
   blitMinimap() {
     const mm = this.minictx;
     mm.clearRect(0, 0, this.minimap.width, this.minimap.height);
@@ -2641,6 +3114,7 @@ class UI {
     const kx = this.minimap.width / MAP_W, ky = this.minimap.height / MAP_H;
     mm.strokeStyle = '#fff';
     mm.strokeRect(this.cam.x * kx, this.cam.y * ky, this.canvas.width / s * kx, this.canvas.height / s * ky);
+    this.drawMinimapPings(mm, this.minimap.width, this.minimap.height);
   }
 }
 

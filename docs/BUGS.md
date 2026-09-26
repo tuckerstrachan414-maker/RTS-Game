@@ -20,33 +20,9 @@ player will spend real time. The fix is a chunked offscreen terrain cache: the
 ground layer only changes when a tile does.
 **Plan:** TBD
 
-### 39. AI nations are slow to find each other across an ocean
-`js/naval.js` `aiNavalExplore` — an AI charts the sea with a single galley
-picking unexplored water at random, and `knownTownhall` needs line of sight on
-a building that is usually well inland, so after 50 sim-minutes on a Standard
-World the perception maps are typically still empty of rival capitals. Wars
-across water do get declared (they fall back to the drawn territory borders,
-which are public knowledge — see `aiEnemyAnchor`), but they are declared on
-much thinner information than a land war, and the sea scout never does a
-systematic coastal survey. A proper coast-following patrol, and more than one
-hull, would fix both.
-**Plan:** TBD
-
-### 44. Population runs high on the big worlds
-On a 75-minute unattended Standard World soak nations finish around 100-180
-population with 143-219 units each, against 13-17 on the old 96×96 map over a
-comparable run. Nothing is wrong with the growth rule — a nation grows by a
-fraction of its housing cap, and the big worlds give it four to six thousand
-tiles to fill instead of a shared few hundred — but nothing pushes back on it
-either. (It was far worse, 454-1072 population, before overseas wars could
-actually be fought: the armies that die in them are most of what checks growth
-now. That is a fragile equilibrium to rely on.) Wants a real ceiling: land
-quality, food logistics, unrest, or an upkeep curve that bites.
-**Plan:** TBD
-
 ### 40. Ships have no formation, no group role, and no place in the panels
 `js/naval.js`, `js/ui.js` — `formationMove` and the Formations panel only know
-the nine land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
+the thirteen land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
 move order sails as a loose crowd; `GROUP_ROLES` (defensive garrison, patrol)
 assume land tiles and a post you can stand on; and a Transport's panel shows
 the generic unit card rather than its manifest, so the only way to see who is
@@ -289,6 +265,154 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#58 Hour-long wars slowed the sim twenty-fold: stuck units re-ran A* every
+  tick** — `js/units.js` (the chase in `Unit.tick`, `tickRob`, `tickHaul`),
+  `js/naval.js` `tickBoard`, `js/army.js` `tickRout`. Every one of them
+  re-planned whenever `path.length === 0 || repathT <= 0` — and an empty path
+  is exactly what a failed search returns, so a goal a unit could not reach was
+  searched again on the very next tick: a soldier ordered aboard a transport
+  lying off a shore it could not get to, a bandit sent at a storehouse across the
+  water, a soldier chasing an enemy on a boat. 6,000 A* nodes ten times a second
+  per stuck unit: a five-minute stretch of a 60-minute soak took 54 s of wall
+  time (2 s early in the match), and a CPU profile put 80% of it in `findPath`.
+  Found by timing the sim in five-minute chunks and attributing every A* call
+  to its caller. `Unit.replan` now plans at most once per period even after a
+  failed search (a new goal still plans at once) and counts consecutive
+  failures; a chaser drops a target it has failed to reach four times, a
+  bandit gives up an unreachable storehouse (and its nation does not send it
+  back for two minutes), and a soldier boarding a hull lying off the beach
+  rows the last few tiles out to it or, if it cannot get near, gives the order
+  up. Civilians already had this backoff (#50).
+
+- **#56 A capital fell in a minute, and with it the match** — `js/buildings.js`
+  (Town Hall, Castle). The Town Hall had 900 HP, took full damage from
+  anything, and did not fight back, so on seed 7 an AI army of nineteen razed it
+  sixty seconds after declaring war and the game was over at minute 17. Both
+  keeps are now `keep: true` (non-siege attackers do 35%, like walls) and shoot
+  (`tickTowers`); the Town Hall has 2,000 HP and the Castle 1,200. The same
+  seed now runs 80 minutes of wars with nobody's capital falling to a rush — a
+  capital is taken with catapults, which the AI brings once it has seen one.
+
+- **#57 "a Economic Victory"** — `js/victory.js`. Every victory message built
+  its article by hand; `aVictory(name)` picks "a" or "an".
+
+- **#53 No AI ever launched a ship, so nobody went to war across water** —
+  `js/naval.js` `trainShip`, `js/ai-utility.js` `staffWorkers`. A hull takes a
+  citizen to crew her and `trainShip` refuses with "No free citizens to crew
+  her" unless two are idle; the AI's staffing held back recruits for the army's
+  shortfall and nothing for the navy, so a nation at its army target put every
+  hand to work and its dock never launched anything. With no sea scout, no
+  rival across the sea was ever seen, confidence stayed at zero, and
+  `considerWar` never passed: a 60-minute Standard World soak on Iron Age, with
+  two aggressor nations, had no war at all. `aiNavalCrewWanted` now counts the
+  crews the navy needs and `staffWorkers` holds them back (freeing one from the
+  trades if everyone is busy). The same reserve was also one short for the army:
+  training keeps one citizen back, so a reserve of exactly the shortfall left a
+  shortfall of one unrecruitable; it now holds one more.
+
+- **#39 AI nations never found each other across an ocean** — `js/naval.js`
+  `aiNavalExplore`. The sea scout charted open water at random until every
+  capital was known, but capitals sit inland, so it never saw a town, and it
+  never went back to look again. It is now a standing coastal survey: up to two
+  galleys visit every overseas rival whose picture has gone stale, sailing for
+  the coast nearest their drawn claim (public knowledge) and patrolling along
+  it, and a ship's lookout sees 10 tiles. Together with #53, wars across water
+  now start around the 30-40 minute mark and invasions land.
+
+- **#54 AI line of sight broke at the east-west seam** — `js/ai-perception.js`
+  `visible` measured `x - ox` rather than the short way round, so an observer
+  two tiles east of the seam could not see a soldier two tiles west of it; and
+  soldiers in a ship's hold kept "observing" from wherever they had boarded
+  (and were "seen" there by rivals). Now `wdx`, and anyone `aboard` is skipped
+  on both sides. Same class of bug in `aiWarTick` (`js/ai.js`): a war wave's
+  staging point was computed with a raw `x` difference and a `clamp`, so a war
+  across the seam staged on the far side of the target; it now uses `wdx` and
+  `wrapX`.
+
+- **#55 The AI's army ignored landings and raids on its own land** —
+  `js/ai-combat.js`. The only defensive reflex was to recall an outgoing wave
+  when enemies were near the capital; nothing sent troops to meet an enemy
+  anywhere else, so a landing party razed 59 outlying buildings in one soak
+  while its victim lost five soldiers. `respondToIncursions` now answers the
+  biggest visible knot of hostile soldiers on the nation's claim with the
+  nearest uncommitted soldiers, about 1.5x as strong, attack-moving.
+
+- **#52 An announcement banner could show long after its news** —
+  `js/ui-research.js` `announce`/`nextAnnounce`. The Age, season, Wonder and
+  victory banners queue and play one at a time on wall-clock timers (~5 s each),
+  while the sim they describe can run at 3x. A burst of news backed the queue
+  up, so a "Winter falls" banner could still be fading in during the spring
+  that followed (caught in a screenshot). Each banner is now stamped with the
+  game time it was raised, and one that has waited more than 40 game-seconds
+  behind newer ones (90 s if it is the last) is dropped unshown.
+
+- **#51 Trade caravans never paid anybody** — `js/diplomacy.js` `tickRoutes` /
+  `tickMission`. Both set the caravan's `mission` and then called `orderMove`,
+  which clears `mission` — so every caravan lost its mission the instant it was
+  given, walked to the far Market once, and stood there for the rest of the
+  match. Trade pacts, the whole caravan economy the game describes, earned
+  exactly nothing; "lifetime trade earnings" only ever counted Market sales.
+  Found by forcing a pact in a harness and finding both caravans mission-less
+  three minutes later with zero paid. The order now goes first and the mission
+  after (`Diplomacy.sendCaravan`), and a turnaround goes through the same path.
+
+- **#44 Population ran away on the big worlds** — `js/economy.js`
+  `growForNewDay`, `crowding`. Growth was 30% of the housing cap per dawn and the
+  AI raises its cap as fast as it grows, so nothing pushed back: 100-180 a
+  nation on a Standard World soak, and 800 once research made nations richer.
+  Two brakes now: a day's births are capped at a quarter of the current
+  population (min 5), and **crowding** costs 0.3 happiness per citizen past 30,
+  so growth past the growth gate needs churches, wells, markets and the civic
+  techs. The same 60-minute Small World soak now ends at 14-113 per nation.
+
+- **#50 A walled-in worker re-ran A* every tick, and AI towers walled workers
+  in** — `js/civilians.js` `walkTo`, `js/factions.js` `findBuildSpot`. Two
+  halves. `walkTo` treated an empty path as "search now", so a civilian whose
+  destination was unreachable searched on every tick until `stuck` hit 3, then
+  gave up, picked the same destination, and started again: in a 25-minute
+  ruthless soak, civilian pathfinding was 65 of the 74 seconds of sim time. It
+  now waits 1.5s after a failed search. The reason destinations were
+  unreachable was the other half: solid buildings (the new Watchtower among
+  them) dropped at random around a Town Hall could close the gaps between the
+  keep, the castle and the walls. AI placement now runs `solidPlacementSafe`,
+  a bounded flood fill that refuses a solid footprint which would disconnect
+  the walkable tiles around it.
+
+- **#49 Every envoy proposal threw, the player's included** —
+  `js/diplomacy.js` `Diplomacy.propose` set the envoy's mission and then called
+  `orderMove`, which clears `mission`, so `envoy.mission.dest = th` dereferenced
+  null. A player clicking Trade Pact with a Prince at hand got a console error
+  and an envoy wandering to a Town Hall with no proposal to deliver; an AI
+  merchant's trade tick crashed the whole sim tick. It stayed hidden because
+  an AI only reaches it once it has a Market, an idle Prince and a rival Market
+  it has actually seen — rare before AIs lived long enough to meet each other.
+  The route is now set first and the mission after it.
+
+- **#48 An AI invasion crashed if its shipyard was razed mid-campaign** —
+  `js/naval.js` `aiRunInvasionStage` read `docks[0].trainQueue` in the fleet
+  stage without checking a dock still stood. It now drops back to the building
+  stage and raises a new one.
+
+- **#46 A merchant nation stopped investing for good once its Grand Castle
+  stood** — `js/ai-utility.js` `scoreGrandCastle`. The candidate scored 100
+  whenever the nation cleared the population/happiness/cost gate, with no check
+  that it already had a Grand Castle, and its `run` returned `true` whether or
+  not `aiPursueGrand` did anything. So after the monument was finished (or
+  started) it won the investment arbitration every tick, reported success, and
+  crowded out every building, upgrade and Age from then on. Found when every
+  nation in a soak sat in the Feudal Age with all sixteen techs and the bill
+  for the next Age in its vaults. Now it returns null once a castle is grand or
+  rising, and `run` returns whether it actually started one.
+
+- **#47 Merchants never turned a settled border into a trade pact** —
+  `js/territory.js` `resolveAIDispute` looked for a `'prosperity'` doctrine,
+  which does not exist (the archetype is `'merchant'`), so only hegemons ever
+  did it. Now checks `'merchant'`.
+
+- **#45 The page asked for a favicon that did not exist** — `index.html`. Every
+  load logged a 404 for `/favicon.ico`, which made a headless run's console
+  unreadable for real resource failures. It now carries an inline SVG crown.
 
 - **#43 AI invasions could never sail — overseas wars ended two minutes after
   they were declared** — `js/ai.js` `aiDiplomacy`, `js/naval.js`

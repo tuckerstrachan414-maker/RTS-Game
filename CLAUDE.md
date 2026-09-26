@@ -46,13 +46,43 @@ the code; stale docs are treated as bugs.
 - `js/economy.js` — Nation sim; `res` is a Proxy over per-building `store`s
 - `js/market.js` — supply/demand pricing, buy/sell/barter, embargo penalties
 - `js/units.js` — unit defs, combat, projectiles, rob/haul, formations, separation
+- `js/army.js` — veterancy (`gainXp`/`promote`), morale and routs
+  (`hitMorale`/`tickRout`/`tickArmy`), healing, attrition hook, upkeep
+  (`armyUpkeep`/`payUpkeep`), player alerts (`alertPlayer`)
+- `js/seasons.js` — the seasons (a pure function of `game.dayCount`): farm
+  multiplier, happiness, winter march and attrition, AI winter granary; the
+  climate map (`climateAt`/`climateShadeAt`) and the weather (`weatherNow`/
+  `weatherAt` and its modifiers)
+- `js/fx.js` — the living world, render-only: seasonal atlas looks
+  (`SeasonArt`), weather drawing (`WeatherFX`), particles, decals, fire, smoke,
+  and the `fx*` hooks the sim calls
 - `js/civilians.js` — the citizenry: population embodiment, job assignment,
   gathering trips, builders and construction sites, per-job sprite
   (`civSpriteFor`)
+- `js/tech.js` — knowledge, the 30-tech tree, the Ages, `f.mods` (every tech
+  effect lands in that one table), `unitMaxHp`/`buildingMaxHp`, the AI's research
+- `js/icons.js` — extra `.icon-*` classes drawn from pixel grids at load
 - `js/factions.js` — Faction state, training, the AI executor (`aiTick`)
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
 - `js/events.js` — event-card queue (AI-initiated player choices, expiry)
-- `js/territory.js` — per-tile influence/ownership, contested borders, disputes
+- `js/territory.js` — per-tile influence/ownership, contested borders, disputes,
+  concessions (a settled dispute hands the contested tiles to one side)
+- `js/leaders.js` — leaders (names, traits, agendas, pixel portraits, voice),
+  the directional opinion ledger (`remember`/`opinionMods`), promises, leader
+  initiative (questions/requests/offers to the player), friendship,
+  denouncement, research pacts, deals, vassals, nation moods
+- `js/ui-leaders.js` — the Courts list and the Audience screen
+- `js/wonders.js` — the seven world Wonders (building types, race, effects via
+  `applyWonderMods`, capture/loss, AI, `bakeWonders` art)
+- `js/upgrades.js` — building levels (`startUpgrade`/`upgradeBlocker`/
+  `advanceUpgrade`), builder repair (`findRepair`/`builderRepair`), adjacency
+  bonuses (`computeAdjacency`/`adjacencyBonus`), the AI's upgrade choice
+- `js/victory.js` — victory races (`victoryProgress`/`victoryMet`/`tickVictory`),
+  the AI's race (`aiVictoryFocus`/`aiVictoryPush`/`aiVictoryThreat`), legacy,
+  milestones, stats sampling, `chronicle()`
+- `js/ui-victory.js` — the Ledger (V/J), the legacy chart, the end screen
+- `js/ui-advisor.js` — the Royal Steward: contextual counsel in the log
+  (`ADVICE`, `tickAdvisor`), toggled from the pause menu
 - `js/ai.js` — ambitions (`f.ai`), re-evaluation, proactive diplomacy, war
   waves, expansion, bridge/wall engineering, coalitions
 - `js/ai-perception.js` — `AIPerception` + `ScoutMemoryMap`: everything an AI
@@ -62,6 +92,8 @@ the code; stale docs are treated as bugs.
 - `js/ai-trade.js` — `AITradeManager`, `evaluateWarVersusTrade`
 - `js/ai-combat.js` — `AICombatManager`: scouting, army, defence, war gating
 - `js/ui.js` — rendering, input (mouse + touch), HUD, panels, minimap, event card
+- `js/ui-research.js` — the Research screen, the Age banner (`UI.announce`),
+  the knowledge readout and build-bar locks (mixed into `UI.prototype`)
 - `js/main.js` — Game class, fixed-timestep loop (SIM_DT 0.1), victory, loot
   piles, `DIFFICULTIES` + pre-game difficulty/world overlay
 
@@ -110,9 +142,22 @@ the code; stale docs are treated as bugs.
   `syncCivilians` keeps that true both ways. Anything that changes `pop` (dawn
   growth, starvation, `trainUnit`) is fine; anything that kills a civilian must
   go through `onUnitDeath` so the population actually drops.
+- **An upgrade reuses `b.site`** on a finished building, with
+  `b.site.upgrade === true`. So `b.site` no longer implies `!b.done`: anything
+  that treats "has a site" as "under construction" has to check `b.done` (or
+  `b.site.upgrade`) too. Builders, the site spill on destruction, demolish
+  refunds and the panel all already do.
 - `building.workers` is still the only thing that decides who works where —
   set it and `reconcileJobs` moves the bodies. Don't assign civilians directly.
 - `trainUnit` / `startCastleUpgrade` return error *strings*, not exceptions.
+- **`Unit.orderMove` clears `mission`.** Give the order FIRST and set the
+  mission after it. Doing it the other way round silently broke envoys (BUGS
+  #49) and every trade caravan the game ever spawned (BUGS #51).
+- The match ends through `game.endGame(kind, title, text)` (victory, a rival's
+  victory, or the Town Hall) — never set `game.over` directly. `chronicle()`
+  anything a player would want in the history of the match.
+- Anything that can end a war goes through `Diplomacy.setStatus`, which sets
+  the truce; the AI must check `inTruce` before declaring war.
 - Bridges live in `map.bridge`, not `map.buildingAt` — they're terrain, not
   targetable buildings.
 - Plateau tops are ordinary terrain with `map.high[i] === 1`; the wall around
@@ -154,12 +199,58 @@ the code; stale docs are treated as bugs.
   the pixel scan in `docs/formations-tiers-ui.md` — six separate holes shipped
   past visual review here (BUGS #31), and the scan is the only thing that caught
   them all.
+- **`js/fx.js` is render-only and must stay that way.** Its hooks (`fxHit`,
+  `fxHitBuilding`, `fxRaze`, `fxImpact`, `fxCharge`) are called from sim code
+  but may only read what they are handed and add particles; its randomness is
+  `fxRand`, never `game.rng`. The weather is the opposite: it is sim state
+  (`js/seasons.js`), rolled off `game.seed` with its own `mulberry32` rather
+  than `game.rng` so adding a roll never shifts the AI's stream.
+- The terrain pass draws through `ui.sheet` (the season's atlas for the tile's
+  climate shade); `tile()`/`spriteAt()` default to it, so anything drawn from
+  the plain atlas outside the terrain, rock and tree passes must leave
+  `ui.sheet` null — the passes reset it themselves.
+- **Plan unit routes with `Unit.replan(tx, ty)`, not `if (path.length === 0 ||
+  repathT <= 0) path = pathTo(...)`.** An empty path is also what a failed
+  search returns, so that pattern re-runs a 6,000-node A* every tick for any
+  goal the unit cannot reach — it made hour-long wars twenty times slower
+  (BUGS #58). `replan` rate-limits failed plans and counts them in
+  `u.planFails` so the caller can give up. Civilians use `walkTo`, which has
+  its own backoff.
+- The Town Hall and Castle are `keep: true` (siege-resistant like walls, and
+  they shoot through `tickTowers`), but they are not `fortification` — the
+  wall techs and the Great Wall must not scale a capital.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
+  Player move orders go through `UI.commandMove`, which sets `u.order` after
+  the formation; AI units have `order === null` and behave as before.
+- A soldier's max HP includes its rank (`unitMaxHp`); promote through
+  `promote()` so HP is rescaled. Morale changes go through `hitMorale` (it
+  starts the rout).
+- **Technology effects live in `f.mods` and nowhere else.** Never read a tech
+  list to decide a number — add the effect to the tech's `effects` in `TECHS`,
+  make `recomputeMods` carry it, and read `f.mods` where the number is used.
+  Max HP is `u.maxHp` / `b.maxHp` (from `unitMaxHp`/`buildingMaxHp`); never read
+  `type.hp` as a maximum. Tax income is `nation.taxIncome()`.
+- A building type can carry `requires: { tech, era }`; anything that places
+  buildings (player UI, paste, AI wishes) must check `buildingBlocker(f, key)`.
+- Rivals' `era` is public; their `techs` are not — the AI must never read
+  `o.techs`.
+- **`diplomacy.relation(a, b)` is directional**: the symmetric mood `rel[a][b]`
+  plus a's leader's ledger about b (`opinionMods`, cached every 2s by
+  `tickLeaders`). To make a leader feel something, `remember(a, b, key, label,
+  value, halfLife)` — don't nudge `rel` for anything a player should be able to
+  see the reason for on the Audience screen.
+- Dialogue (`leaderLine`) must never draw on `game.rng` — it runs from UI
+  refreshes. It hashes its choice instead.
+- A leader's live opinion reasons may read public facts and its own
+  perception only — the same information rule as the rest of the AI.
 - New HUD elements need the `.hud` class to be hidden by Hide UI, and an
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.
 - The Game is NOT constructed until a difficulty is chosen — headless scripts
   must pass `?difficulty=ramped|slanted|ruthless` in the URL or `game` stays
-  null behind the `#difficulty` overlay.
+  null behind the `#difficulty` overlay. `&victory=0` and `&pace=quick|epic`
+  set the match options the same way. A headless soak that leaves the player
+  idle loses quickly on most settings; the harnesses in
+  docs/formations-tiers-ui.md run the player's nation on the AI brain.
 - All AI *initiative* (wars, pacts, gifts, embargoes, peace) lives in
   `js/ai.js` and the `js/ai-*.js` managers; `Diplomacy.tick` is ambient
   relations drift only. Don't add AI decision-making back into diplomacy.js.

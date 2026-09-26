@@ -15,13 +15,14 @@
 // Which ambition a freshly rolled personality leans toward. Because the
 // personality itself is drawn per match (js/factions.js rollPersonalities), the
 // opening line-up of ambitions differs from game to game.
-function seedDoctrine(p) {
+function seedDoctrine(p, traits = []) {
+  const t = k => (traits.includes(k) ? 0.6 : 0);
   const score = {
-    aggressor: p.aggression * 2 + p.greed * 0.4 - p.caution,
-    merchant: p.mercantile * 2 + p.greed * 0.3 - p.aggression,
-    turtle: p.caution * 2 - p.aggression * 0.8,
-    raider: p.greed * 1.8 + p.aggression * 0.8 - p.loyalty,
-    hegemon: p.loyalty * 1.8 + p.mercantile * 0.6 - p.aggression * 0.5,
+    aggressor: p.aggression * 2 + p.greed * 0.4 - p.caution + t('warmonger') + t('zealot') * 0.5,
+    merchant: p.mercantile * 2 + p.greed * 0.3 - p.aggression + t('merchant'),
+    turtle: p.caution * 2 - p.aggression * 0.8 + t('paranoid'),
+    raider: p.greed * 1.8 + p.aggression * 0.8 - p.loyalty + t('covetous'),
+    hegemon: p.loyalty * 1.8 + p.mercantile * 0.6 - p.aggression * 0.5 + t('honorable') * 0.5,
   };
   let best = 'turtle';
   for (const k in score) if (score[k] > score[best]) best = k;
@@ -30,7 +31,7 @@ function seedDoctrine(p) {
 
 function initFactionAI(f) {
   f.ai = {
-    doctrine: seedDoctrine(f.personality),
+    doctrine: seedDoctrine(f.personality, f.leader ? f.leader.traits : []),
     doctrineSince: game.time,   // seeded ambitions get the full hysteresis window
 
     reevalAt: game.time + 15 + game.rng() * 10,
@@ -95,7 +96,7 @@ function reevaluateDoctrine(f, silent = false) {
   // aggression — but a nation should not reorganise its whole ambition around
   // a neighbour it has never laid eyes on, or every nation turtles forever.
   const avgConf = rivals.reduce((s, o) => s + per.confidence(o.id), 0) / rivals.length;
-  const goldNorm = clamp((estimateIncome(f, 'gold') + f.nation.pop * f.nation.tax * 0.06) / 0.6, 0, 1);
+  const goldNorm = clamp((estimateIncome(f, 'gold') + f.nation.taxIncome()) / 0.6, 0, 1);
   const atPeace = !game.diplomacy.atWarAny(f.id);
   const allyCount = game.factions.filter(o => o.id !== f.id && !o.eliminated
     && game.diplomacy.status(f.id, o.id) === STATUS.ALLIANCE).length;
@@ -108,6 +109,10 @@ function reevaluateDoctrine(f, silent = false) {
   const starvedOfLand = shortage && !shortage.local ? clamp(shortage.utility / 3, 0, 1) : 0;
 
   const snow = aiSnowballLeader(f);
+  // the leader's character anchors the ambition: a warmonger does not become a
+  // shopkeeper just because the coffers are full (js/leaders.js)
+  const T = f.leader ? f.leader.traits : [];
+  const trait = k => (T.includes(k) ? 1 : 0);
   const score = {
     aggressor: p.aggression * 2 + clamp(myStr / Math.max(1, avgStr) - 1, -1, 1.5)
       + maxGrudge * 0.02 + (game.diff.warAppetite - 1) + starvedOfLand * 0.8,
@@ -119,6 +124,16 @@ function reevaluateDoctrine(f, silent = false) {
       + (snow >= 0 && snow !== f.id ? 1.2 : 0),   // a runaway power calls for coalitions
     raider: p.aggression + p.greed + (goldNorm < 0.3 ? 1 : 0) + richLootNorm,
   };
+  score.aggressor += trait('warmonger') * 0.9 + trait('zealot') * 0.6;
+  score.merchant += trait('merchant') * 0.9 + trait('covetous') * 0.2;
+  score.turtle += trait('paranoid') * 0.9;
+  score.raider += trait('covetous') * 0.7 + trait('schemer') * 0.4;
+  score.hegemon += trait('honorable') * 0.5 + trait('scholar') * 0.5;
+  // a rival about to win (js/victory.js) is everyone's problem
+  if (typeof aiVictoryThreat === 'function') {
+    const vt = aiVictoryThreat(f);
+    if (vt) { score.aggressor += vt.level * 1.2; score.hegemon += vt.level * 0.8; }
+  }
   let best = ai.doctrine;
   for (const k in score) if (score[k] > score[best]) best = k;
   if (best === ai.doctrine) return;
@@ -170,14 +185,20 @@ function aiBuildWishesScored(f, counts) {
     // nation plans ever gets raised. A second yard once the town is big enough
     // keeps a long build queue from crawling.
     builderhouse: 1 + Math.floor(pop / 25),
-    church: 1,
-    well: 1,
+    // contentment has to keep pace with size (Nation.crowding)
+    church: 1 + Math.floor(pop / 45),
+    well: 1 + Math.floor(pop / 35),
     castle: 1 + (prof.secondCastlePop && pop >= prof.secondCastlePop ? 1 : 0),
+    ...aiDesiredScholarBuildings(f),
+    // towers guard the heart of a walled nation, and anyone who has been hurt
+    watchtower: (prof.wallRing ? 2 + Math.floor(pop / 20) : 0)
+      + (game.time - f.ai.hurtT < 240 ? 2 : game.diplomacy.atWarAny(f.id) ? 1 : 0),
   };
   const scored = [];
   for (const k in desired) {
     const deficit = desired[k] - have(k);
     if (deficit <= 0) continue;
+    if (buildingBlocker(f, k)) continue;              // not researched / wrong Age
     let s = deficit * (prof.buildWeights[k] || 1);
     // bootstrap: stand up the essential production chain before anything fancy
     if ((k === 'farm' || k === 'lumber') && have(k) === 0) s += 10;
@@ -207,10 +228,12 @@ function aiBuildWishesScored(f, counts) {
 function aiPursueGrand(f) {
   const n = f.nation;
   const c = f.buildings.find(b => b.type.key === 'castle' && b.done && b.hp > 0 && !b.grand && b.grandProgress === 0);
-  if (!c || n.pop < 50 || n.happiness < 70 || !n.canAfford(GRAND_CASTLE_COST)) return;
+  if (!c || n.pop < 50 || n.happiness < 70 || !n.canAfford(GRAND_CASTLE_COST)) return false;
   n.pay(GRAND_CASTLE_COST);
   c.grandProgress = 0.01;
   game.log(`${f.name} has begun raising a GRAND CASTLE — a monument to eclipse every other nation!`, 'bad');
+  chronicle(`${f.name} began a Grand Castle.`, f.id, 'minor');
+  return true;
 }
 
 // ---------- per-tick strategy ----------
@@ -242,6 +265,8 @@ function aiStrategy(f) {
 // gifts, embargoes, declared wars and sued peace — with the player and with
 // each other. (Diplomacy.tick keeps only ambient relations drift.)
 
+const AI_WAR_COMMITMENT = 150;   // seconds a war is fought before suing for peace
+
 function aiDiplomacy(f) {
   const ai = f.ai, prof = aiArchetype(f), dip = game.diplomacy, n = f.nation;
   const rivals = game.factions.filter(o => o.id !== f.id && !o.eliminated);
@@ -263,9 +288,21 @@ function aiDiplomacy(f) {
     const dur = game.time - dip.warSince[f.id][o.id];
     const durLimit = prof.plunderGoal ? 90 : 240;   // raid wars are short by design
     const theirStr = f.brain.perception.estimatedStrength(o.id).value;
+    // A war to stop a nation on the brink of victory is not given up lightly.
+    // The leader is nearly always the stronger side, so "weary and losing"
+    // fired within a minute and every such war was bought off before a single
+    // Library burned. It holds until the war has truly broken us (weariness
+    // near its cap and outmatched two to one) or the threat has passed.
+    const nearWin = game.victoryOn && VICTORY_KEYS.some(t => publicVictoryProgress(f, o, t) >= 0.75);
+    if (nearWin && !(n.warWeariness >= 24 && f.strength() < theirStr * 0.5)) continue;
     const losing = f.strength() < theirStr * 0.8;
     const winning = f.strength() > theirStr * 1.5;
-    if (n.warWeariness > prof.peaceWeariness && (losing || dur > durLimit)
+    // A court that declares a war sees it through its first campaign season:
+    // weariness passes the peace threshold within a minute of any war, so
+    // without this a nation bought peace a minute after declaring and wars
+    // flickered on and off. Only a rout (outmatched two to one) cuts it short.
+    const committed = dur < AI_WAR_COMMITMENT && f.strength() >= theirStr * 0.5;
+    if (!committed && n.warWeariness > prof.peaceWeariness && (losing || dur > durLimit)
         && (!winning || prof.plunderGoal)) {        // raiders quit while ahead; conquerors don't
       if (o.isPlayer) aiOfferPeaceToPlayer(f);
       else if (n.res.gold >= 100) dip.suePeace(f.id, o.id);
@@ -275,6 +312,7 @@ function aiDiplomacy(f) {
       dip.rel[f.id][o.id] = Math.max(dip.rel[f.id][o.id], -30);
       dip.rel[o.id][f.id] = Math.max(dip.rel[o.id][f.id], -30);
       game.log(`The war between ${f.name} and ${o.name} gutters out — an exhausted peace.`, o.isPlayer ? 'good' : '');
+      chronicle(`The war between ${f.name} and ${o.name} guttered out in an exhausted peace.`, f.id, 'major');
     }
   }
 
@@ -308,6 +346,13 @@ function aiDiplomacy(f) {
         && (dip.relation(f.id, o.id) < -35 || o.id === snow));
       if (target) dip.declareEmbargo(f.id, target.id);
     }
+    // a trading empire about to win is strangled with embargoes by anyone who
+    // is not bound to it — the peaceful answer to an Economic victory
+    const vt = aiVictoryThreat(f);
+    if (vt && vt.type === 'economic' && vt.level >= 0.7 && !dip.embargoed(f.id, vt.fid)
+        && dip.status(f.id, vt.fid) !== STATUS.ALLIANCE && game.court.overlord[f.id] !== vt.fid) {
+      dip.declareEmbargo(f.id, vt.fid);
+    }
   }
 
   // 3. rally the player against a runaway power we're already fighting
@@ -320,6 +365,10 @@ function aiDiplomacy(f) {
 
   // 4. new wars — gated on a sustained, observed advantage (js/ai-combat.js)
   f.brain.combat.considerWar(rivals);
+
+  // 5. the leader's own initiative: questions, requests and offers to the
+  //    player, friendships and denouncements between courts (js/leaders.js)
+  leaderInitiative(f);
 }
 
 // The strongest nation becomes a "snowball leader" once it towers over the
@@ -349,13 +398,15 @@ function aiSnowballLeader(observer = null) {
 function aiInviteCoalition(f, leaderFid) {
   const leader = game.factions[leaderFid];
   const pushed = pushPlayerEvent({
-    kind: 'coalition', from: f.id,
-    title: `${f.name} calls for a coalition`,
+    kind: 'coalition', from: f.id, portrait: true,
+    quote: leaderLine(f, 'coalition', { them: 0, x: leaderFid }),
+    title: `${leaderShort(f)} of ${f.name} calls for a coalition`,
     body: `${leader.name} towers over the continent, and ${f.name} bleeds holding them back. They beg you to join the war before ${leader.name} swallows everyone — you included.`,
     options: [
       { label: `Join the war on ${leader.name}`, cls: 'bad', apply: () => {
           game.diplomacy.declareWar(0, leaderFid);
           game.diplomacy.addRel(0, f.id, 15);
+          remember(f.id, 0, 'fought_beside', 'Joined our coalition', 25, 2400);
         } },
       { label: 'Send 50 gold in aid', cls: '', apply: () => {
           const n = game.factions[0].nation;
@@ -387,8 +438,9 @@ function aiSendUltimatum(f) {
   const ai = f.ai;
   const tribute = 80;
   const pushed = pushPlayerEvent({
-    kind: 'ultimatum', from: f.id,
-    title: `Ultimatum from ${f.name}`,
+    kind: 'ultimatum', from: f.id, portrait: true,
+    title: `Ultimatum from ${leaderShort(f)} of ${f.name}`,
+    quote: leaderLine(f, 'ultimatum', { them: 0, n: tribute }),
     body: `${f.name} masses its army and demands ${tribute} gold in tribute — or face war.`,
     options: [
       { label: `Pay ${tribute} gold`, cls: '', apply: () => {
@@ -400,6 +452,7 @@ function aiSendUltimatum(f) {
           pn.res.gold -= tribute;
           f.nation.res.gold += tribute;
           game.diplomacy.addRel(f.id, 0, 8);
+          remember(f.id, 0, 'paid_tribute', 'Paid us tribute', 8, 900);
           ai.consolidationUntil = Math.max(ai.consolidationUntil, game.time + 180);
           game.log(`Tribute paid. ${f.name}'s army stands down — for now.`);
         } },
@@ -425,6 +478,7 @@ function aiSendUltimatum(f) {
 
 function aiUltimatumRefused(f) {
   f.ai.warAt = game.time + 60;
+  remember(f.id, 0, 'rebuff_ultimatum', 'Refused our ultimatum', -12, 1200);
   game.log(`${f.name} begins final preparations for war…`, 'bad');
 }
 
@@ -432,8 +486,9 @@ function aiOfferPeaceToPlayer(f) {
   if (game.time < (f.ai.peaceOfferAt || 0)) return;   // don't beg every card cycle
   f.ai.peaceOfferAt = game.time + 120;
   const pushed = pushPlayerEvent({
-    kind: 'peace', from: f.id,
-    title: `Peace offer from ${f.name}`,
+    kind: 'peace', from: f.id, portrait: true,
+    quote: leaderLine(f, 'peace_offer', { them: 0, n: 100 }),
+    title: `Peace offer from ${leaderShort(f)} of ${f.name}`,
     body: `${f.name} is weary of war and offers peace, with 100 gold in reparations.`,
     options: [
       { label: 'Accept peace', cls: 'good', apply: () => {
@@ -446,8 +501,11 @@ function aiOfferPeaceToPlayer(f) {
           dip.rel[0][f.id] = Math.max(dip.rel[0][f.id], -20);
           dip.rel[f.id][0] = Math.max(dip.rel[f.id][0], -20);
           game.log(`Peace with ${f.name} — ${Math.round(pay)} gold in reparations paid to you.`, 'good');
+          chronicle(`${f.name} paid Azuria ${Math.round(pay)} gold for peace.`, 0, 'major');
+          remember(f.id, 0, 'accepted_peace', 'Accepted our peace', 8, 1200);
         } },
       { label: 'Fight on', cls: 'bad', apply: () => {
+          remember(f.id, 0, 'rebuff_peace', 'Spurned our peace', -8, 1200);
           game.log(`You reject ${f.name}'s plea. The war continues.`, 'bad');
         } },
     ],
@@ -489,9 +547,11 @@ function aiWarTick(f, enemies) {
     return;
   }
   const waveUnits = army.slice(0, Math.max(4, Math.floor(army.length * prof.waveFraction)));
-  const dx = myTh.cx - th.x, dy = myTh.cy - th.y;
+  // stage ten tiles short of their capital on the side facing home — measured
+  // the short way round, or a war across the seam stages on the far side
+  const dx = wdx(th.x, myTh.cx), dy = myTh.cy - th.y;
   const d = Math.hypot(dx, dy) || 1;
-  const sx = clamp(Math.round(th.x + dx / d * 10), 1, MAP_W - 2);
+  const sx = WORLD_WRAP ? wrapX(Math.round(th.x + dx / d * 10)) : clamp(Math.round(th.x + dx / d * 10), 1, MAP_W - 2);
   const sy = clamp(Math.round(th.y + dy / d * 10), 1, MAP_H - 2);
   ai.wave = { units: waveUnits, size: waveUnits.length, state: 'staging',
     stagePos: [sx, sy], stageUntil: game.time + 20, targetFid: target.id,
@@ -613,7 +673,7 @@ function aiFindSpotNearSite(f, typeKey, site) {
     for (let attempt = 0; attempt < 12; attempt++) {
       const a = game.rng() * Math.PI * 2;
       const x = Math.round(site.x + Math.cos(a) * r), y = Math.round(site.y + Math.sin(a) * r);
-      if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
+      if (canPlace(game.map, typeKey, x, y, f.id) && solidPlacementSafe(game.map, typeKey, x, y, f.id)) return [x, y];
     }
   }
   return null;

@@ -18,6 +18,7 @@ class Faction {
     this.aiT = id * (AI_TICK_PERIOD / 4);   // fixed phase: nations never tick together
     this.ai = null;                   // ambition state, lazily built by initFactionAI (js/ai.js)
     this.brain = null;                // perception + utility + trade + combat managers
+    initResearch(this);               // era, techs, research, modifiers (js/tech.js)
   }
 
   townhall() { return this.buildings.find(b => b.type.key === 'townhall' && b.hp > 0); }
@@ -55,6 +56,7 @@ class Faction {
     if (!castle) return 'Needs a Castle';
     const type = UNIT_TYPES[typeKey];
     if (type.tier > this.castleTier) return `Locked — requires the ${CASTLE_UPGRADES[type.tier].name} castle upgrade`;
+    if (type.tech && !hasTech(this, type.tech)) return `Locked — research ${TECHS[type.tech].name}`;
     if (type.unique && (this.kingAlive || this.units.some(u => u.alive && u.type.key === 'king') || castle.trainQueue.some(q => q.unitKey === 'king'))) return 'Only one King';
     // Dev mode's resource top-off (Game.devTopOff) already makes canAfford pass
     // in practice, but population is never topped off — training would still
@@ -76,6 +78,7 @@ class Faction {
     const up = CASTLE_UPGRADES[this.castleTier + 1];
     if (!up) return 'The Castle is fully upgraded';
     if (castle.upgrading) return 'An upgrade is already underway';
+    if (up.era && this.era < up.era) return `The ${up.name} requires the ${ERAS[up.era].name}`;
     if (!this.nation.canAfford(up.cost)) return 'Not enough resources';
     this.nation.pay(up.cost);
     castle.upgrading = { tier: this.castleTier + 1, t: 0 };
@@ -103,7 +106,7 @@ class Faction {
       if (b.trainQueue.length === 0) continue;
       const q = b.trainQueue[0];
       q.t += dt;
-      if (q.t >= UNIT_TYPES[q.unitKey].trainTime) {
+      if (q.t >= trainTimeFor(this, q.unitKey)) {
         // A hull has to touch the water or it is stranded on the quay the
         // instant it is finished; if the berth has silted up (a bridge thrown
         // across the harbour mouth, say) the order waits rather than launching
@@ -184,7 +187,7 @@ function aiTick(f, dt) {
 // rates itself: a farm's real output now depends on how far its hands carry the
 // harvest, and a nation that thinks it is fed when it is not will starve.
 function estimateFoodRate(f) {
-  return estimateIncome(f, 'food') - f.nation.pop * EAT_RATE;
+  return estimateIncome(f, 'food') - f.nation.pop * EAT_RATE - armyUpkeep(f).food;
 }
 
 // richestEnemyStorage and maxThreatAgainst are gone: both read every rival's
@@ -202,14 +205,64 @@ function findBuildSpot(f, typeKey, site = null) {
   const anchors = site
     ? (EXPANSION_BUILDS.includes(typeKey) ? [[site.x, site.y], home] : [home, [site.x, site.y]])
     : [home];
+  const near = neighbourlySpot(f, typeKey, anchors[0]);
+  if (near) return near;
   for (const [cx, cy] of anchors) {
     for (let r = 2; r <= 14; r++) {
       for (let attempt = 0; attempt < 14; attempt++) {
         const a = game.rng() * Math.PI * 2;
         const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
-        if (canPlace(game.map, typeKey, x, y, f.id)) return [x, y];
+        if (canPlace(game.map, typeKey, x, y, f.id) && solidPlacementSafe(game.map, typeKey, x, y, f.id)) return [x, y];
       }
     }
   }
   return null;
+}
+
+// A building that earns an adjacency bonus (js/upgrades.js) looks first beside
+// the neighbours that pay it — a farm against the last farm, a market among
+// houses, a library by the church — and takes the best-paying legal spot within
+// reach of its anchor. Null when nothing there would earn anything, so the
+// ordinary spiral search runs.
+const NEIGHBOUR_PARTNERS = {
+  farm: { keys: ['farm'], reach: 1 },
+  market: { keys: ['house'], reach: 2 },
+  library: { keys: ['church', 'library', 'university', 'cathedral', 'greatlibrary'], reach: 2 },
+  university: { keys: ['church', 'library', 'university', 'cathedral', 'greatlibrary'], reach: 2 },
+};
+function neighbourlySpot(f, typeKey, [ax, ay]) {
+  const want = NEIGHBOUR_PARTNERS[typeKey];
+  if (!want || typeof computeAdjacency !== 'function') return null;
+  const size = BUILDING_TYPES[typeKey].size;
+  const partners = f.buildings
+    .filter(b => b.done && want.keys.includes(b.type.key) && wdist(b.cx, b.cy, ax, ay) <= 14)
+    .slice(0, 12);
+  const cands = [];
+  const tried = new Set();
+  for (const p of partners) {
+    const ps = p.type.size;
+    for (let dy = -size - want.reach + 1; dy < ps + want.reach; dy++) {
+      for (let dx = -size - want.reach + 1; dx < ps + want.reach; dx++) {
+        const x = wrapX(p.x + dx), y = p.y + dy;
+        const k = x + ',' + y;
+        if (tried.has(k)) continue;
+        tried.add(k);
+        if (!canPlace(game.map, typeKey, x, y, f.id)) continue;
+        const v = computeAdjacency(game.map, typeKey, x, y, f.id).v;
+        if (v <= 0) continue;
+        cands.push({ x, y, s: v - wdist(x, y, ax, ay) * 0.004 });
+      }
+    }
+  }
+  cands.sort((a, b) => b.s - a.s || a.y - b.y || a.x - b.x);
+  for (const c of cands.slice(0, 6)) {
+    if (solidPlacementSafe(game.map, typeKey, c.x, c.y, f.id)) return [c.x, c.y];
+  }
+  return null;
+}
+
+// Seconds to train a unit, after Feudalism's drill-yard discount.
+function trainTimeFor(f, key) {
+  const base = UNIT_TYPES[key].trainTime;
+  return base * (1 - (f.mods ? Math.min(0.6, f.mods.trainTime) : 0));
 }
