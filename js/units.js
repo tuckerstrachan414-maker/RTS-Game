@@ -1,13 +1,16 @@
 'use strict';
 // Unit definitions, movement (A*), real-time combat, projectiles.
 
-// Nine units, three tiers, three damage types (melee | pierce | magic). The
-// roster is deliberately small: every entry answers a different question on the
-// battlefield, and none of them is a strictly better version of another.
+// Thirteen units across three castle tiers and four Ages, four damage types
+// (melee | pierce | magic | siege). Every entry answers a different question on
+// the battlefield, and none of them is a strictly better version of another.
 //   Tier 1 — sword (line), spear (anti-cavalry), archer (ranged), bandit
 //            (raider), prince (envoy)
 //   Tier 2 — halberd (tank), cavalier (shock)
 //   Tier 3 — mage (splash), king (unique, aura)
+//   Researched (js/tech.js) — shield (arrow wall, Iron Working), crossbow
+//            (armour-piercing, Crossbows), catapult (siege, Engineering),
+//            archmage (heavy splash, Arcane Mastery)
 const UNIT_TYPES = {
   sword:    { key: 'sword',    name: 'Swordsman',  cost: { food: 20, gold: 5 },  hp: 60,  dmg: 7,  dmgType: 'melee',  range: 0.9, speed: 2.2, cooldown: 1.0, trainTime: 6,  desc: 'Reliable line infantry.' },
   spear:    { key: 'spear',    name: 'Spearman',   cost: { food: 20, gold: 5 },  hp: 55,  dmg: 6,  dmgType: 'melee',  range: 1.1, speed: 2.2, cooldown: 1.0, trainTime: 6,  bonusVs: ['cavalier'], bonusMul: 2.2, desc: 'Cheap and deadly against cavalry.' },
@@ -18,7 +21,25 @@ const UNIT_TYPES = {
   king:     { key: 'king',     name: 'King',       cost: { food: 100, gold: 100 }, hp: 200, dmg: 14, dmgType: 'melee', range: 1.0, speed: 2.4, cooldown: 1.0, trainTime: 20, aura: 1.15, auraR: 4, unique: true, desc: 'One per nation. Nearby troops fight harder. If he falls, morale suffers.' },
   prince:   { key: 'prince',   name: 'Prince (Envoy)', cost: { food: 20, gold: 20 }, hp: 50, dmg: 4, dmgType: 'melee', range: 0.9, speed: 2.8, cooldown: 1.2, trainTime: 8, envoy: true, desc: 'Diplomat. Carries proposals to other nations.' },
   bandit:   { key: 'bandit',   name: 'Bandit',     spriteKey: 'horseman', cost: { food: 15, gold: 15 }, hp: 45, dmg: 5, dmgType: 'melee', range: 0.9, speed: 3.4, cooldown: 1.1, trainTime: 7, robber: true, desc: 'Fast raider, and the only troop that can carry plunder. Send onto an enemy Storehouse to rob it and flee home with the loot.' },
+  // ---- unlocked by research ----
+  shield:   { key: 'shield',   name: 'Shieldman',  cost: { food: 25, gold: 12 }, hp: 95, dmg: 5, dmgType: 'melee', range: 0.9, speed: 1.9, cooldown: 1.1, trainTime: 8, armor: 3, arrowWard: 0.5, tech: 'iron', desc: 'A wall of iron and oak. Halves arrow damage and holds the line while archers work.' },
+  crossbow: { key: 'crossbow', name: 'Crossbowman', cost: { food: 25, gold: 20 }, hp: 50, dmg: 11, dmgType: 'pierce', range: 4.8, speed: 2.0, cooldown: 2.0, trainTime: 9, projectile: 'arrow', pierceArmor: 3, tech: 'crossbows', desc: 'Slow to reload, but the bolt punches through armour.' },
+  catapult: { key: 'catapult', name: 'Catapult',   baked: true, scale: 1.25, cost: { wood: 120, gold: 60 }, hp: 110, dmg: 34, dmgType: 'siege', range: 7.5, minRange: 2, speed: 1.2, cooldown: 4.2, trainTime: 16, projectile: 'boulder', splash: 0.9, siege: true, tech: 'engineering', desc: 'A siege engine. Smashes walls, towers and buildings from long range — but it is slow, cannot fire point-blank, and is helpless without an escort.' },
+  archmage: { key: 'archmage', name: 'Archmage',   cost: { food: 30, gold: 60 }, hp: 60, dmg: 15, dmgType: 'magic', range: 4.4, speed: 2.0, cooldown: 2.0, trainTime: 14, projectile: 'fireball', splash: 1.6, tech: 'arcana', desc: 'Master of fire. Wide splash, and magic ignores armour.' },
 };
+
+// Mounted units: cavalry techs (Horseback Riding, Chivalry) apply to them, and
+// their first blow after a run is a charge (see Unit.tryAttack).
+for (const k of ['cavalier', 'bandit']) UNIT_TYPES[k].mounted = true;
+
+// Damage a non-siege attacker deals to a fortification (walls, gates,
+// watchtowers). Swords against stone is slow work; a catapult is how a siege
+// is actually won.
+const FORT_RESIST = 0.35;
+// Damage a siege engine deals to anything that is not a building.
+const SIEGE_VS_UNITS = 0.3;
+// Hit-point and damage bonus per veterancy rank (js/units.js veterancy).
+const RANK_BONUS = 0.1;
 
 // Carry capacity: how much plunder a unit can haul. Only the Bandit can carry
 // anything at all — loot is a raider's job, so spoils on the ground are worth
@@ -27,10 +48,10 @@ const UNIT_CARRY = { bandit: 45 };
 for (const k in UNIT_TYPES) UNIT_TYPES[k].carry = UNIT_CARRY[k] || 0;
 
 // castle tier required to train each unit (1 = basic Castle; see CASTLE_UPGRADES)
-const UNIT_TIERS = { halberd: 2, cavalier: 2, mage: 3, king: 3 };
+const UNIT_TIERS = { halberd: 2, cavalier: 2, mage: 3, king: 3, archmage: 3 };
 for (const k in UNIT_TYPES) UNIT_TYPES[k].tier = UNIT_TIERS[k] || 1;
 
-const TRAIN_MENU = ['sword', 'spear', 'archer', 'bandit', 'prince', 'halberd', 'cavalier', 'mage', 'king'];
+const TRAIN_MENU = ['sword', 'spear', 'archer', 'bandit', 'prince', 'shield', 'crossbow', 'halberd', 'cavalier', 'catapult', 'mage', 'archmage', 'king'];
 
 // ---------- targeting priorities ----------
 // What a group goes looking for a fight with on its own. This filters
@@ -82,7 +103,10 @@ class Unit {
     this.type = UNIT_TYPES[typeKey];
     this.faction = factionId;
     this.x = tx + 0.5; this.y = ty + 0.5;    // position in tile units (center)
-    this.hp = this.type.hp;
+    this.rank = 0;             // veterancy rank (0 recruit … 3 legend)
+    this.xp = 0;
+    this.maxHp = unitMaxHp(this);
+    this.hp = this.maxHp;
     this.path = [];
     this.dest = null;
     this.target = null;        // unit or building
@@ -216,7 +240,10 @@ class Unit {
 
     if (this.target) {
       const d = this.distTo(this.target);
-      if (d <= this.type.range + 0.15) {
+      if (this.type.minRange && d < this.type.minRange && !(this.target instanceof Building)) {
+        // a siege engine cannot depress its arm onto a man at its wheels: back off
+        this.backAway(dt, this.target);
+      } else if (d <= unitRange(this) + 0.15) {
         this.path = [];
         this.tryAttack(dt);
       } else {
@@ -239,6 +266,19 @@ class Unit {
   }
 
   garrisoned() { return this.groupRole === 'defensive' && !!this.defensivePost && !this.mission; }
+
+  // Step directly away from a threat, a tile at a time.
+  backAway(dt, from) {
+    if (this.path.length === 0 || this.repathT <= 0) {
+      const [fx, fy] = targetCenter(from);
+      const dx = wdx(fx, this.x), dy = this.y - fy;
+      const d = Math.hypot(dx, dy) || 1;
+      const tx = Math.floor(wrapPos(this.x + dx / d * 3)), ty = Math.floor(this.y + dy / d * 3);
+      this.path = game.map.passable(tx, ty, this.faction) ? this.pathTo(tx, ty, 400) : [];
+      this.repathT = 1.0;
+    }
+    if (this.path.length) this.followPath(dt); else this.setAnim('idle');
+  }
 
   postDist(x, y) {
     return wdist(x, y, this.defensivePost[0] + 0.5, this.defensivePost[1] + 0.5);
@@ -354,7 +394,7 @@ class Unit {
     // ground drag it down (js/map.js moveCost) without ever blocking it. A unit
     // marching in formation walks at the group's pace instead of its own, so the
     // Cavaliers don't arrive a rank of Swordsmen ahead of the shield wall.
-    const base = this.formSpeed > 0 ? Math.min(this.formSpeed, this.type.speed) : this.type.speed;
+    const base = this.formSpeed > 0 ? Math.min(this.formSpeed, unitSpeed(this)) : unitSpeed(this);
     let speed = base / game.map.moveCost(this.tileX, this.tileY);
     if (game.map.road[game.map.idx(this.tileX, this.tileY)]) speed *= 1.3;
     const step = speed * dt;
@@ -400,11 +440,12 @@ class Projectile {
     this.dmg = effectiveDamage(source, target);
     this.dmgType = source.type.dmgType;
     this.splash = source.type.splash || 0;
-    this.x = source.x; this.y = source.y;
+    [this.x, this.y] = targetCenter(source);
+    this.sx = this.x; this.sy = this.y;     // launch point, for a lobbed shot's arc
     const [tx, ty] = targetCenter(target);
     this.tx = tx; this.ty = ty;
     this.target = target;
-    this.speed = this.kind === 'arrow' ? 9 : 7;
+    this.speed = this.kind === 'arrow' ? 9 : this.kind === 'boulder' ? 5.5 : 7;
     this.done = false;
     this.impactT = -1;
   }
@@ -435,17 +476,25 @@ class Projectile {
         if (!game.diplomacy.hostile(this.faction, f.id)) continue;
         for (const u of f.units) {
           if (u.alive && !u.aboard && wdist(this.x, this.y, u.x, u.y) <= this.splash) {
-            u.takeDamage(this.dmg, this.source);
+            u.takeDamage(this.dmgVs(u), this.source);
           }
         }
       }
-      const b = game.map.inBounds(Math.floor(this.x), Math.floor(this.y)) ? game.map.buildingAt[game.map.idx(Math.floor(this.x), Math.floor(this.y))] : null;
-      if (b && game.diplomacy.hostile(this.faction, b.faction)) damageBuilding(b, this.dmg, this.source);
+      // A lobbed stone lands where it was aimed at: the building it was meant for
+      // takes the full blow even when the landing point is on its edge.
+      let b = game.map.inBounds(Math.floor(this.x), Math.floor(this.y)) ? game.map.buildingAt[game.map.idx(Math.floor(this.x), Math.floor(this.y))] : null;
+      if (!b && this.target instanceof Building && !targetDead(this.target)) b = this.target;
+      if (b && game.diplomacy.hostile(this.faction, b.faction)) damageBuilding(b, this.dmgVsBuilding(b), this.source);
     } else if (this.target && !targetDead(this.target)) {
       if (this.target instanceof Building) damageBuilding(this.target, this.dmg, this.source);
       else this.target.takeDamage(this.dmg, this.source);
     }
+    if (typeof fxImpact === 'function') fxImpact(this);
   }
+  // Splash is worked out per victim: armour and arrow-wards still count, and a
+  // catapult stone is far deadlier to a wall than to the soldiers under it.
+  dmgVs(t) { return this.source && this.source.type ? effectiveDamage(this.source, t) : this.dmg; }
+  dmgVsBuilding(b) { return this.dmgVs(b); }
 }
 
 function targetCenter(t) {
@@ -458,13 +507,28 @@ function targetFaction(t) { return t.faction; }
 
 function effectiveDamage(attacker, target) {
   let dmg = attacker.type.dmg;
+  const type = attacker.type;
+  const isBld = target instanceof Building;
+  const f = game.factions[attacker.faction];
+  // technology
+  const m = f && f.mods;
+  if (m) {
+    dmg *= 1 + (m.dmg[type.dmgType] || 0);
+    if (type.mounted) dmg *= 1 + m.mountedDmg;
+  }
+  // veterancy
+  if (attacker.rank) dmg *= 1 + RANK_BONUS * attacker.rank;
   if (target instanceof Unit) {
-    if (attacker.type.bonusVs && attacker.type.bonusVs.includes(target.type.key)) dmg *= attacker.type.bonusMul;
-    if (target.type.armor && attacker.type.dmgType !== 'magic') dmg = Math.max(1, dmg - target.type.armor);
+    if (type.bonusVs && type.bonusVs.includes(target.type.key)) dmg *= type.bonusMul;
+    const armor = Math.max(0, (target.type.armor || 0) - (type.pierceArmor || 0));
+    if (armor && type.dmgType !== 'magic' && type.dmgType !== 'siege') dmg = Math.max(1, dmg - armor);
+    if (target.type.arrowWard && type.dmgType === 'pierce') dmg *= 1 - target.type.arrowWard;
+    if (type.siege) dmg *= SIEGE_VS_UNITS;
+  } else if (isBld) {
+    if (target.type.fortification && !type.siege) dmg *= FORT_RESIST;
   }
   // king aura
-  const f = game.factions[attacker.faction];
-  if (f && f.kingAlive) {
+  if (f && f.kingAlive && !(attacker instanceof Building)) {
     for (const u of f.units) {
       if (u.alive && u.type.key === 'king' && wdist(attacker.x, attacker.y, u.x, u.y) <= u.type.auraR) {
         dmg *= u.type.aura; break;
@@ -474,6 +538,26 @@ function effectiveDamage(attacker, target) {
   // starving nations fight poorly
   if (f && f.nation.starving) dmg *= 0.7;
   return dmg;
+}
+
+// Pace, with the cavalry and navigation techs folded in.
+function unitSpeed(u) {
+  let v = u.type.speed;
+  const m = factionMods(u.faction);
+  if (m) {
+    if (u.type.mounted) v *= 1 + m.mountedSpeed;
+    if (u.type.naval) v *= 1 + m.shipSpeed;
+  }
+  if (typeof seasonSpeedMul === 'function') v *= seasonSpeedMul(u);
+  return v;
+}
+
+// Reach, with Fletching's extra half-tile for bowmen.
+function unitRange(u) {
+  let r = u.type.range;
+  const m = factionMods(u.faction);
+  if (m && u.type.dmgType === 'pierce' && !(u instanceof Building)) r += m.range.pierce || 0;
+  return r;
 }
 
 function dealDamage(attacker, target) {
@@ -575,7 +659,7 @@ function wrapPos(x) {
 // sort stays stable so a group's internal ordering does not shuffle between
 // identical orders.
 const FORMATION_SHAPES = ['diamond', 'rectangle'];
-const DEFAULT_FORMATION_ORDER = ['sword', 'spear', 'halberd', 'cavalier', 'king', 'archer', 'mage', 'bandit', 'prince'];
+const DEFAULT_FORMATION_ORDER = ['shield', 'sword', 'spear', 'halberd', 'cavalier', 'king', 'archer', 'crossbow', 'mage', 'archmage', 'catapult', 'bandit', 'prince'];
 
 // Rank offsets in formation space: +lateral is right of the line of march,
 // -depth is behind the leading point. One slot per unit, index 0 at the front.
@@ -610,7 +694,7 @@ function formationMove(units, tx, ty) {
     || { shape: 'diamond', order: DEFAULT_FORMATION_ORDER };
   // The group marches at the pace of its slowest member, so it arrives as a
   // formation instead of trickling in fastest-first.
-  const pace = Math.min(...movers.map(u => u.type.speed));
+  const pace = Math.min(...movers.map(u => unitSpeed(u)));
   if (movers.length === 1) return movers[0].orderMove(tx, ty);
   let cx = 0, cy = 0;
   for (const u of movers) { cx += u.x; cy += u.y; }
@@ -667,7 +751,7 @@ function freeSpotNear(x, y, fid, taken) {
 // neither spends the rest of the match wading toward something unreachable.
 function canEngage(unit, t, d) {
   if (isNaval(unit) === targetIsNaval(t)) return true;
-  return d <= unit.type.range + 0.5;
+  return d <= unitRange(unit) + 0.5;
 }
 
 function findEnemyNear(unit, radius, ox = unit.x, oy = unit.y) {

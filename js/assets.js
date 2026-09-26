@@ -132,6 +132,11 @@ const UNIT_SHEETS = {
   cavalier: 'MiniCavalierMan.png',
   king:     'MiniKingMan.png',
   prince:   'MiniPrinceMan.png',
+  // Researched arms (js/tech.js). These three sheets shipped with the pack and
+  // sat unused until the tech tree gave them a place in the roster.
+  shield:   'MiniShieldMan.png',
+  crossbow: 'MiniCrossBowMan.png',
+  archmage: 'MiniArchMage.png',
   // Civilians (js/civilians.js): five sheets of townsfolk, drawn for this game
   // rather than borrowed off the roster, and picked per job by `civSpriteFor`
   // so a nation's trades are legible at a glance — the scythe is at the farm,
@@ -171,6 +176,7 @@ const Assets = {
   sand: [],              // beach 3x3, indexed [ey * 3 + ex] from GameMap.sandEdge
   deepWater: null,       // open ocean: the atlas's water centre, taken deeper
   ships: [],             // [factionIdx] -> {transport, galley}, see bakeShips
+  siege: [],             // [factionIdx] -> {catapult}, see bakeSiege
   loaded: false,
 
   async load() {
@@ -196,6 +202,8 @@ const Assets = {
       this.rampart[f] = bakeRamparts(punySheet, roofHue);
       this.buildingArt[f] = bakeBuildings(tileset, this.factionTilesets[f], roofHue, punySheet);
       this.ships[f] = bakeShips(FACTION_COLORS[f].css);
+      this.siege[f] = bakeSiege(FACTION_COLORS[f].css);
+      Object.assign(this.buildingArt[f], bakeScholarAndTower(punySheet, roofHue, this.rampart[f], FACTION_COLORS[f].css));
     }
     this.tileset = tileset;
     // Bridges are terrain, not a faction's building — baked off the plain sheet.
@@ -399,6 +407,74 @@ function bakeShips(css) {
       px('#e6dcc0', 2, 12, 12, 1);
     }),
   };
+}
+
+// The Catapult. No siege engine exists in either pack, so it is drawn here the
+// way the ships are: 16x16, three-quarter view, a timber frame on two wheels
+// with its throwing arm cocked back and a sling of stone ready, and a pennant in
+// the nation's colour so a battery on a hill is legible at a glance.
+function bakeSiege(css) {
+  const W = { lit: '#c08a4e', mid: '#8f6436', dark: '#5c3f22', black: '#2e2014' };
+  return {
+    catapult: bakeArt(null, px => {
+      // wheels
+      for (const cx of [3, 11]) {
+        px(W.black, cx - 1, 11, 3, 3); px(W.dark, cx - 2, 12, 5, 1); px(W.dark, cx, 10, 1, 5);
+        px('#8a8a8a', cx, 12, 1, 1);
+      }
+      // chassis
+      px(W.dark, 1, 10, 14, 2); px(W.mid, 1, 10, 14, 1); px(W.lit, 2, 10, 5, 1);
+      // A-frame uprights and the axle the arm swings on
+      px(W.dark, 6, 5, 1, 5); px(W.dark, 9, 5, 1, 5); px(W.mid, 7, 4, 2, 2); px(W.lit, 7, 4, 2, 1);
+      // throwing arm, cocked back to the left, with a stone in the cup
+      px(W.mid, 3, 8, 1, 1); px(W.mid, 4, 7, 1, 1); px(W.mid, 5, 6, 1, 1); px(W.mid, 6, 5, 1, 1);
+      px(W.mid, 7, 4, 1, 1); px(W.mid, 8, 3, 1, 1); px(W.mid, 9, 2, 1, 1); px(W.lit, 10, 1, 1, 1);
+      px(W.dark, 1, 8, 3, 2); px('#9a9a98', 1, 7, 2, 2); px('#c9c9c4', 1, 7, 1, 1);   // cup + stone
+      px('#4a4a4a', 11, 5, 3, 3); px('#6a6a6a', 11, 5, 3, 1);                        // counterweight
+      px(W.dark, 12, 2, 1, 3);
+      // pennant on the frame
+      px(W.black, 14, 2, 1, 8); px(css, 15, 2, 1, 3); px('#ffffff', 15, 2, 1, 1);
+    }),
+  };
+}
+
+// The Library, the University and the Watchtower.
+//
+//  library     one of the punyworld's gabled timber houses with its windows lit,
+//              given a hanging sign with an open book, so it reads as "the house
+//              where people read" beside an ordinary House.
+//  university  the pack's spired 2x2 keep (a sibling of the Town Hall's keep),
+//              its masonry turned to the nation's colour like every castle piece.
+//  watchtower  the rampart's own tower piece standing alone, with a banner on a
+//              pole above the battlements.
+function bakeScholarAndTower(puny, roofHue, rampart, css) {
+  const library = bakePuny(puny, [9, 27]);
+  paintOn(library, px => {
+    px('#3a2a18', 11, 7, 1, 3);                            // bracket
+    px('#3a2a18', 11, 7, 4, 1);
+    px('#5c3f22', 11, 10, 5, 4); px('#efe4c4', 12, 11, 3, 2);  // sign board + open book
+    px('#8a6a4a', 13, 11, 1, 2); px('#b04b3a', 12, 13, 3, 1);
+  });
+  const university = bakePuny(puny, [12, 26], { w: 2, h: 2, stoneHue: roofHue });
+  const watchtower = document.createElement('canvas');
+  watchtower.width = TILE; watchtower.height = TILE;
+  const g = watchtower.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.drawImage(rampart.tower, 0, 0);
+  paintOn(watchtower, px => {
+    px('#3a2a18', 7, 0, 1, 5);                             // pole
+    px(css, 8, 0, 4, 2); px('#ffffff55', 8, 0, 4, 1);      // banner
+  });
+  return { library, university, watchtower };
+}
+
+// Paint onto an already-baked canvas with the same px(color, x, y, w, h) brush
+// bakeArt uses.
+function paintOn(canvas, draw) {
+  const g = canvas.getContext('2d');
+  const px = (color, x, y, w = 1, h = 1) => { g.fillStyle = color; g.fillRect(x, y, w, h); };
+  draw(px, g);
+  return canvas;
 }
 
 function bakeFarmland(planted) {

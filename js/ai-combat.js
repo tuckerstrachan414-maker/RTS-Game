@@ -147,8 +147,8 @@ class AICombatManager {
     if (!castle || castle.trainQueue.length >= 2) return;
     const want = f.brain.utility.armyTarget();
     if (f.armyUnits().length < want && n.total('food') > 60) {
-      const pool = ['sword', 'spear', 'archer', 'sword', 'spear', 'halberd', 'cavalier', 'mage']
-        .filter(k => UNIT_TYPES[k].tier <= f.castleTier);
+      const pool = aiTroopPool(f).filter(k => UNIT_TYPES[k].tier <= f.castleTier
+        && (!UNIT_TYPES[k].tech || hasTech(f, UNIT_TYPES[k].tech)));
       if (pool.length) f.trainUnit(pool[Math.floor(game.rng() * pool.length)]);
       return;
     }
@@ -330,4 +330,23 @@ class AICombatManager {
     aiBuildBridges(f);
     aiPlanWalls(f);
   }
+}
+
+// The mix a nation drills, weighted by what it can field and what it faces.
+// Duplicates are weights. Newer arms displace older ones as they arrive, and a
+// nation that has seen walls on the other side brings siege engines.
+function aiTroopPool(f) {
+  const pool = ['sword', 'spear', 'archer', 'sword', 'spear', 'halberd', 'cavalier', 'mage'];
+  if (hasTech(f, 'iron')) pool.push('shield', 'shield');
+  if (hasTech(f, 'crossbows')) pool.push('crossbow', 'crossbow'), pool.splice(pool.indexOf('archer'), 1);
+  if (hasTech(f, 'arcana')) pool.push('archmage');
+  if (hasTech(f, 'engineering')) {
+    const army = f.armyUnits();
+    const siege = army.filter(u => u.type.siege).length;
+    // one engine per eight soldiers, and only if there is a fortified enemy to use it on
+    const walls = game.factions.some(o => o !== f && !o.eliminated
+      && f.brain.perception.knownBuildings(o.id).some(m => m.key === 'wall' || m.key === 'watchtower' || m.key === 'gate'));
+    if ((walls || f.era >= 3) && siege < Math.max(1, Math.floor(army.length / 8))) pool.push('catapult', 'catapult', 'catapult');
+  }
+  return pool;
 }

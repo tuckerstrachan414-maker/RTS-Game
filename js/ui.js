@@ -159,14 +159,17 @@ class UI {
       if (e.key === 'Escape') {
         // innermost overlay first: Formations sits on top of the pause menu
         if (document.getElementById('formation-panel').classList.contains('open')) { this.closeFormations(); return; }
+        if (this.researchOpen()) { this.closeResearch(); return; }
         if (this.paused) { this.closePause(); return; }
         if (this.copyBuffer) { this.copyBuffer = null; return; }
         if (this.placing) { this.placing = null; return; }
         this.clearSelection(); this.closeDiplomacy();
       }
+      const typing = document.activeElement && document.activeElement.tagName === 'INPUT'
+        && document.activeElement.type !== 'range';
       if (e.key.toLowerCase() === 'r' && this.placing) this.rotatePlacing();
-      if (e.key.toLowerCase() === 'h') document.body.classList.toggle('ui-hidden');
-      const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+      if (e.key.toLowerCase() === 'h' && !typing) document.body.classList.toggle('ui-hidden');
+      if (e.key.toLowerCase() === 't' && !typing && !this.paused) this.toggleResearch();
       if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'
           && (this.selection.buildings.length || (this.selection.building && this.selection.building.faction === 0))) {
         e.preventDefault();
@@ -647,6 +650,8 @@ class UI {
   tryPlace() {
     const key = this.placing;
     const type = BUILDING_TYPES[key];
+    const why = buildingBlocker(game.factions[0], key);
+    if (why) { game.log(`${type.name}: ${why}.`, 'bad'); this.placing = null; return; }
     const [tx, ty] = this.screenToTile(this.mouse.x, this.mouse.y);
     const nation = game.factions[0].nation;
     const orient = key === 'bridge' ? (this.placeVertical ? 2 : 1) : 1;
@@ -678,6 +683,9 @@ class UI {
         : u.carryTotal() > 0.5 ? `Hauling materials to the ${u.site.type.name} site`
         : siteReady(u.site) ? `Raising the ${u.site.type.name} (${Math.round(u.site.progress * 100)}%)`
         : `Fetching materials for the ${u.site.type.name} site`;
+    } else if (u.job.b.type.produces === 'knowledge') {
+      doing = u.phase === 'work' ? `Studying at the ${u.job.b.type.name} — every hour of reading feeds your research`
+        : `Walking to the ${u.job.b.type.name}`;
     } else {
       const what = u.job.b.type.produces || 'goods';
       doing = u.phase === 'work' ? `Working — gathering ${what}`
@@ -685,7 +693,7 @@ class UI {
         : `Walking out to work for the ${u.job.b.type.name}`;
     }
     return `<h3><span class="dot" style="background:${game.factions[u.faction].color.css}"></span> ${u.type.name}</h3>`
-      + `<div>HP ${Math.max(0, Math.ceil(u.hp))}/${u.type.hp}</div>`
+      + `<div>HP ${Math.max(0, Math.ceil(u.hp))}/${Math.round(u.maxHp)}</div>`
       + `<div class="desc">${doing}</div>`
       + (load ? `<div class="good">Carrying ${load}</div>` : '')
       + (u.job ? `<div class="dim">Employed at your ${u.job.b.type.name}.</div>` : '')
@@ -895,6 +903,7 @@ class UI {
       const type = BUILDING_TYPES[part.key];
       const x = cx + part.dx, y = cy + part.dy;
       if (!canPlace(game.map, part.key, x, y, 0)) continue;
+      if (buildingBlocker(game.factions[0], part.key)) continue;   // e.g. a Wonder already standing
       if (!nation.canStart(type.cost)) continue;
       startConstruction(game, part.key, x, y, 0);
       placed++;
@@ -916,9 +925,14 @@ class UI {
       const t = BUILDING_TYPES[key];
       const btn = document.createElement('button');
       btn.className = 'bbtn';
+      btn.dataset.key = key;
       btn.innerHTML = `<b>${t.name}</b><span>${costText(t.cost)}</span>`;
       btn.title = t.desc + (t.reqText ? ` (${t.reqText})` : '');
-      btn.onclick = () => { this.placing = key; this.copyBuffer = null; this.clearSelection(); };
+      btn.onclick = () => {
+        const why = buildingBlocker(game.factions[0], key);
+        if (why) return game.log(`${t.name}: ${why}.`, 'bad');
+        this.placing = key; this.copyBuffer = null; this.clearSelection();
+      };
       bar.appendChild(btn);
     }
     document.getElementById('cancel-place').onclick = () => { this.placing = null; this.copyBuffer = null; };
@@ -928,12 +942,18 @@ class UI {
     document.querySelectorAll('#topbar .stat[data-tip]').forEach(el => {
       el.onclick = () => this.toggleTooltip(el.dataset.tip);
     });
+    // the knowledge readout and the Age chip both open the Research screen
+    document.querySelectorAll('#topbar .stat[data-open="research"]').forEach(el => {
+      el.onclick = () => this.toggleResearch();
+    });
     // Menu button opens the pause menu; the pause menu holds the game actions.
     document.getElementById('menu-btn').onclick = () => this.openPause();
     document.getElementById('pause-menu').onclick = e => { if (e.target.id === 'pause-menu') this.closePause(); };
     document.getElementById('resume-btn').onclick = () => this.closePause();
     document.getElementById('pm-diplo').onclick = () => { this.closePause(); this.toggleDiplomacy(); };
     document.getElementById('pm-army').onclick = () => { this.closePause(); this.selectArmy(); };
+    document.getElementById('pm-research').onclick = () => { this.closePause(); this.toggleResearch(); };
+    document.getElementById('research').onclick = e => { if (e.target.id === 'research') this.closeResearch(); };
     document.getElementById('pm-formations').onclick = () => this.openFormations();
     document.getElementById('formation-panel').onclick = e => { if (e.target.id === 'formation-panel') this.closeFormations(); };
     document.getElementById('form-close').onclick = () => this.closeFormations();
@@ -999,6 +1019,8 @@ class UI {
     el('r-happy').className = hap >= 70 ? 'good' : hap >= 40 ? '' : 'bad';
     el('r-food').className = n.starving ? 'bad' : '';
     el('r-daynight').textContent = `Day ${game.dayCount} ${game.isDay ? '☀' : '🌙'}`;
+    this.refreshKnowledgeStat();
+    this.refreshBuildLocks();
   }
 
   refreshPanel() {
@@ -1036,7 +1058,7 @@ class UI {
     if (b) {
       const own = b.faction === 0;
       let html = `<h3><span class="dot" style="background:${game.factions[b.faction].color.css}"></span> ${b.type.name}${own ? '' : ' — ' + game.factions[b.faction].name}</h3>`;
-      html += `<div>HP ${Math.max(0, Math.ceil(b.hp))}/${b.type.hp}${b.done ? '' : ` — building ${Math.round(b.progress * 100)}%`}</div>`;
+      html += `<div>HP ${Math.max(0, Math.ceil(b.hp))}/${Math.round(b.maxHp)}${b.done ? '' : ` — building ${Math.round(b.progress * 100)}%`}</div>`;
       html += `<div class="desc">${b.type.desc}</div>`;
       // A site's materials ledger: what its builders have carried here so far,
       // and what they still owe it. Until it is full nobody starts hammering.
@@ -1075,6 +1097,13 @@ class UI {
         }
       }
       if (own && b.done && b.type.key === 'market') html += this.marketPanelHTML();
+      if (own && b.done && b.type.produces === 'knowledge') {
+        const rate = workerYieldRate(game.map, b) * b.workers;
+        html += `<div class="good">${icon('book')} ${rate.toFixed(2)} knowledge/s from ${b.workers} scholar${b.workers === 1 ? '' : 's'}</div>`;
+      }
+      if (own && b.done && b.type.dmg) {
+        html += `<div class="dim">Archers: ${b.type.dmg} pierce damage every ${b.type.cooldown}s at up to ${b.type.range} tiles.${b.target ? ' <b class="bad">Engaging!</b>' : ''}</div>`;
+      }
       if (own && b.done && b.type.key === 'castle') {
         const f0 = game.factions[0];
         const tierName = ['', 'Castle', 'Garrison', 'Royal Academy'][f0.castleTier];
@@ -1084,18 +1113,23 @@ class UI {
           if (t.tier > f0.castleTier) {
             return `<button class="tbtn locked" title="Locked — the ${CASTLE_UPGRADES[t.tier].name} upgrade unlocks the ${t.name}.">${icon('lock')} ${t.name}</button>`;
           }
-          return `<button class="tbtn" data-u="${k}" title="${t.desc}\n${costText(t.cost)} · ${t.trainTime}s">${t.name}</button>`;
+          if (t.tech && !hasTech(f0, t.tech)) {
+            return `<button class="tbtn locked" title="Locked — research ${TECHS[t.tech].name} (${ERAS[TECHS[t.tech].era].name}) to train the ${t.name}.">${icon('lock')} ${t.name}</button>`;
+          }
+          return `<button class="tbtn" data-u="${k}" title="${t.desc}\n${costText(t.cost)} · ${Math.round(trainTimeFor(f0, k))}s">${t.name}</button>`;
         }).join('') + `</div>`;
         if (b.upgrading) {
           const up = CASTLE_UPGRADES[b.upgrading.tier];
           html += `<div class="good">${icon('upgrade')} ${up.name} rising… ${Math.round(b.upgrading.t / up.time * 100)}%</div>`;
         } else if (CASTLE_UPGRADES[f0.castleTier + 1]) {
           const up = CASTLE_UPGRADES[f0.castleTier + 1];
-          html += `<button id="castle-up" title="${up.desc}\n${costText(up.cost)} · ${up.time}s">${icon('upgrade')} ${up.name} (${costText(up.cost)})</button>`;
+          const eraLock = up.era && f0.era < up.era;
+          html += `<button id="castle-up" ${eraLock ? 'class="locked"' : ''} title="${up.desc}\n${costText(up.cost)} · ${up.time}s">${icon(eraLock ? 'lock' : 'upgrade')} ${up.name} (${costText(up.cost)})</button>`;
+          if (eraLock) html += `<div class="dim">Requires the ${ERAS[up.era].name} — advance through Research (T).</div>`;
         }
         if (b.trainQueue.length) {
           const q = b.trainQueue[0];
-          html += `<div class="dim">Training ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / UNIT_TYPES[q.unitKey].trainTime * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
+          html += `<div class="dim">Training ${UNIT_TYPES[q.unitKey].name} ${Math.round(q.t / trainTimeFor(f0, q.unitKey) * 100)}% (+${b.trainQueue.length - 1} queued)</div>`;
         }
         html += this.isTouch
           ? `<div class="dim">Double-tap the map to set a rally point.</div>`
@@ -1454,7 +1488,7 @@ class UI {
         + `<div class="row"><span>From ${count('quarry')} quarr${count('quarry') === 1 ? 'y' : 'ies'}</span><b class="good">+${estimateIncome(f, 'stone').toFixed(1)}/s</b></div>`;
     }
     if (key === 'gold') {
-      const taxes = n.pop * n.tax * 0.06;
+      const taxes = n.taxIncome();
       return head(icon('gold'), 'Gold')
         + `<div class="desc">Dug from caves by Gold Mines, collected as taxes, and earned through trade, caravans and plunder.</div>`
         + stock('gold')
@@ -1871,10 +1905,10 @@ class UI {
           // damaged span, one tile from collapse: show it same as any other
           // building — and an unfinished one shows how far along it is instead
           const br = map.bridgeAt[i];
-          if (br && (br.hp < br.type.hp || !br.done)) {
+          if (br && (br.hp < br.maxHp - 0.5 || !br.done)) {
             const [bsx, bsy] = this.worldToScreen(x, y);
             if (!br.done) this.bar(bsx, bsy - 5, s, br.progress, '#7ac');
-            else this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.type.hp), '#5c5');
+            else this.bar(bsx, bsy - 5, s, Math.max(0, br.hp / br.maxHp), '#5c5');
           }
         } else if (t === T_TREE) {
           // canopy is drawn in the depth pass below so it can overlap neighbours
@@ -2190,8 +2224,8 @@ class UI {
         this.bar(px, py - 10, s * b.type.size, need > 0 ? got / need : 1, '#d9a441');
       }
       this.bar(px, py - 5, s * b.type.size, b.progress, '#7ac');
-    } else if (b.hp < b.type.hp) {
-      this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.type.hp), '#5c5');
+    } else if (b.hp < b.maxHp - 0.5) {
+      this.bar(px, py - 5, s * b.type.size, Math.max(0, b.hp / b.maxHp), '#5c5');
     }
     // selection outline + faction tint corner
     if (this.selection.building === b || this.selection.buildings.includes(b)) {
@@ -2269,7 +2303,7 @@ class UI {
     }
     ctx.globalAlpha = 1;
     if (!b.done) this.bar(sx, sy - 5, s, b.progress, '#7ac');
-    else if (b.hp < b.type.hp) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.type.hp), '#5c5');
+    else if (b.hp < b.maxHp - 0.5) this.bar(sx, sy - 5, s, Math.max(0, b.hp / b.maxHp), '#5c5');
     if (this.selection.building === b || this.selection.buildings.includes(b)) {
       ctx.strokeStyle = '#fff';
       ctx.strokeRect(sx + 0.5, sy + 0.5, s - 1, s - 1);
@@ -2287,6 +2321,7 @@ class UI {
 
   drawUnit(u) {
     if (u.type.naval) return this.drawShip(u);
+    if (u.type.baked) return this.drawSiege(u);
     const ctx = this.ctx;
     const z = this.cam.zoom;
     const sheet = Assets.unitSheets[u.faction][u.spriteKey || u.type.spriteKey || u.type.key];
@@ -2341,7 +2376,7 @@ class UI {
       y -= fh;
       ctx.fillStyle = game.factions[u.faction].color.css;
       ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), fh);
-      if (u.hp < u.type.hp) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.type.hp, '#5c5'); }
+      if (u.hp < u.maxHp - 0.5) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.maxHp, '#5c5'); }
       const badge = (fill, hi) => {
         const w = Math.max(3, Math.round(3 * z));
         y -= gap + w;
@@ -2381,7 +2416,7 @@ class UI {
     let y = py - gap - Math.max(1, Math.round(1.5 * z));
     ctx.fillStyle = game.factions[u.faction].color.css;
     ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), Math.max(1, Math.round(1.5 * z)));
-    if (u.hp < u.type.hp) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.type.hp, '#5c5'); }
+    if (u.hp < u.maxHp - 0.5) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.maxHp, '#5c5'); }
     const load = u.cargo ? u.cargo.length : 0;
     if (load) {
       y -= gap + Math.max(2, Math.round(2 * z));
@@ -2390,6 +2425,37 @@ class UI {
         ctx.fillStyle = '#ffd24a';
         ctx.fillRect(Math.round(px - (load * (pip + 1)) / 2 + k * (pip + 1)), y, pip, pip);
       }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Siege engines are single baked sprites (js/assets.js bakeSiege) that roll
+  // rather than walk: a small bob while moving, a recoil when the arm fires.
+  drawSiege(u) {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const art = Assets.siege[u.faction][u.type.key];
+    const [sx, sy] = this.worldToScreen(u.x, u.y);
+    const d = Math.ceil(TILE * z * (u.type.scale || 1));
+    const bob = u.anim === 'walk' ? Math.round(Math.sin(u.animT * 12) * z * 0.5) : 0;
+    const recoil = u.anim === 'attack' && u.animT < 0.3 ? Math.round((0.3 - u.animT) * 6 * z) : 0;
+    const px = Math.round(sx), py = Math.round(sy - d * 0.8) + bob;
+    if (u.dead) ctx.globalAlpha = Math.max(0, 1 - u.deathT / 3);
+    if (this.selection.units.includes(u)) {
+      ctx.strokeStyle = '#8f8'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(px, sy, d * 0.45, d * 0.18, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.save();
+    if (u.facing < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(art, 0, 0, TILE, TILE, Math.round(px - d / 2) - recoil, py, d, d);
+    ctx.restore();
+    if (!u.dead) {
+      const gap = Math.max(2, Math.round(z));
+      let y = py - gap - Math.max(1, Math.round(1.5 * z));
+      ctx.fillStyle = game.factions[u.faction].color.css;
+      ctx.fillRect(Math.round(px - 2 * z), y, Math.max(2, Math.round(4 * z)), Math.max(1, Math.round(1.5 * z)));
+      if (u.hp < u.maxHp - 0.5) { y -= gap + 3; this.bar(px - 7 * z, y, 14 * z, u.hp / u.maxHp, '#5c5'); }
+      if (this.drawRank) this.drawRank(u, px, y - gap);
     }
     ctx.globalAlpha = 1;
   }
@@ -2411,6 +2477,7 @@ class UI {
   drawProjectile(p) {
     const ctx = this.ctx;
     const z = this.cam.zoom;
+    if (p.kind === 'boulder') return this.drawBoulder(p);
     const [sx, sy] = this.worldToScreen(p.x, p.y - 0.4);
     const P = Assets.projectiles;
     if (p.impactT >= 0) {
@@ -2426,6 +2493,33 @@ class UI {
     ctx.rotate(ang);
     ctx.drawImage(P, frame * TILE, row * TILE, TILE, TILE, -8 * z, -8 * z, TILE * z, TILE * z);
     ctx.restore();
+  }
+
+  // A catapult stone: a lobbed arc with its shadow racing along the ground under
+  // it, and a burst of grit where it lands.
+  drawBoulder(p) {
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const [gx, gy] = this.worldToScreen(p.x, p.y);
+    if (p.impactT >= 0) {
+      const t = p.impactT / 0.4;
+      ctx.fillStyle = `rgba(150,130,100,${(1 - t) * 0.7})`;
+      for (let k = 0; k < 6; k++) {
+        const a = k * 1.047 + p.tx;
+        const r = (2 + t * 7) * z;
+        ctx.beginPath(); ctx.arc(gx + Math.cos(a) * r, gy + Math.sin(a) * r * 0.5, (2.5 - t * 1.5) * z, 0, Math.PI * 2); ctx.fill();
+      }
+      return;
+    }
+    const total = Math.max(0.01, wdist(p.sx, p.sy, p.tx, p.ty));
+    const done = Math.min(1, 1 - wdist(p.x, p.y, p.tx, p.ty) / total);
+    const h = Math.sin(done * Math.PI) * Math.min(3, total * 0.35) * TILE * z;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(gx, gy, 2.5 * z, 1.2 * z, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#8d8a84';
+    ctx.beginPath(); ctx.arc(gx, gy - h - 4 * z, 2.2 * z, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c9c6bd';
+    ctx.fillRect(Math.round(gx - z), Math.round(gy - h - 5 * z), Math.max(1, Math.round(z)), Math.max(1, Math.round(z)));
   }
 
   // Tile indices (map.idx) covered by the current placement ghost, or null if

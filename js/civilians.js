@@ -183,9 +183,10 @@ function assignJob(u, b) {
 // A citizen changing trade, not a new person: same body, different kit and
 // carrying capacity. Wounds carry across proportionally.
 function retypeCivilian(u, key) {
-  const frac = u.hp / u.type.hp;
+  const frac = u.hp / u.maxHp;
   u.type = UNIT_TYPES[key];
-  u.hp = Math.max(1, Math.round(u.type.hp * frac));
+  u.maxHp = unitMaxHp(u);
+  u.hp = Math.max(1, Math.round(u.maxHp * frac));
   u.carryCap = u.type.carry;
   u.setAnim('idle', true);
 }
@@ -302,6 +303,7 @@ function gatherWorkTime(b, atTile) {
 
 function tickGatherer(u, dt) {
   const b = u.job.b;
+  if (b.type.produces === 'knowledge') return tickScholar(u, dt, b);
   if (u.phase === 'home') return gatherDeliver(u, dt);
   if (u.carryTotal() >= u.carryCap - 1e-6) { u.phase = 'home'; u.path = []; return; }
   if (u.phase === 'work') return gatherWork(u, dt, b);
@@ -377,6 +379,25 @@ function gatherDeliver(u, dt) {
     return;
   }
   walkTo(u, dt, Math.floor(home.cx), Math.floor(home.cy));
+}
+
+// Scholars. Knowledge is not a load to be carried: a scholar walks to the
+// Library once and then sits and reads, and what they learn goes straight into
+// the nation's research (js/tech.js). Kill the scholar, or burn the Library,
+// and the learning stops.
+function tickScholar(u, dt, b) {
+  if (!u.spot) u.spot = findWorkTile(game.map, b);
+  if (!u.spot) { u.setAnim('idle'); return; }
+  const [tx, ty] = u.spot;
+  if (u.phase !== 'work') {
+    if (wdist(u.x, u.y, tx + 0.5, ty + 0.5) <= 1.2) { u.phase = 'work'; u.path = []; return; }
+    u.phase = 'out';
+    return walkTo(u, dt, tx, ty, () => { u.spot = null; });
+  }
+  u.setAnim('idle');
+  const amount = workerYieldRate(game.map, b, u.spot) * dt;
+  creditKnowledge(u.faction, amount);
+  recordYield(b, amount);
 }
 
 // Everything this building's workers have ever banked. `sampleYields` turns it

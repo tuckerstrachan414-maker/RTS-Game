@@ -18,6 +18,7 @@ class Faction {
     this.aiT = id * (AI_TICK_PERIOD / 4);   // fixed phase: nations never tick together
     this.ai = null;                   // ambition state, lazily built by initFactionAI (js/ai.js)
     this.brain = null;                // perception + utility + trade + combat managers
+    initResearch(this);               // era, techs, research, modifiers (js/tech.js)
   }
 
   townhall() { return this.buildings.find(b => b.type.key === 'townhall' && b.hp > 0); }
@@ -55,6 +56,7 @@ class Faction {
     if (!castle) return 'Needs a Castle';
     const type = UNIT_TYPES[typeKey];
     if (type.tier > this.castleTier) return `Locked — requires the ${CASTLE_UPGRADES[type.tier].name} castle upgrade`;
+    if (type.tech && !hasTech(this, type.tech)) return `Locked — research ${TECHS[type.tech].name}`;
     if (type.unique && (this.kingAlive || this.units.some(u => u.alive && u.type.key === 'king') || castle.trainQueue.some(q => q.unitKey === 'king'))) return 'Only one King';
     // Dev mode's resource top-off (Game.devTopOff) already makes canAfford pass
     // in practice, but population is never topped off — training would still
@@ -76,6 +78,7 @@ class Faction {
     const up = CASTLE_UPGRADES[this.castleTier + 1];
     if (!up) return 'The Castle is fully upgraded';
     if (castle.upgrading) return 'An upgrade is already underway';
+    if (up.era && this.era < up.era) return `The ${up.name} requires the ${ERAS[up.era].name}`;
     if (!this.nation.canAfford(up.cost)) return 'Not enough resources';
     this.nation.pay(up.cost);
     castle.upgrading = { tier: this.castleTier + 1, t: 0 };
@@ -103,7 +106,7 @@ class Faction {
       if (b.trainQueue.length === 0) continue;
       const q = b.trainQueue[0];
       q.t += dt;
-      if (q.t >= UNIT_TYPES[q.unitKey].trainTime) {
+      if (q.t >= trainTimeFor(this, q.unitKey)) {
         // A hull has to touch the water or it is stranded on the quay the
         // instant it is finished; if the berth has silted up (a bridge thrown
         // across the harbour mouth, say) the order waits rather than launching
@@ -212,4 +215,10 @@ function findBuildSpot(f, typeKey, site = null) {
     }
   }
   return null;
+}
+
+// Seconds to train a unit, after Feudalism's drill-yard discount.
+function trainTimeFor(f, key) {
+  const base = UNIT_TYPES[key].trainTime;
+  return base * (1 - (f.mods ? Math.min(0.6, f.mods.trainTime) : 0));
 }

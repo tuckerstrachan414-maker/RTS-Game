@@ -39,9 +39,14 @@ const DEV_RESOURCE_FLOOR = 9999;
 let game = null;
 
 class Game {
-  constructor(seed, diffKey = 'ramped') {
+  // opts: { pace: 'quick'|'standard'|'epic', victory: bool } — set on the
+  // pre-game screen and round-tripped through the URL like the seed.
+  constructor(seed, diffKey = 'ramped', opts = {}) {
     this.diffKey = DIFFICULTIES[diffKey] ? diffKey : 'ramped';
     this.diff = DIFFICULTIES[this.diffKey];
+    this.paceKey = PACES[opts.pace] ? opts.pace : 'standard';
+    this.pace = PACES[this.paceKey];
+    this.victoryOn = opts.victory !== false;
     // The world must be configured before anything sizes an array off MAP_W.
     // boot() normally does it from the URL; this is the safety net for a Game
     // constructed some other way (a headless verification script, say).
@@ -133,7 +138,9 @@ class Game {
       if (f.eliminated) continue;
       f.nation.tick(dt);
       if (this.devMode && f.isPlayer) this.devTopOff(f.nation);
+      tickResearch(f, dt);
       f.tickTraining(dt);
+      tickTowers(f, dt);
       if (!f.isPlayer) aiTick(f, dt);
       for (const u of f.units) u.tick(dt);
       f.units = f.units.filter(u => !u.dead || u.deathT < 8);
@@ -475,7 +482,7 @@ function startGame(seed, diffKey) {
     ui.render();
     ui.refreshTopbar();
     panelT -= real;
-    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); }
+    if (panelT <= 0) { panelT = 0.5; ui.refreshPanel(); ui.refreshDiplomacy(); ui.refreshTooltip(); ui.refreshEventCard(); ui.refreshResearch(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

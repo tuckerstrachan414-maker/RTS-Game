@@ -49,6 +49,9 @@ the code; stale docs are treated as bugs.
 - `js/civilians.js` — the citizenry: population embodiment, job assignment,
   gathering trips, builders and construction sites, per-job sprite
   (`civSpriteFor`)
+- `js/tech.js` — knowledge, the 30-tech tree, the Ages, `f.mods` (every tech
+  effect lands in that one table), `unitMaxHp`/`buildingMaxHp`, the AI's research
+- `js/icons.js` — extra `.icon-*` classes drawn from pixel grids at load
 - `js/factions.js` — Faction state, training, the AI executor (`aiTick`)
 - `js/diplomacy.js` — relations, pacts, envoys, caravans/routes, embargoes
 - `js/events.js` — event-card queue (AI-initiated player choices, expiry)
@@ -62,6 +65,8 @@ the code; stale docs are treated as bugs.
 - `js/ai-trade.js` — `AITradeManager`, `evaluateWarVersusTrade`
 - `js/ai-combat.js` — `AICombatManager`: scouting, army, defence, war gating
 - `js/ui.js` — rendering, input (mouse + touch), HUD, panels, minimap, event card
+- `js/ui-research.js` — the Research screen, the Age banner (`UI.announce`),
+  the knowledge readout and build-bar locks (mixed into `UI.prototype`)
 - `js/main.js` — Game class, fixed-timestep loop (SIM_DT 0.1), victory, loot
   piles, `DIFFICULTIES` + pre-game difficulty/world overlay
 
@@ -155,6 +160,15 @@ the code; stale docs are treated as bugs.
   past visual review here (BUGS #31), and the scan is the only thing that caught
   them all.
 - Keep `formationMove`'s melee-in-front sort stable; both player and AI use it.
+- **Technology effects live in `f.mods` and nowhere else.** Never read a tech
+  list to decide a number — add the effect to the tech's `effects` in `TECHS`,
+  make `recomputeMods` carry it, and read `f.mods` where the number is used.
+  Max HP is `u.maxHp` / `b.maxHp` (from `unitMaxHp`/`buildingMaxHp`); never read
+  `type.hp` as a maximum. Tax income is `nation.taxIncome()`.
+- A building type can carry `requires: { tech, era }`; anything that places
+  buildings (player UI, paste, AI wishes) must check `buildingBlocker(f, key)`.
+- Rivals' `era` is public; their `techs` are not — the AI must never read
+  `o.techs`.
 - New HUD elements need the `.hud` class to be hidden by Hide UI, and an
   explicit entry in the `body.ui-hidden` CSS list in `index.html`.
 - The Game is NOT constructed until a difficulty is chosen — headless scripts

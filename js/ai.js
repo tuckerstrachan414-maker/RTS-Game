@@ -95,7 +95,7 @@ function reevaluateDoctrine(f, silent = false) {
   // aggression — but a nation should not reorganise its whole ambition around
   // a neighbour it has never laid eyes on, or every nation turtles forever.
   const avgConf = rivals.reduce((s, o) => s + per.confidence(o.id), 0) / rivals.length;
-  const goldNorm = clamp((estimateIncome(f, 'gold') + f.nation.pop * f.nation.tax * 0.06) / 0.6, 0, 1);
+  const goldNorm = clamp((estimateIncome(f, 'gold') + f.nation.taxIncome()) / 0.6, 0, 1);
   const atPeace = !game.diplomacy.atWarAny(f.id);
   const allyCount = game.factions.filter(o => o.id !== f.id && !o.eliminated
     && game.diplomacy.status(f.id, o.id) === STATUS.ALLIANCE).length;
@@ -173,11 +173,16 @@ function aiBuildWishesScored(f, counts) {
     church: 1,
     well: 1,
     castle: 1 + (prof.secondCastlePop && pop >= prof.secondCastlePop ? 1 : 0),
+    ...aiDesiredScholarBuildings(f),
+    // towers guard the heart of a walled nation, and anyone who has been hurt
+    watchtower: (prof.wallRing ? 2 + Math.floor(pop / 20) : 0)
+      + (game.time - f.ai.hurtT < 240 ? 2 : game.diplomacy.atWarAny(f.id) ? 1 : 0),
   };
   const scored = [];
   for (const k in desired) {
     const deficit = desired[k] - have(k);
     if (deficit <= 0) continue;
+    if (buildingBlocker(f, k)) continue;              // not researched / wrong Age
     let s = deficit * (prof.buildWeights[k] || 1);
     // bootstrap: stand up the essential production chain before anything fancy
     if ((k === 'farm' || k === 'lumber') && have(k) === 0) s += 10;

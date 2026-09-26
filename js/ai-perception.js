@@ -332,7 +332,7 @@ class AIPerception {
         food: foodIncome,
         wood: estimateIncome(f, 'wood'),
         stone: estimateIncome(f, 'stone'),
-        gold: estimateIncome(f, 'gold') + n.pop * n.tax * 0.06,
+        gold: estimateIncome(f, 'gold') + n.taxIncome(),
       },
       headroom: {
         food: n.capacityFor('food') - n.total('food'),

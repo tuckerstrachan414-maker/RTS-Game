@@ -382,7 +382,9 @@ or spillable as loot. This underpins the entire raiding design.
 
 ## Buildings — Moderate
 
-`js/buildings.js` (+ the Dock, added by `js/naval.js`). 15 types: Town Hall,
+`js/buildings.js` (+ the Dock, added by `js/naval.js`). 18 types — the
+research buildings **Library**, **University** and **Watchtower** (see
+Research; the Watchtower shoots, see `tickTowers`) joined the original 15: Town Hall,
 Storehouse, House, Builder House
 (3 builder slots — see Construction & builders), Farm (2×2 crop
 field, +50% near water, +25% near a Well), Lumber Camp (consumes real tree
@@ -595,6 +597,81 @@ and panels stay live throughout, and the sim keeps running.
 
 The globe is only offered on wrapping worlds — Duel Island has no far side.
 
+## Research, knowledge & the Ages — Deep
+
+`js/tech.js` (data, state, the AI's choices), `js/ui-research.js` (the Research
+screen, the Age banner, the topbar readout), `js/civilians.js` (`tickScholar`).
+
+**Knowledge** is the fifth output and the only one that is not a good: it is
+never stored in a building, never robbed, never traded. The Town Hall produces
+`BASE_KNOWLEDGE` (0.08/s), each Church `CHURCH_KNOWLEDGE` (+Mysticism/
+Theology), and scholars in a **Library** (3 slots, 0.1/s each) or
+**University** (Education, 2×2, 4 slots, 0.18/s each) produce the rest. A
+scholar is a gatherer that never hauls: it walks to the building once and
+credits `creditKnowledge` every tick it sits there (`tickScholar`), so killing
+scholars or burning the Library stops the flow, and `recordYield` still
+measures the building's output for `estimateIncome`. Every tick
+(`tickResearch`) the nation's knowledge pours into its current study; with
+nothing selected it banks, up to `KNOWLEDGE_BANK_CAP` × pace. `f.knowledgeRate`
+is an exponential average for the HUD and the AI.
+
+**30 technologies** in three branches across four Ages (`TECHS`), each with a
+cost scaled by the game's pace (`techCost`), prerequisites, effects and
+unlocks. Effects all land in one table, `f.mods`, rebuilt from scratch by
+`recomputeMods` whenever a tech completes; the systems that care read that
+table rather than the tech list: `workerYieldRate` (yields — the single place
+production maths lives still), `effectiveDamage`/`unitRange`/`unitSpeed`,
+`unitMaxHp`/`buildingMaxHp`, `storageCap`, `Nation.housingCap`,
+`happinessTargetWithoutTax`, `Nation.taxIncome` (the one tax formula — the HUD,
+the AI's perception and the doctrine re-evaluation all call it now),
+war-weariness gain, `trainTimeFor`, and Banking's treasury interest. Unlocks
+are units (`type.tech`, checked by `trainUnit`), buildings (`type.requires`,
+checked by `buildingBlocker` — the build bar, placement, paste and the AI's
+build wishes all go through it) and building levels.
+
+**The Ages** (`ERAS`): Tribal → Feudal → Kingdom → Imperial. Advancing takes
+`needTechs` of the current Age's technologies (3/4/5), a knowledge project
+(`era:N`, studied like a tech) and a payment in goods, paid when the advance
+starts (`startEraAdvance`). The Age gates the next Age's techs and the castle
+upgrades. A nation's Age is public — it is shown in Diplomacy and announced to
+everyone — so the AI may read a rival's `era`; which techs a rival holds is
+not, and nothing in the AI reads `o.techs`. The last study,
+**The Enlightenment** (2400), is a `project`: it is the Science Victory
+(js/victory.js).
+
+**The player's side.** Press **T** (or click the knowledge readout / Age chip
+on the topbar, or Menu → Research) for a non-pausing screen: the current study
+with a progress bar and ETA, the queue (each removable), the next Age with its
+requirements and an Advance button, and the tree in four Age columns, each card
+striped with its branch colour and marked known / studying / queued / available
+/ blocked with its prerequisites. Clicking a tech further down the tree queues
+the whole path to it (`queueResearchPath`). Stopping a study banks its progress
+rather than losing it. Entering a new Age puts a title card across the screen
+(`UI.announce`). The build bar greys out and locks buildings that need research
+(`refreshBuildLocks`), and the castle panel locks units behind their tech.
+
+**The AI** studies by ambition (`aiChooseResearch`): branch affinities per
+archetype (`AI_TECH_AFFINITY`), a short list of favourites each
+(`AI_TECH_FAVOURITES`), a pull toward techs that fix a structural shortage or
+starvation, toward military techs at war, toward the current Age's techs while
+the next Age is short of them, and toward cheaper techs first. Advancing an Age
+is an investment candidate in the utility engine (`aiScoreEraAdvance`) scored
+high enough to beat routine buildings — an Age is a once-per-era leap, and a
+low score let an always-affordable House win the arbitration forever (found in
+testing: a nation sat in the Feudal Age with every Feudal tech and the bill in
+its vaults). Nations staff scholars to a quota ahead of the gathering trades
+(`aiScholarShare`, 8-22% of the population by ambition, more when a rival is
+an Age ahead) — without it a Library built last in the list only ever got
+whoever was left over. They build Libraries (`aiDesiredScholarBuildings`), a
+University once Education is in, and Watchtowers (turtles ring their town with
+them; anyone recently hurt adds two). Their troop mix grows with the tree
+(`aiTroopPool`): Shieldmen after Iron Working, Crossbowmen replacing Archers,
+Archmages, and one Catapult per eight soldiers once there is a fortified enemy
+to use it on.
+
+Measured on seed 42, Small World, four AI-run nations: every nation reaches the
+Feudal Age by about minute 15-20 and the Age of Kingdoms by about minute 30-40.
+
 ## Market & commodity trading — Deep
 
 `js/market.js`. A global supply/demand exchange for food/wood/stone with gold
@@ -626,19 +703,46 @@ storehouse without a raider along watches the spoils rot on the ground.
 
 ## Units & combat — Deep
 
-`js/units.js`. **Nine** unit types across 3 castle tiers, with three damage
-types (melee/pierce/magic), armor (Halberdier, ignored by magic), an
-anti-cavalry bonus (Spearman ×2.2 vs Cavalier), projectiles (arrows, fireballs
-with splash), the unique King (aura: +15% damage in 4 tiles; morale penalty on
-death), and the Prince envoy. The roster was cut from 13 to 9 (Shieldman,
-Crossbowman, Archmage and Horseman are gone) so that no unit is a strictly
-better version of another: tier 1 is Swordsman / Spearman / Archer / Bandit /
-Prince, tier 2 is Halberdier (the armoured tank, which inherited the
-Shieldman's armor at 2) and Cavalier (shock cavalry, promoted down from tier
-3), tier 3 is Mage and King. Real-time combat with cooldowns, auto-acquire
-within 5 tiles, fight-back when hit, periodic repathing toward moving targets,
-building attack/destruction. Training consumes a citizen (requires 2 free) and
-runs through a per-castle queue with rally points.
+`js/units.js`. **Thirteen** unit types across 3 castle tiers and four Ages,
+with four damage types (melee/pierce/magic/siege), armor (Halberdier 2,
+Shieldman 3; magic and siege ignore it, the Crossbowman's `pierceArmor` strips
+3 of it), an arrow-ward (the Shieldman halves pierce damage), an anti-cavalry
+bonus (Spearman ×2.2 vs Cavalier), projectiles (arrows, fireballs with splash,
+lobbed catapult stones), the unique King (aura: +15% damage in 4 tiles; morale
+penalty on death), and the Prince envoy. The castle tiers still hold the core
+nine — tier 1 Swordsman / Spearman / Archer / Bandit / Prince, tier 2 (Garrison)
+Halberdier and Cavalier, tier 3 (Royal Academy) Mage and King — and research
+(`js/tech.js`) brings back the four sheets the pack shipped with that had sat
+unused, each with a job nobody else does: the **Shieldman** (Iron Working — an
+arrow wall), the **Crossbowman** (Crossbows — armour-piercing, slow reload),
+the **Catapult** (Engineering — siege) and the **Archmage** (Arcane Mastery,
+tier 3 — heavy splash). Real-time combat with cooldowns, auto-acquire within 5
+tiles, fight-back when hit, periodic repathing toward moving targets, building
+attack/destruction. Training consumes a citizen (requires 2 free) and runs
+through a per-castle queue with rally points; training time comes from
+`trainTimeFor` (Feudalism takes 20% off).
+
+**Siege and fortifications.** Walls, gates and Watchtowers carry
+`type.fortification`: a non-siege attacker does `FORT_RESIST` (35%) of its
+damage to them, and a siege engine does full damage, so a fortified town is a
+siege problem rather than a numbers problem. The Catapult (`type.siege`,
+`dmgType: 'siege'`) reaches 7.5 tiles, splashes, and deals only
+`SIEGE_VS_UNITS` (30%) to troops; its `minRange` of 2 makes it back off
+(`Unit.backAway`) rather than fire at a soldier at its wheels. Its stone
+lands on the building it was aimed at even when the landing point is on the
+footprint's edge, and splash damage is worked out per victim
+(`Projectile.dmgVs`) so armour and arrow-wards still count. It is drawn as a
+baked sprite (`bakeSiege`, `js/assets.js`; `UI.drawSiege`), and the stone as a
+lobbed arc with a ground shadow (`UI.drawBoulder`).
+
+**Technology modifies combat in one place.** `effectiveDamage` folds in the
+attacker's nation's `f.mods.dmg[dmgType]` and `mountedDmg` (see Research), and
+the veterancy rank; `unitRange` adds Fletching's half tile for pierce units;
+`unitSpeed` applies mounted and naval speed; a unit's maximum HP is
+`unitMaxHp(u)` (`js/tech.js`), stored as `u.maxHp`, and a finished tech
+rescales every living unit's current HP proportionally so nobody reads as
+wounded by a promotion. `u.type.hp` is no longer read anywhere outside
+`unitMaxHp`.
 
 **Bridges are destructible, and one hit takes the whole span.** A bridge is
 never picked up by passive auto-acquire (`findEnemyNear` explicitly skips
@@ -781,8 +885,11 @@ hatch for units stranded on impassable tiles. Full detail in
 ## Castle tiers — Moderate
 
 `js/buildings.js` (`CASTLE_UPGRADES`), `js/factions.js`. Two purchasable
-upgrades: Garrison (tier 2: Halberdier/Cavalier) and
-Royal Academy (tier 3: Mage/King). Locked units render with
+upgrades: Garrison (tier 2: Halberdier/Cavalier; needs the **Feudal Age**) and
+Royal Academy (tier 3: Mage/King/Archmage; needs the **Age of Kingdoms**) —
+`CASTLE_UPGRADES[n].era`, checked by `startCastleUpgrade`, which returns the
+reason as an error string, and by the AI's `scoreUpgrade`/`aiPlanDemand`. The
+castle panel shows the upgrade locked with the Age it needs. Locked units render with
 a lock icon and unlock hint. The AI buys upgrades under threat/doctrine/
 population triggers (conquest and prosperity upgrade eagerly) and filters its
 training pool by tier. Data-driven — a tier 4 needs only data entries. The

@@ -46,7 +46,7 @@ quality, food logistics, unrest, or an upkeep curve that bites.
 
 ### 40. Ships have no formation, no group role, and no place in the panels
 `js/naval.js`, `js/ui.js` — `formationMove` and the Formations panel only know
-the nine land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
+the thirteen land types (`DEFAULT_FORMATION_ORDER`), so a selected fleet given a
 move order sails as a loose crowd; `GROUP_ROLES` (defensive garrison, patrol)
 assume land tiles and a post you can stand on; and a Transport's panel shows
 the generic unit card rather than its manifest, so the only way to see who is
@@ -289,6 +289,10 @@ heuristic.
   playing* button.
 
 ## Fixed
+
+- **#45 The page asked for a favicon that did not exist** — `index.html`. Every
+  load logged a 404 for `/favicon.ico`, which made a headless run's console
+  unreadable for real resource failures. It now carries an inline SVG crown.
 
 - **#43 AI invasions could never sail — overseas wars ended two minutes after
   they were declared** — `js/ai.js` `aiDiplomacy`, `js/naval.js`

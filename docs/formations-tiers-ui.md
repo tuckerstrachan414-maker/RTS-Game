@@ -24,8 +24,16 @@ logic in `ui.js`'s `rightClick()`. Given a group and a target tile:
    array of unit keys, front first). A type not in the list sorts to the back.
    `Array.prototype.sort` is stable, so units of the same type keep their
    relative order between identical commands. The default order is the old
-   hardcoded rule spelled out as data — melee, then ranged, tankiest first:
-   `sword, spear, halberd, cavalier, king, archer, mage, bandit, prince`.
+   hardcoded rule spelled out as data — melee, then ranged, tankiest first,
+   with the research units slotted where they belong (the Shieldman takes the
+   point as the arrow wall; the Catapult rides at the back behind the casters):
+   `shield, sword, spear, halberd, cavalier, king, archer, crossbow, mage,
+   archmage, catapult, bandit, prince`. A saved doctrine from before the
+   research units existed is extended automatically — `sanitizeFormations`
+   appends any key it has never seen to the end of the saved order.
+   The pace cap uses `unitSpeed(u)` rather than `type.speed`, so Horseback
+   Riding and Navigation are honoured, and a formation with a Catapult in it
+   marches at the Catapult's 1.2.
 4. Asks `formationSlots(n, shape)` for `n` `[depth, lateral]` offsets in
    formation space (`-depth` = ranks back from the point, `lateral` = across),
    then rotates each by the travel angle so the formation always faces where
@@ -227,18 +235,26 @@ detached node — it caught the test harness before it caught a user.
 
 ## Castle-tier troop unlocks — `js/buildings.js`, `js/factions.js`, `js/ui.js`
 
-Simple gated-progression system, not a tech tree — there are only two
-upgrade tiers above the base castle.
+A gated-progression system that now sits *alongside* the tech tree
+(`js/tech.js`) rather than instead of one: there are still only two upgrade
+tiers above the base castle, but each needs an Age, and four more units are
+unlocked by research rather than by the castle.
 
 - `UNIT_TIERS` (`js/units.js`, near the top) maps unit key → tier. Anything
   not listed defaults to tier 1 (always available): sword, spear, archer,
-  bandit, prince. Tier 2: halberd, cavalier. Tier 3: mage, king. (The roster
-  is nine units now — shield, crossbow, archmage and horseman were cut, and
-  cavalier dropped from tier 3 to tier 2 to keep the Garrison worth buying.)
+  bandit, prince — and the research units shield, crossbow and catapult, which
+  are gated by `type.tech` instead. Tier 2: halberd, cavalier. Tier 3: mage,
+  king, archmage (which also needs Arcane Mastery). The roster is thirteen:
+  the Shieldman, Crossbowman and Archmage sheets that were cut from the nine
+  came back as research unlocks with jobs of their own, and the Catapult is new.
 - `CASTLE_UPGRADES` (`js/buildings.js`, right after `BUILD_MENU`) is keyed by
-  the tier it unlocks (`2`, `3`), each entry `{ name, cost, time, desc }`.
-  Tier 2 = "Garrison" (100 wood / 80 stone / 60 gold, 20s). Tier 3 = "Royal
-  Academy" (150/150/150, 30s).
+  the tier it unlocks (`2`, `3`), each entry `{ name, cost, time, era, desc }`.
+  Tier 2 = "Garrison" (100 wood / 80 stone / 60 gold, 20s, Feudal Age). Tier 3
+  = "Royal Academy" (150/150/150, 30s, Age of Kingdoms).
+- `Faction.trainUnit` also rejects a unit whose `type.tech` is not researched
+  (`Locked — research <name>`), and `startCastleUpgrade` rejects an upgrade
+  whose `era` the nation has not reached; both are strings, like every other
+  `trainUnit` failure.
 - `Faction.castleTier` starts at 1. `Faction.trainUnit(typeKey)` rejects with
   a locked-message string (`Locked — requires the <name> castle upgrade`)
   when `type.tier > this.castleTier` — check this return value the same way
@@ -654,7 +670,17 @@ const result = await page.evaluate(() => { /* poke game/ui, run game.tick(0.1) i
 
 Note `game`/`ui` are `let`-scoped in `main.js`, not attached to `window` —
 `waitForFunction` must check `typeof game !== 'undefined'`, not
-`window.game`. A verification suite for the AI rework lives in that same pattern — it boots
+`window.game`.
+
+**Freeze the real-time loop before driving the sim yourself.** The page's own
+`requestAnimationFrame` loop keeps ticking `game` at wall-clock speed whenever
+the evaluate yields (an `await new Promise(r => setTimeout(r, 0))` between
+chunks, which a long soak needs to stay responsive). Those extra ticks are
+invisible and non-deterministic: two runs of one seed came out different, with
+`game.time` 0.1s apart, purely from this. Set `ui.paused = true` right after
+boot — the frame loop then renders but never ticks, and only your
+`game.tick(0.1)` calls move the world. With that, two 15-minute runs of a seed
+hash identically on every difficulty (checked after the research batch). A verification suite for the AI rework lives in that same pattern — it boots
 `?seed=N&difficulty=…`, drives `game.tick(0.1)` loops, and asserts: no war
 inside the opening ~150s across four seeds; the archetype line-up differs by
 seed; war does not fire on the first tick of an advantage but does once fresh

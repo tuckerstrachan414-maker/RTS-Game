@@ -255,7 +255,7 @@ class Diplomacy {
         c.mission = { kind: 'caravan', route: r, dest, home: start };
         c.aggressive = false;
         c.carryCap = 0;
-        c.hp = 40;
+        c.hp = c.maxHp = 40;
         game.factions[owner].units.push(c);
         r.caravans.push(c);
         c.orderMove(Math.floor(dest.cx), Math.floor(dest.cy));

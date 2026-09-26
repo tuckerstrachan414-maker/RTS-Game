@@ -96,6 +96,7 @@ rather than snapping. The top bar shows the day count and whether it's day
 | 🪵 Wood | tree tiles within 25 tiles of the camp (they deplete!) | Lumberjacks, hauled to your stores |
 | 🪨 Stone | rock tiles within 4 tiles of the quarry | Stonecutters, hauled to your stores |
 | 🪙 Gold | cave tiles, taxes, trade, plunder | Diggers and traders, plus taxes |
+| 📖 Knowledge | Libraries, Universities, Churches, the Town Hall | Scholars studying — not stored, not robbable; feeds research |
 
 Click a finished building and use **+/−** to assign idle citizens to its worker
 slots. Every building has a purpose: Houses add housing, Churches/Wells/Markets add
@@ -214,6 +215,54 @@ The happiness tooltip breaks down exactly what's pleasing (or angering) your peo
 to hold more) and, crucially, **lootable**. Select any storehouse to see exactly
 what's inside it.
 
+## Knowledge, research and the Ages
+
+**Your nation grows up.** Every match begins in the **Tribal Age**, and the
+great arc of a game is climbing through the **Feudal Age** and the **Age of
+Kingdoms** to the **Imperial Age** — each one a real transformation: new
+technologies, new buildings, new troops, and new castle upgrades.
+
+**Knowledge** is the resource that drives it. Your Town Hall produces a trickle
+on its own, every **Church** adds a little (monks copy scripture), but the real
+engine is the **Library** (40🪵 25🪨): staff it with up to three **scholars**
+and they sit and read, pouring knowledge into whatever you are studying.
+Scholars are citizens like any other, so every one of them is a farmhand or a
+lumberjack you are not employing — the classic guns, butter *or books* choice.
+Later, **Education** unlocks the **University**: four scholars, each worth
+nearly two in a Library.
+
+**Research (press T, or click the knowledge readout on the top bar)** opens the
+tree: 30 technologies in three branches — **Economy**, **Military** and
+**Civic** — laid out by Age. Click one to study it; click one further down the
+tree and the whole path to it is queued for you. Knowledge you earn while
+studying nothing is banked (up to a cap) and spent the moment you pick
+something. A few examples of what's in there:
+
+| Age | Technologies (a sample) |
+|---|---|
+| Tribal | Crop Rotation, Woodcraft, **Masonry** (unlocks the Watchtower), Bronze Working, Fletching, Writing, Mysticism, Horseback Riding |
+| Feudal | **Iron Working** (Shieldman), **Crossbows** (Crossbowman), Feudalism, Heavy Plough, Deep Mining, Currency, Stonemasonry, Code of Laws |
+| Kingdom | **Engineering** (Catapult), Chivalry, Guilds, Banking (treasury interest), **Education** (University), Theology, Fortification, Navigation |
+| Imperial | **Arcane Mastery** (Archmage), Standing Army, Printing Press, Mercantilism, Architecture, **The Enlightenment** |
+
+**Advancing an Age** takes a set number of the current Age's technologies (3,
+then 4, then 5), a knowledge project, and a payment in goods — then the whole
+nation steps forward, with a banner across the screen to mark it. The Age you
+stand in gates the castle upgrades: the **Garrison** needs the Feudal Age and
+the **Royal Academy** the Age of Kingdoms. The **Enlightenment** is the last
+and greatest study of all.
+
+**Your rivals research too**, each by its own lights — a warlord drills iron
+and chivalry, a merchant prince chases currency and banking, a walled-up
+homebody studies masonry and fortification. Their Age is public (you'll hear
+when a rival enters a new one, and see it in Diplomacy); their technologies are
+not.
+
+**Watchtowers** (Masonry, 20🪵 40🪨) are stone towers whose archers shoot any
+enemy in range on their own. Walls, gates and towers are **fortifications**:
+ordinary troops do only a third of their damage to them, so breaking a
+fortified town takes siege engines.
+
 ## Trade & the market
 
 Select your **Market** to open the commodity exchange:
@@ -279,24 +328,32 @@ your coast.
 
 ## Your army
 
-**Nine troops, and each one does a job no other does.**
+**Thirteen troops, and each one does a job no other does.**
 
-| Tier | Troop | What it's for |
+| Unlocked by | Troop | What it's for |
 |---|---|---|
-| 1 | **Swordsman** | Cheap line infantry — the body of any army |
-| 1 | **Spearman** | Just as cheap, and hits Cavaliers for ×2.2 |
-| 1 | **Archer** | Ranged, pierce damage, dies fast if anything reaches it |
-| 1 | **Bandit** | Fast raider — **the only troop that can carry plunder** |
-| 1 | **Prince** | Envoy, not a fighter; carries proposals to other nations |
-| 2 | **Halberdier** | Armoured tank — blades and arrows glance off, magic doesn't |
-| 2 | **Cavalier** | Fast, heavy shock cavalry. Spearmen are its answer |
-| 3 | **Mage** | Ranged magic with splash, and armour doesn't stop it |
-| 3 | **King** | One per nation. +15% damage to troops near him |
+| Castle | **Swordsman** | Cheap line infantry — the body of any army |
+| Castle | **Spearman** | Just as cheap, and hits Cavaliers for ×2.2 |
+| Castle | **Archer** | Ranged, pierce damage, dies fast if anything reaches it |
+| Castle | **Bandit** | Fast raider — **the only troop that can carry plunder** |
+| Castle | **Prince** | Envoy, not a fighter; carries proposals to other nations |
+| Iron Working | **Shieldman** | Slow, armoured, and halves arrow damage — the wall your archers hide behind |
+| Crossbows | **Crossbowman** | Slow reload, but the bolt ignores 3 points of armour |
+| Garrison | **Halberdier** | Armoured tank — blades and arrows glance off, magic doesn't |
+| Garrison | **Cavalier** | Fast, heavy shock cavalry. Spearmen are its answer |
+| Engineering | **Catapult** | Siege engine: smashes walls, towers and buildings from 7.5 tiles. Can't fire point-blank and does little to troops — escort it |
+| Royal Academy | **Mage** | Ranged magic with splash, and armour doesn't stop it |
+| Royal Academy + Arcane Mastery | **Archmage** | Heavier fire, wider splash |
+| Royal Academy | **King** | One per nation. +15% damage to troops near him |
 
-**Castle upgrades unlock troops.** A fresh Castle trains the whole of tier 1.
-Buy the **Garrison** upgrade to unlock the Halberdier and Cavalier, then the
-**Royal Academy** for the Mage and the King. Locked troops show a 🔒 with what
-unlocks them — and AI nations climb the same tiers.
+**Castle upgrades and research unlock troops.** A fresh Castle trains the basic
+five. The **Garrison** upgrade (Feudal Age) unlocks the Halberdier and Cavalier,
+the **Royal Academy** (Age of Kingdoms) the Mage and the King, and research
+unlocks the rest. Locked troops show a lock with what unlocks them — and AI
+nations climb the same tiers and study the same tree. Military technologies
+make your whole army better too: Bronze and Iron Working sharpen blades,
+Fletching and Crossbows harden arrows, Chivalry armours your horse, Standing
+Army toughens every soldier.
 
 **Armies march in formation.** Group move orders arrange your troops into ranks
 facing the direction of travel, and units physically push apart so they never
@@ -307,7 +364,7 @@ shield wall.
 **You decide how they march (Menu → Formations).**
 - **Shape:** a **Diamond** (a point that widens and narrows again — covers the
   flanks) or a **Rectangle** (a solid block, up to six wide).
-- **Marching order:** drag the nine troop types into the order you want them to
+- **Marching order:** drag the thirteen troop types into the order you want them to
   hold the line. Whoever is at the top takes the point; whoever is at the bottom
   brings up the rear. Put Halberdiers first to soak the charge, or Archers first
   if you want them shooting before your infantry closes.
@@ -408,7 +465,7 @@ you face in the late game may not be the one you started on. But it's only
 *your* Town Hall that can end your run.
 
 **The Menu button** (top right) opens the pause menu — the simulation freezes
-while it's up. From there: Diplomacy, Select Army (grabs your whole standing
+while it's up. From there: Diplomacy, Research, Select Army (grabs your whole standing
 army), Formations, game **Speed** (1x/2x/3x), Hide UI, **Dev Mode**, and New Game.
 
 **Dev Mode** (Menu → Dev Mode) is a cheat for testing: your resources never run
@@ -423,7 +480,8 @@ enemy storehouse; sets rally with a Castle selected · click-and-hold then drag
 to lay a wall/gate/bridge run, shown as a preview until you release · Shift+click
 places multiple buildings · R rotates a bridge while placing · Ctrl+C copies
 selected building(s) (then click Paste, or press it again, to stamp another) ·
-Delete/Backspace removes selected building(s) for a 75% refund · Esc cancels
+Delete/Backspace removes selected building(s) for a 75% refund · **T** opens
+Research · Esc cancels
 placement or a pending paste / clears selection / closes menus.
 
 **Controls (touch / mobile):** plays in landscape or portrait (tap "Play in portrait
@@ -466,6 +524,9 @@ Plain `<script>` modules, no build step:
   and construction sites
 - `js/naval.js` — docks, ships, boarding and landings, and the AI's navy
 - `js/globe.js` — the orbit view: world texture, sphere projection, starfield
+- `js/tech.js` — knowledge, the technology tree, the Ages, tech modifiers
+  (`f.mods`) and the AI's research choices
+- `js/icons.js` — extra HUD icons drawn from pixel grids at load
 - `js/factions.js` — faction state, rolled personalities, the AI tick dispatcher
 - `js/diplomacy.js` — relations, pacts, envoys, caravan trade routes, embargoes
 - `js/ai.js` — ambitions, proactive diplomacy, war waves, expansion, bridge and
@@ -478,6 +539,7 @@ Plain `<script>` modules, no build step:
 - `js/territory.js` — per-tile influence/ownership, borders, border disputes
 - `js/ui.js`, `js/main.js` — rendering, input, HUD, loot piles, difficulty
   select, game loop
+- `js/ui-research.js` — the Research screen, the Age banner, the knowledge readout
 
 ## More documentation
 
